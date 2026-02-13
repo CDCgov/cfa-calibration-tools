@@ -105,7 +105,7 @@ class ABCSampler:
     def calculate_weight(self, particle) -> float:
         self.updater.calculate_weight(particle)
 
-    def get_poterior_particles(self) -> ParticlePopulation:
+    def get_posterior_particles(self) -> ParticlePopulation:
         self.posterior_population
 
 ```
