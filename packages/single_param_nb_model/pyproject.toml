@@ -1,0 +1,7 @@
+[project]
+name = "single-param-nb-model"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[project.scripts]
+single-param-nb-model = "single_param_nb_model:main"

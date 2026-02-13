@@ -1,8 +1,17 @@
-import argparse
-import json
 from typing import Any
 
 from numpy.random import default_rng
+from mrp import RunnerContext
+
+
+def main():
+    ctx = RunnerContext.from_stdin()
+    result = NB_n_Model(ctx.input)
+    ctx.write_csv("incidence.csv", result)
+
+
+if __name__ == "__main__":
+    main()
 
 
 def NB_n_Model(model_inputs: dict[str, Any]) -> list[int]:
@@ -37,38 +46,9 @@ def NB_n_Model(model_inputs: dict[str, Any]) -> list[int]:
             out.append(1)
         else:
             next = int(
-                sum(
-                    rng.binomial(
-                        model_inputs["n"], model_inputs["p"], out[i - 1]
-                    )
-                )
+                sum(rng.binomial(model_inputs["n"], model_inputs["p"], out[i - 1]))
             )
             out.append(next)
             if next > model_inputs["max_infect"]:
                 break
     return out
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run NB_n_Model with parameters from JSON file"
-    )
-    parser.add_argument(
-        "json_file", help="Path to JSON file containing model parameters"
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        default="model_output.json",
-        help="Path to output JSON file (default: model_output.json)",
-    )
-    args = parser.parse_args()
-
-    with open(args.json_file, "r") as f:
-        input_params = json.load(f)
-
-    result = NB_n_Model(input_params)
-
-    output_data = {"incidence": result}
-    with open(args.output, "w") as f:
-        json.dump(output_data, f, indent=2)

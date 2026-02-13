@@ -2,11 +2,18 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "calibrationtools",
+    "single-param-nb-model",
+]
+
 [[package]]
 name = "calibrationtools"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "mrp" },
     { name = "numpy" },
     { name = "pyarrow" },
     { name = "pytest" },
@@ -15,6 +22,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "mrp", git = "https://github.com/cdcgov/cfa-mrp.git" },
     { name = "numpy", specifier = ">=2.3.4" },
     { name = "pyarrow", specifier = ">=23.0.0" },
     { name = "pytest", specifier = ">=9.0.2" },
@@ -37,6 +45,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "mrp"
+version = "0.0.1"
+source = { git = "https://github.com/cdcgov/cfa-mrp.git#aa77ec63b301b2fd863d2621c24253bf5aa7d693" }
+dependencies = [
+    { name = "numpy" },
+    { name = "rumdl" },
 ]
 
 [[package]]
@@ -187,6 +204,21 @@ wheels = [
 ]
 
 [[package]]
+name = "rumdl"
+version = "0.1.19"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/07/4bf96260b18f5e16f2430c57da6fe5ae97c7f0d169e9cec84f6b08a1ba1a/rumdl-0.1.19.tar.gz", hash = "sha256:3ebcf864e3694c7a726a33c1355479fd65a9ec51d23d24e212c76c335cbdaac5", size = 2031623, upload-time = "2026-02-13T04:01:25.191Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/3e/1aebafc781899eefe0fe067947675436f048ad42ea6b50b5f5bdafd8a5b2/rumdl-0.1.19-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:72814337d9a8528305c16654f041ce6eed6e0b081d079222ae4fb40095075cbc", size = 5096535, upload-time = "2026-02-13T04:01:20.061Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/66/c6c1f552e4ede138aa3d275f3e1d1d8affb5cc64756d07dd83f0b5f7ecb3/rumdl-0.1.19-py3-none-macosx_11_0_arm64.whl", hash = "sha256:271c5d01890fa4b7f9d64e3153c50c0d3d1924e0e6fb6e81009a8c89e6166bcf", size = 4729805, upload-time = "2026-02-13T04:01:14.653Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/b8/6b0fef7db6f3f8be982a4b722f0b211d52c50707b7336a2ed1ee016957d4/rumdl-0.1.19-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:c90a48d50769ef4fccae8a82f9822e873417dccfe141ef4ffe6f9f99d9644e16", size = 4942889, upload-time = "2026-02-13T04:01:16.648Z" },
+    { url = "https://files.pythonhosted.org/packages/54/a1/099967131f14023e3aec37d6463967771c56985a2fee3bca57d6a8fa6ab8/rumdl-0.1.19-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:512fb1f8a4075aa7b7e28fb2422800a781f947077c98353cee09281e088968b2", size = 5313469, upload-time = "2026-02-13T04:01:22.563Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/bb/9f9a8f55b98a89ad514b407497c176dc81a1d970116adb8769593f6321c3/rumdl-0.1.19-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:8ca8b1d7c142704c74850fc0a57db8104e73626f6afbf326330c1f2287570d7b", size = 4931251, upload-time = "2026-02-13T04:01:18.248Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/45/bb5fa6563676d3fef2ba7ea8dacb3626ec60d241e247a372d54ef0b1aab9/rumdl-0.1.19-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:d502e60386e02aace44f2aa048954598aa859a6b8fed2a7b9ed7957adb186142", size = 5307665, upload-time = "2026-02-13T04:01:23.711Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/7c/f0cc6d564638bb131b4ae0adcc369d0f0c7795006f98dc9b007bc98fad35/rumdl-0.1.19-py3-none-win_amd64.whl", hash = "sha256:a82901a651007e63f57f7985c5944f6b639fd77ce5ff809574564cfa2c247868", size = 5375583, upload-time = "2026-02-13T04:01:21.365Z" },
+]
+
+[[package]]
 name = "scipy"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -246,3 +278,8 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/58/a8/a66a75c3d8f1fb2b83f66007d6455a06a6f6cf5618c3dc35bc9b69dd096e/scipy-1.17.0-cp314-cp314t-win_amd64.whl", hash = "sha256:1ff269abf702f6c7e67a4b7aad981d42871a11b9dd83c58d2d2ea624efbd1088", size = 37098574, upload-time = "2026-01-10T21:30:40.782Z" },
     { url = "https://files.pythonhosted.org/packages/56/a5/df8f46ef7da168f1bc52cd86e09a9de5c6f19cc1da04454d51b7d4f43408/scipy-1.17.0-cp314-cp314t-win_arm64.whl", hash = "sha256:031121914e295d9791319a1875444d55079885bbae5bdc9c5e0f2ee5f09d34ff", size = 25246266, upload-time = "2026-01-10T21:30:45.923Z" },
 ]
+
+[[package]]
+name = "single-param-nb-model"
+version = "0.0.0"
+source = { virtual = "packages/single_param_nb_model" }

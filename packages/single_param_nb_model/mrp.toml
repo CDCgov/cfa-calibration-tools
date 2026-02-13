@@ -1,0 +1,19 @@
+[model]
+spec = "single_param_nb_model"
+version = "0.0.0"
+
+[runtime]
+spec = "process"
+command = "uv run"
+args = ["single_param_nb_model"]
+
+[output]
+spec = "filesystem"
+dir = "./output"
+
+[input]
+seed = 123
+max_gen = 15
+n = 3
+p = 0.5
+max_infect = 500
