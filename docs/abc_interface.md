@@ -18,7 +18,6 @@ def outputs_to_distance():
 ## This will be substituted by MRP
 def model_runner():
 
-
 sampler = ABCSampler(
     generation_particle_count = 100,
     tolerance_values = [10, 5, 1],
@@ -42,8 +41,8 @@ class ABCSampler:
     def __init__(
             generation_particle_count, # Number of particles to accept for each generation
             tolerance_values, # Tolerance threshold of acceptance for distacne in each step, length is the number of steps in the SMC algorithm
-            priors, # Dictionary contianing distribution information
-            perturbations, # Dictionary controlling methods (independent, variance controlling, etc) and parameter kernels
+            priors, # Dictionary containing distribution information
+            perturbations, # Dictionary controlling methods (variance adapter and kernels) and parameter kernels
             particles_to_params, # Function to turn particles into parameter sets for the runner
             outputs_to_distance, # Fucntion to turn model outputs into distances given target data
             target_data, # Observed data to be used in calibration
@@ -52,35 +51,61 @@ class ABCSampler:
     ):
         ## Validation and initialization here
 
-    def sample_particles_from_priors(self, n=None) -> ParticlePopulation:
-        if not n:
-            n = self.generation_particle_count
-        population = ParticlePopulation()
-        for i in range(n)
-            particle = sample_from_priors()
-            population.add(particle)
-    return population
+        ## Init updater
+        self.updater = _ParticleUpdater(perturbation)
 
-    def run():
+    def run(self):
         previous_population = self.sample_particles_from_priors()
 
         for generation in range(len(self.tolerance_values)):
-            current_population = ParticlePopulation()
+            current_population = ParticlePopulation() # Inits a new population
+            self.updater.set_population(previous_population) # sets `all_particles` to the previous population
 
+            # Rejection sampling algorithm
             while current_population.size < self.generation_particle_count:
-                particle = previous_population.sample_particle()
-                perturbed_particle = self.perturb_particle(particle, previous_population)
 
-                self.particles_to_params(perturbed_particle)
-                self.model_runner.run()
+                # Create the parameter inputs for the runner by sampling perturbed value from previous population
+                particle = self.sample_particle()
+                perturbed_particle = self.perturb_particle(particle)
+                params = self.particles_to_params(perturbed_particle)
+
+                # Generate the distance metric from model run
+                self.model_runner.run(params)
                 err = self.outputs_to_distance()
 
+                # Add the particle to the population if accepted
                 if err < self.tolerance_values[generation]:
                     perturbed_particle.weight = self.calculate_weight(perturbed_particle)
                     current_population.add(perturbed_particle)
 
+            # Archive the previous generation population and make new population for next step
             self.previous_population_archive[generation] = self.previous_population
             previous_population = current_population.normalize_weights()
 
+        # Store posterior particle population
         self.posterior_population = current_population
+
+    def sample_particles_from_priors(self, n=None) -> ParticlePopulation:
+        '''Return a particle from the prior distribution'''
+        if not n:
+            n = self.generation_particle_count
+        population = ParticlePopulation()
+        for i in range(n)
+            particle = sample_from_distribution(self.priors)
+            population.add(particle)
+    return population
+
+    ## Section of convenience functions that call `_ParticleUpdater` methods
+    def perturb_particle(self, particle: Particle) -> Particle:
+        return self.updater.perturb_particle(particle)
+
+    def sample_particle(self) -> Particle:
+        return self.updater.sample_particle()
+
+    def calculate_weight(self, particle) -> float:
+        self.updater.calculate_weight(particle)
+
+    def get_poterior_particles(self) -> ParticlePopulation:
+        self.posterior_population
+
 ```
