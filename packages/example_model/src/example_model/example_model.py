@@ -1,7 +1,7 @@
 from typing import Any
 
-from numpy.random import default_rng
 from mrp import MRPModel
+from numpy.random import default_rng
 
 
 class Binom_BP_Model(MRPModel):
@@ -49,7 +49,11 @@ class Binom_BP_Model(MRPModel):
                 out.append(1)
             else:
                 next = int(
-                    sum(rng.binomial(model_inputs["n"], model_inputs["p"], out[i - 1]))
+                    sum(
+                        rng.binomial(
+                            model_inputs["n"], model_inputs["p"], out[i - 1]
+                        )
+                    )
                 )
                 out.append(next)
                 if next > model_inputs["max_infect"]:

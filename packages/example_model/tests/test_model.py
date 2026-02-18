@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from example_model.example_model import Binom_BP_Model
 
 
