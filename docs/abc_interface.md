@@ -43,6 +43,7 @@ class ABCSampler:
             tolerance_values, # Tolerance threshold of acceptance for distacne in each step, length is the number of steps in the SMC algorithm
             priors, # Dictionary containing distribution information
             perturbations, # Dictionary controlling methods (variance adapter and kernels) and parameter kernels
+            variance_adapter, # Object specifeid for controlling the change in variance across SMC steps
             particles_to_params, # Function to turn particles into parameter sets for the runner
             outputs_to_distance, # Fucntion to turn model outputs into distances given target data
             target_data, # Observed data to be used in calibration
@@ -52,14 +53,14 @@ class ABCSampler:
         ## Validation and initialization here
 
         ## Init updater
-        self.updater = _ParticleUpdater(perturbation)
+        self.updater = _ParticleUpdater(perturbations, variance_adapter)
 
     def run(self):
         previous_population = self.sample_particles_from_priors()
 
         for generation in range(len(self.tolerance_values)):
             current_population = ParticlePopulation() # Inits a new population
-            self.updater.set_population(previous_population) # sets `all_particles` to the previous population
+            self.set_population(previous_population) # sets `all_particles` to the previous population
 
             # Rejection sampling algorithm
             while current_population.size < self.generation_particle_count:
@@ -79,33 +80,35 @@ class ABCSampler:
                     current_population.add(perturbed_particle)
 
             # Archive the previous generation population and make new population for next step
-            self.previous_population_archive[generation] = self.previous_population
+            self.previous_population_archive[generation] = previous_population
             previous_population = current_population.normalize_weights()
 
         # Store posterior particle population
         self.posterior_population = current_population
+
+    def set_population(self, population: ParticlePopulation):
+        self._updater.set_particle_population(population)
 
     def sample_particles_from_priors(self, n=None) -> ParticlePopulation:
         '''Return a particle from the prior distribution'''
         if not n:
             n = self.generation_particle_count
         population = ParticlePopulation()
-        for i in range(n)
-            particle = sample_from_distribution(self.priors)
-            population.add(particle)
-    return population
+        for _ in range(n):
+            particle_state = self.priors.sample_state()
+            population.add(Particle(state=particle_state))
+        return population
 
-    ## Section of convenience functions that call `_ParticleUpdater` methods
     def perturb_particle(self, particle: Particle) -> Particle:
-        return self.updater.perturb_particle(particle)
+        return self._updater.perturb_particle(particle)
 
     def sample_particle(self) -> Particle:
-        return self.updater.sample_particle()
+        return self._updater.sample_particle()
 
     def calculate_weight(self, particle) -> float:
-        self.updater.calculate_weight(particle)
+        return self._updater.calculate_weight(particle)
 
     def get_posterior_particles(self) -> ParticlePopulation:
-        self.posterior_population
+        return self.posterior_population
 
 ```
