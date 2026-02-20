@@ -1,8 +1,9 @@
-from numpy.random import default_rng
+from numpy.random import SeedSequence
 
 from .particle import Particle, ParticlePopulation
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
+from .spawn_rng import spawn_rng
 from .variance_adapter import VarianceAdapter
 
 
@@ -12,12 +13,12 @@ class _ParticleUpdater:
         perturbation_kernel: PerturbationKernel,
         priors: PriorDistribution,
         variance_adapter: VarianceAdapter,
-        seed: int | None = None,
+        seed_sequence: SeedSequence | None = None,
     ):
         self.perturbation_kernel = perturbation_kernel
         self.priors = priors
         self.variance_adapter = variance_adapter
-        self.seed = seed
+        self.seed_sequence = seed_sequence
 
     def set_particle_population(self, particle_population: ParticlePopulation):
         self.particle_population = particle_population
@@ -28,7 +29,7 @@ class _ParticleUpdater:
             raise ValueError(
                 "Particle population is not set. Please set the particle population before sampling."
             )
-        idx = default_rng(self.seed).choice(
+        idx = spawn_rng(self.seed_sequence).choice(
             self.particle_population.size,
             p=[w for w in self.particle_population.weights.values()],
         )

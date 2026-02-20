@@ -2,8 +2,10 @@ from abc import ABC, abstractmethod
 from typing import Iterator
 
 import numpy as np
-from numpy.random import default_rng
+from numpy.random import SeedSequence
 from scipy.stats import expon, lognorm, norm
+
+from .spawn_rng import spawn_rng
 
 
 class PriorDistribution(ABC):
@@ -13,7 +15,7 @@ class PriorDistribution(ABC):
         self.params = params
 
         @abstractmethod
-        def sample(self, n: int, seed: int | None) -> Iterator[dict]:
+        def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
             raise NotImplementedError("Subclasses must implement this method")
 
         @abstractmethod
@@ -59,8 +61,8 @@ class UniformPrior(SingleParameterPriorDistribution):
         self.min = min
         self.max = max
 
-    def sample(self, n: int, seed: int | None) -> Iterator[dict]:
-        rng = default_rng(seed)
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+        rng = spawn_rng(seed)
         for _ in range(n):
             yield {self.param: rng.uniform(self.min, self.max)}
 
@@ -81,7 +83,7 @@ class NormalPrior(SingleParameterPriorDistribution):
         self.std_dev = std_dev
 
     def sample(self, n: int, seed: int | None) -> Iterator[dict]:
-        rng = default_rng(seed)
+        rng = spawn_rng(seed)
         for _ in range(n):
             yield {self.param: rng.normal(self.mean, self.std_dev)}
 
@@ -100,8 +102,8 @@ class LogNormalPrior(SingleParameterPriorDistribution):
         self.mean = mean
         self.std_dev = std_dev
 
-    def sample(self, n: int, seed: int | None) -> Iterator[dict]:
-        rng = default_rng(seed)
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+        rng = spawn_rng(seed)
         for _ in range(n):
             yield {self.param: rng.lognormal(self.mean, self.std_dev)}
 
@@ -118,8 +120,8 @@ class ExponentialPrior(SingleParameterPriorDistribution):
         super().__init__(param)
         self.rate = rate
 
-    def sample(self, n: int, seed: int | None) -> Iterator[dict]:
-        rng = default_rng(seed)
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+        rng = spawn_rng(seed)
         for _ in range(n):
             yield {self.param: rng.exponential(1 / self.rate)}
 
@@ -131,8 +133,8 @@ class SeedPrior(SingleParameterPriorDistribution):
     def __init__(self, param: str) -> None:
         super().__init__(param)
 
-    def sample(self, n: int, seed: int | None) -> Iterator[dict]:
-        rng = default_rng(seed)
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+        rng = spawn_rng(seed)
         for _ in range(n):
             yield {self.param: rng.integers(0, 2**32)}
 
@@ -152,7 +154,7 @@ class IndependentPriors(MultiParameterPriorDistribution):
     def __init__(self, priors: list[PriorDistribution]) -> None:
         super().__init__(priors)
 
-    def sample(self, n: int, seed: int | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
         for _ in range(n):
             sample = {}
             for prior in self.priors:

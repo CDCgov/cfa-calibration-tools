@@ -1,5 +1,7 @@
 from typing import Any, Callable
 
+from numpy.random import SeedSequence
+
 from .particle import Particle, ParticlePopulation
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
@@ -31,13 +33,14 @@ class ABCSampler:
         self.target_data = target_data
         self.model_runner = model_runner
         self.seed = seed
+        self.seed_sequence = SeedSequence(seed)
         self.previous_population_archive = {}
 
         self._updater = _ParticleUpdater(
             self.perturbation_kernel,
             self.priors,
             self.variance_adapter,
-            self.seed,
+            self.seed_sequence,
         )
 
     def run(self):
@@ -94,7 +97,7 @@ class ABCSampler:
         """Return a particle from the prior distribution"""
         if not n:
             n = self.generation_particle_count
-        sample_states = self.priors.sample(n, self.seed)
+        sample_states = self.priors.sample(n, self.seed_sequence)
         population = ParticlePopulation(initial_states=sample_states)
         return population
 
