@@ -22,7 +22,10 @@ class PerturbationKernel(ABC):
         """Change the state values based on the perturbation kernel."""
         result = from_state.copy()
         if len(self.params) == 1:
-            result[self.params[0]] = type(perturbed_values)
+            if isinstance(perturbed_values, np.ndarray):
+                result[self.params[0]] = type(perturbed_values[0])
+            else:
+                result[self.params[0]] = type(perturbed_values)
         else:
             for i, param in enumerate(self.params):
                 result[param] = type(perturbed_values[i])

@@ -14,7 +14,9 @@ from calibrationtools import (
 )
 
 
-def test_kernel_generation(K: IndependentKernels, Kc: IndependentKernels) -> None:
+def test_kernel_generation(
+    K: IndependentKernels, Kc: IndependentKernels
+) -> None:
     # Test that the kernels are of the same type and have same std_dev
     # Find NormalKernel in the list
     K_normal = next(k for k in K.kernels if isinstance(k, NormalKernel))
@@ -48,7 +50,7 @@ def test_seed_kernel_perturb(seed_sequence: SeedSequence) -> None:
 
 
 def test_uniform_kernel_perturb(seed_sequence: SeedSequence) -> None:
-    kernel = UniformKernel("param", min=0, max=10)
+    kernel = UniformKernel("param", width=5)
     from_state = {"param": 5, "other": "value"}
 
     for _ in range(100):
@@ -68,13 +70,15 @@ def test_normal_kernel_perturb(seed_sequence: SeedSequence) -> None:
 
 
 def test_uniform_kernel_transition_probability() -> None:
-    kernel = UniformKernel("param", min=0, max=10)
+    kernel = UniformKernel("param", width=5)
     from_state = {"param": 0}
     to_state_valid = {"param": 5}
-    to_state_low = {"param": -1}
+    to_state_low = {"param": -11}
     to_state_high = {"param": 11}
 
-    assert kernel.transition_probability(to_state_valid, from_state) == 1.0
+    assert kernel.transition_probability(to_state_valid, from_state) == 1.0 / (
+        2 * kernel.width
+    )
     assert kernel.transition_probability(to_state_low, from_state) == 0.0
     assert kernel.transition_probability(to_state_high, from_state) == 0.0
 
@@ -102,7 +106,9 @@ def test_normal_kernel_transition_probability() -> None:
     assert prob == pytest.approx(expected_prob, rel=1e-5)
 
 
-def test_multivariate_normal_kernel_perturb(seed_sequence: SeedSequence) -> None:
+def test_multivariate_normal_kernel_perturb(
+    seed_sequence: SeedSequence,
+) -> None:
     """Test MultivariateNormalKernel perturbation."""
     cov_matrix = np.array([[0.1, 0.05], [0.05, 0.2]])
     kernel = MultivariateNormalKernel(["p1", "p2"], cov_matrix)
@@ -130,7 +136,9 @@ def test_multivariate_normal_kernel_perturb(seed_sequence: SeedSequence) -> None
 
 def test_multivariate_normal_kernel_transition_probability() -> None:
     """Test MultivariateNormalKernel transition probability calculation."""
-    cov_matrix = np.array([[1.0, 0.0], [0.0, 1.0]])  # Identity matrix for simplicity
+    cov_matrix = np.array(
+        [[1.0, 0.0], [0.0, 1.0]]
+    )  # Identity matrix for simplicity
     kernel = MultivariateNormalKernel(["p1", "p2"], cov_matrix)
 
     from_state = {"p1": 0.0, "p2": 0.0}
@@ -147,16 +155,20 @@ def test_multivariate_normal_kernel_transition_probability() -> None:
     assert prob_away < prob_at_mean
 
 
-def test_independent_kernels_with_mixed_types(seed_sequence: SeedSequence) -> None:
+def test_independent_kernels_with_mixed_types(
+    seed_sequence: SeedSequence,
+) -> None:
     """Test IndependentKernels with different kernel types including multivariate."""
     indep_kernels = IndependentKernels()
     assert indep_kernels.kernels is not None  # Type narrowing
 
     # Add different types of kernels
-    indep_kernels.kernels.append(UniformKernel("a", min=0, max=10))
+    indep_kernels.kernels.append(UniformKernel("a", width=5))
     indep_kernels.kernels.append(NormalKernel("b", std_dev=1.0))
     indep_kernels.kernels.append(
-        MultivariateNormalKernel(["c", "d"], np.array([[0.1, 0.05], [0.05, 0.2]]))
+        MultivariateNormalKernel(
+            ["c", "d"], np.array([[0.1, 0.05], [0.05, 0.2]])
+        )
     )
     indep_kernels.kernels.append(SeedKernel("seed"))
 
@@ -183,7 +195,7 @@ def test_independent_kernels_with_mixed_types(seed_sequence: SeedSequence) -> No
     # Check that multivariate parameters were actually perturbed
     assert isinstance(perturbed_state["c"], float)
     assert isinstance(perturbed_state["d"], float)
-    assert isinstance(perturbed_state["seed"], int)
+    assert isinstance(perturbed_state["seed"], np.integer)
 
     # Test transition probability
     prob = indep_kernels.transition_probability(to_state, from_state)
@@ -191,11 +203,13 @@ def test_independent_kernels_with_mixed_types(seed_sequence: SeedSequence) -> No
     assert prob > 0
 
 
-def test_independent_kernels_legacy_interface(seed_sequence: SeedSequence) -> None:
+def test_independent_kernels_legacy_interface(
+    seed_sequence: SeedSequence,
+) -> None:
     """Test that IndependentKernels works with simple kernels."""
     indep_kernels = IndependentKernels()
     assert indep_kernels.kernels is not None  # Type narrowing
-    indep_kernels.kernels.append(UniformKernel("a", min=0, max=10))
+    indep_kernels.kernels.append(UniformKernel("a", width=5))
     indep_kernels.kernels.append(NormalKernel("b", std_dev=1.0))
 
     from_state = {"a": 5, "b": 0}

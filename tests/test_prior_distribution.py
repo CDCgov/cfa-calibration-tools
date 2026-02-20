@@ -45,7 +45,9 @@ def test_seed_prior_sampling(
     assert len(set(samples)) == len(samples)
 
     # reproducibility
-    samples_copy = [s["seed"] for s in list(prior.sample(5, seed_sequence_copy))]
+    samples_copy = [
+        s["seed"] for s in list(prior.sample(5, seed_sequence_copy))
+    ]
     assert samples == samples_copy
 
 
@@ -66,8 +68,12 @@ def test_normal_prior_sampling(seed_sequence: SeedSequence) -> None:
 def test_normal_prior_probability() -> None:
     prior = NormalPrior(param="x", mean=0.0, std_dev=1.0)
 
-    assert prior.probability_density({"x": 0.0}) == norm.pdf(0.0, loc=0.0, scale=1.0)
-    assert prior.probability_density({"x": 2.0}) == norm.pdf(2.0, loc=0.0, scale=1.0)
+    assert prior.probability_density({"x": 0.0}) == norm.pdf(
+        0.0, loc=0.0, scale=1.0
+    )
+    assert prior.probability_density({"x": 2.0}) == norm.pdf(
+        2.0, loc=0.0, scale=1.0
+    )
 
 
 def test_lognormal_prior_sampling(seed_sequence: SeedSequence) -> None:
@@ -128,8 +134,8 @@ def test_independent_priors_probability() -> None:
     prior2 = UniformPrior(param="y", min=20.0, max=100.0)
     indep_prior = IndependentPriors([prior1, prior2])
 
-    assert indep_prior.probability_density({"x": 5.0, "y": 50.0}) == (1.0 / 10.0) * (
-        1.0 / 80.0
-    )
+    assert indep_prior.probability_density({"x": 5.0, "y": 50.0}) == (
+        1.0 / 10.0
+    ) * (1.0 / 80.0)
     assert indep_prior.probability_density({"x": -1.0, "y": 50.0}) == 0.0
     assert indep_prior.probability_density({"x": 5.0, "y": 10.0}) == 0.0

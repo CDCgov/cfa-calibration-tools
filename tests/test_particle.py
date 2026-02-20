@@ -26,6 +26,7 @@ def test_particle_repr() -> None:
     assert "Particle" in repr_str
     assert "x" in repr_str or "state" in repr_str
 
+
 def test_particle_population_initialization() -> None:
     initial_states = [{"x": 1.0}, {"x": 2.0}]
     initial_weights = [0.3, 0.7]
@@ -37,6 +38,7 @@ def test_particle_population_initialization() -> None:
     assert population.all_particles[1].state == {"x": 2.0}
     assert population.all_particles[1].weight == 0.7
 
+
 def test_particle_population_repr() -> None:
     initial_states = [{"x": 1.0}, {"x": 2.0}]
     initial_weights = [0.3, 0.7]
@@ -47,18 +49,20 @@ def test_particle_population_repr() -> None:
     assert "size=2" in repr_str
     assert "ESS" in repr_str
 
+
 def test_particle_population_ess() -> None:
     initial_states = [{"x": 1.0}, {"x": 2.0}]
     initial_weights = [0.5, 0.5]
     population = ParticlePopulation(initial_states, initial_weights)
 
-    assert population.ess == 1.0
+    assert population.ess == 2.0
 
     population.all_particles[0].weight = 0.9
     population.all_particles[1].weight = 0.1
     population.normalize_weights()
 
-    assert population.ess < 1.0
+    assert population.ess < 2.0
+
 
 def test_particle_population_normalize_weights() -> None:
     initial_states = [{"x": 1.0}, {"x": 2.0}]

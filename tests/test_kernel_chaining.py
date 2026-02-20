@@ -29,13 +29,17 @@ def test_kernels_chain_sequentially() -> None:
         def __init__(self) -> None:
             self.received_type: Any | None = None
 
-        def perturb(self, from_state: dict, seed_sequence: SeedSequence) -> dict:
+        def perturb(
+            self, from_state: dict, seed_sequence: SeedSequence
+        ) -> dict:
             self.received_type = type(from_state.get("x"))
             result = from_state.copy()
             result["y"] = 999
             return result
 
-        def transition_probability(self, to_state: dict, from_state: dict) -> float:
+        def transition_probability(
+            self, to_state: dict, from_state: dict
+        ) -> float:
             return 1.0
 
     type_checker = TypeCheckKernel()
@@ -50,9 +54,9 @@ def test_kernels_chain_sequentially() -> None:
     result = kernels.perturb(initial_state, seed_seq)
 
     # MVN should have made x a float
-    assert isinstance(
-        result["x"], (float, np.floating)
-    ), "MultivariateNormalKernel should produce float"
+    assert isinstance(result["x"], (float, np.floating)), (
+        "MultivariateNormalKernel should produce float"
+    )
 
     # TypeCheckKernel should have seen the float (proves chaining)
     assert type_checker.received_type in (float, np.floating), (
@@ -80,9 +84,9 @@ def test_correct_kernel_order_preserves_types() -> None:
     result = correct_kernels.perturb(initial_state, seed_seq)
 
     # Seed should be integer
-    assert isinstance(
-        result["seed"], (int, np.integer)
-    ), "SeedKernel must produce integer seed"
+    assert isinstance(result["seed"], (int, np.integer)), (
+        "SeedKernel must produce integer seed"
+    )
     # Continuous params should be floats
     assert isinstance(result["x"], (float, np.floating))
     assert isinstance(result["y"], (float, np.floating))
@@ -127,6 +131,6 @@ def test_seed_kernel_order_matters_with_chaining() -> None:
     result = good_order.perturb(initial_state, seed_seq)
 
     # SeedKernel ensures integer
-    assert isinstance(
-        result["seed"], (int, np.integer)
-    ), "SeedKernel last ensures seed stays integer"
+    assert isinstance(result["seed"], (int, np.integer)), (
+        "SeedKernel last ensures seed stays integer"
+    )
