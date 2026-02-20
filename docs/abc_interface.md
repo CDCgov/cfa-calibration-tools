@@ -59,29 +59,45 @@ class ABCSampler:
         previous_population = self.sample_particles_from_priors()
 
         for generation in range(len(self.tolerance_values)):
-            current_population = ParticlePopulation() # Inits a new population
-            self.set_population(previous_population) # sets `all_particles` to the previous population
+            print(
+                f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}... previous population size is {previous_population.size}"
+            )
+            current_population = ParticlePopulation()  # Inits a new population
+            self.set_population(
+                previous_population
+            )  # sets `all_particles` to the previous population
 
             # Rejection sampling algorithm
+            attempts = 0
             while current_population.size < self.generation_particle_count:
-
+                if attempts % 100 == 0:
+                    print(
+                        f"Attempt {attempts}... current population size is {current_population.size}. Acceptance rate is {current_population.size / attempts if attempts > 0 else 0:.4f}",
+                        end="\r",
+                    )
+                attempts += 1
                 # Create the parameter inputs for the runner by sampling perturbed value from previous population
                 particle = self.sample_particle()
                 perturbed_particle = self.perturb_particle(particle)
                 params = self.particles_to_params(perturbed_particle)
 
                 # Generate the distance metric from model run
-                self.model_runner.run(params)
-                err = self.outputs_to_distance()
+                outputs = self.model_runner.simulate(params)
+                err = self.outputs_to_distance(outputs, self.target_data)
 
                 # Add the particle to the population if accepted
                 if err < self.tolerance_values[generation]:
-                    perturbed_particle.weight = self.calculate_weight(perturbed_particle)
+                    perturbed_particle.weight = self.calculate_weight(
+                        perturbed_particle
+                    )
                     current_population.add(perturbed_particle)
 
             # Archive the previous generation population and make new population for next step
-            self.previous_population_archive[generation] = previous_population
-            previous_population = current_population.normalize_weights()
+            self.previous_population_archive.update(
+                {generation: previous_population}
+            )
+            current_population.normalize_weights()
+            previous_population = current_population
 
         # Store posterior particle population
         self.posterior_population = current_population
