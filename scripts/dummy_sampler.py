@@ -66,7 +66,7 @@ sampler = ABCSampler(
     outputs_to_distance=outputs_to_distance,
     target_data=0.5,
     model_runner=DummyModelRunner(),
-    seed=None,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
+    seed=123,
 )
 
 sampler.run()
@@ -74,4 +74,5 @@ sampler.run()
 # Print IQR of param1 in the posterior particles
 posterior_particles = sampler.get_posterior_particles()
 param1_values = [p.state["param1"] for p in posterior_particles.all_particles]
+print(posterior_particles)
 print(np.percentile(param1_values, 25), np.percentile(param1_values, 75))

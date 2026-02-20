@@ -40,7 +40,7 @@ class _ParticleUpdater:
     ) -> Particle:
         for _ in range(max_attempts):
             new_particle_state = self.perturbation_kernel.perturb(
-                particle.state
+                particle.state, self.seed_sequence
             )
             if self.priors.probability_density(new_particle_state) > 0:
                 return Particle(
