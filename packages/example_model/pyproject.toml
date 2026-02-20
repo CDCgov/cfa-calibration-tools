@@ -8,10 +8,10 @@ authors = [
     { name = "Beau B. Bruce", email = "lue7@cdc.gov" },
 ]
 requires-python = ">=3.12"
-dependencies = [
-    "numpy>=2.3.4",
-]
+dependencies = ["numpy>=2.3.4", "cfa-mrp"]
 
+[project.scripts]
+example_model = "example_model.example_model:main"
 
 [build-system]
 requires = ["uv_build>=0.9.21,<0.10.0"]
