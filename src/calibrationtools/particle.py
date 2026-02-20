@@ -9,6 +9,7 @@ class Particle:
     def __repr__(self):
         return f"Particle(state={self.state}, weight={self.weight})"
 
+
 class ParticlePopulation:
     def __init__(
         self,
@@ -27,6 +28,7 @@ class ParticlePopulation:
 
             for state, weight in zip(initial_states, initial_weights):
                 self.add(Particle(state=state, weight=weight))
+
     def __repr__(self):
         return f"ParticlePopulation(size={self.size}, ESS={self.ess})"
 
@@ -40,7 +42,7 @@ class ParticlePopulation:
         if total_weight == 0:
             return 0
         else:
-            return (total_weight ** 2) / sum(w ** 2 for w in self.weights.values())
+            return (total_weight**2) / sum(w**2 for w in self.weights.values())
 
     @property
     def size(self):

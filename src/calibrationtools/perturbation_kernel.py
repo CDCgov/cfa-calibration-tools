@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
-from numpy.random import default_rng
+from numpy.random import SeedSequence
 from scipy.stats import multivariate_normal, norm
+
+from .spawn_rng import spawn_rng
 
 
 class PerturbationKernel(ABC):
@@ -27,7 +29,7 @@ class PerturbationKernel(ABC):
         return result
 
     @abstractmethod
-    def perturb(self, state: dict, seed: int | None) -> dict:
+    def perturb(self, state: dict, seed: SeedSequence | None) -> dict:
         raise NotImplementedError("Subclasses must implement this method")
 
     @abstractmethod
@@ -53,9 +55,9 @@ class MultiParameterPerturbationKernel(PerturbationKernel, ABC):
 
 
 class SeedKernel(SingleParameterPerturbationKernel):
-    def perturb(self, from_state: dict, seed: int | None) -> dict:
+    def perturb(self, from_state: dict, seed: SeedSequence | None) -> dict:
         results = from_state.copy()
-        results[self.params[0]] = default_rng(seed).integers(0, 2**32 - 1)
+        results[self.params[0]] = spawn_rng(seed).integers(0, 2**32 - 1)
         return results
 
     def transition_probability(self, to_state, from_state):
@@ -69,10 +71,10 @@ class UniformKernel(SingleParameterPerturbationKernel):
         super().__init__(param)
         self.width = width
 
-    def perturb(self, from_state: dict, seed: int | None) -> dict:
+    def perturb(self, from_state: dict, seed: SeedSequence | None) -> dict:
         return self.change_state_values(
             from_state,
-            default_rng(seed).uniform(
+            spawn_rng(seed).uniform(
                 from_state[self.params[0]] - self.width,
                 from_state[self.params[0]] + self.width,
             ),
@@ -96,10 +98,10 @@ class NormalKernel(SingleParameterPerturbationKernel):
         super().__init__(param)
         self.std_dev = std_dev
 
-    def perturb(self, from_state: dict, seed: int | None) -> dict:
+    def perturb(self, from_state: dict, seed: SeedSequence | None) -> dict:
         return self.change_state_values(
             from_state,
-            default_rng(seed).normal(from_state[self.params[0]], self.std_dev),
+            spawn_rng(seed).normal(from_state[self.params[0]], self.std_dev),
         )
 
     def transition_probability(
@@ -126,7 +128,9 @@ class IndependentKernels(MultiParameterPerturbationKernel, ABC):
         super().__init__()
         self.kernels = kernels if kernels is not None else []
 
-    def perturb(self, from_state: dict, seed: int | None = None) -> dict:
+    def perturb(
+        self, from_state: dict, seed: SeedSequence | None = None
+    ) -> dict:
         result = from_state.copy()
         for kernel in self.kernels:
             perturbed_values = kernel.perturb(result, seed)
@@ -153,12 +157,12 @@ class MultivariateNormalKernel(MultiParameterPerturbationKernel):
         self.params = params
         self.cov_matrix = cov_matrix
 
-    def perturb(self, from_state: dict, seed: int | None) -> dict:
+    def perturb(self, from_state: dict, seed: SeedSequence | None) -> dict:
         if self.cov_matrix is None:
             raise ValueError(
                 "Covariance matrix must be set prior to calling perturb."
             )
-        rng = default_rng(seed)
+        rng = spawn_rng(seed)
         from_values = [from_state[param] for param in self.params]
         return self.change_state_values(
             from_state,
