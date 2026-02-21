@@ -43,7 +43,7 @@ class ABCSampler:
             self.seed_sequence,
         )
 
-    def run(self):
+    def run(self, **kwargs: Any):
         previous_population = self.sample_particles_from_priors()
 
         for generation in range(len(self.tolerance_values)):
@@ -67,7 +67,7 @@ class ABCSampler:
                 # Create the parameter inputs for the runner by sampling perturbed value from previous population
                 particle = self.sample_particle()
                 perturbed_particle = self.perturb_particle(particle)
-                params = self.particles_to_params(perturbed_particle)
+                params = self.particles_to_params(perturbed_particle, **kwargs)
 
                 # Generate the distance metric from model run
                 outputs = self.model_runner.simulate(params)
