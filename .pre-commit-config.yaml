@@ -1,5 +1,4 @@
 repos:
-#####
 # Basic file cleanliness
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -10,7 +9,7 @@ repos:
     -   id: end-of-file-fixer
     -   id: mixed-line-ending
     -   id: trailing-whitespace
-#####
+
 # Python
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.14.6
@@ -25,37 +24,27 @@ repos:
     - id: ruff-format
       args: ['--line-length', '79']
 
-- repo: local
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.10.4
   hooks:
-    - id: uv-sync
-      name: UV sync dependencies
-      entry: uv sync --dev --locked --all-packages --all-extras
-      language: system
-      pass_filenames: false
+    - id: uv-export
+      args: ['--all-packages']
 
-#####
+- repo: https://github.com/allganize/ty-pre-commit
+  # Ty version.
+  rev: v0.0.18
+  hooks:
+    # Run the type checker.
+    - id: ty-check
+      additional_dependencies: [pytest>=9.0.2]
+
 # R
 -   repo: https://github.com/lorenzwalthert/precommit
     rev: v0.4.3.9017
     hooks:
     -   id: style-files
     -   id: lintr
-#####
-# Java
-- repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-  rev: v2.15.0
-  hooks:
-  - id: pretty-format-java
-    args: [--aosp,--autofix]
-#####
-# Julia
-# Due to lack of first-class Julia support, this needs Julia local install
-#   and JuliaFormatter.jl installed in the library
-# - repo: https://github.com/domluna/JuliaFormatter.jl
-#   rev: v1.0.39
-#   hooks:
-#   - id: julia-formatter
-#####
+
 # Secrets
 -   repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
@@ -63,6 +52,8 @@ repos:
     -   id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
         exclude: package.lock.json
+
+# Rust
 -   repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
