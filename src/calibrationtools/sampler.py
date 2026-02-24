@@ -2,7 +2,8 @@ from typing import Any, Callable
 
 from numpy.random import SeedSequence
 
-from .particle import Particle, ParticlePopulation
+from .particle import Particle
+from .particle_population import ParticlePopulation
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution

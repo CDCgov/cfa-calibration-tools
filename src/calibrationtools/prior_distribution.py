@@ -5,6 +5,8 @@ import numpy as np
 from numpy.random import SeedSequence
 from scipy.stats import expon, lognorm, norm
 
+from calibrationtools import Particle
+
 from .spawn_rng import spawn_rng
 
 
@@ -15,11 +17,13 @@ class PriorDistribution(ABC):
         self.params = params
 
         @abstractmethod
-        def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+        def sample(
+            self, n: int, seed: SeedSequence | None
+        ) -> Iterator[Particle]:
             raise NotImplementedError("Subclasses must implement this method")
 
         @abstractmethod
-        def probability_density(self, state: dict) -> float:
+        def probability_density(self, particle: Particle) -> float:
             raise NotImplementedError("Subclasses must implement this method")
 
 
@@ -50,7 +54,7 @@ class SingleParameterPriorDistribution(PriorDistribution):
 
 
 ## ----------------------------------------------
-# Single parameter prior types ------
+## Single parameter prior types
 ## ----------------------------------------------
 class UniformPrior(SingleParameterPriorDistribution):
     min: float
@@ -61,13 +65,13 @@ class UniformPrior(SingleParameterPriorDistribution):
         self.min = min
         self.max = max
 
-    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[Particle]:
         rng = spawn_rng(seed)
         for _ in range(n):
-            yield {self.param: rng.uniform(self.min, self.max)}
+            yield Particle({self.param: rng.uniform(self.min, self.max)})
 
-    def probability_density(self, state: dict) -> float:
-        if self.min <= state[self.params[0]] <= self.max:
+    def probability_density(self, particle: Particle) -> float:
+        if self.min <= particle[self.params[0]] <= self.max:
             return 1.0 / (self.max - self.min)
         else:
             return 0.0
@@ -82,14 +86,14 @@ class NormalPrior(SingleParameterPriorDistribution):
         self.mean = mean
         self.std_dev = std_dev
 
-    def sample(self, n: int, seed: int | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[Particle]:
         rng = spawn_rng(seed)
         for _ in range(n):
-            yield {self.param: rng.normal(self.mean, self.std_dev)}
+            yield Particle({self.param: rng.normal(self.mean, self.std_dev)})
 
-    def probability_density(self, state: dict) -> float:
+    def probability_density(self, particle: Particle) -> float:
         return norm.pdf(
-            state[self.params[0]], loc=self.mean, scale=self.std_dev
+            particle[self.params[0]], loc=self.mean, scale=self.std_dev
         )
 
 
@@ -102,14 +106,16 @@ class LogNormalPrior(SingleParameterPriorDistribution):
         self.mean = mean
         self.std_dev = std_dev
 
-    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[Particle]:
         rng = spawn_rng(seed)
         for _ in range(n):
-            yield {self.param: rng.lognormal(self.mean, self.std_dev)}
+            yield Particle(
+                {self.param: rng.lognormal(self.mean, self.std_dev)}
+            )
 
-    def probability_density(self, state: dict) -> float:
+    def probability_density(self, particle: Particle) -> float:
         return lognorm.pdf(
-            state[self.params[0]], s=self.std_dev, scale=np.exp(self.mean)
+            particle[self.params[0]], s=self.std_dev, scale=np.exp(self.mean)
         )
 
 
@@ -120,33 +126,33 @@ class ExponentialPrior(SingleParameterPriorDistribution):
         super().__init__(param)
         self.rate = rate
 
-    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[Particle]:
         rng = spawn_rng(seed)
         for _ in range(n):
-            yield {self.param: rng.exponential(1 / self.rate)}
+            yield Particle({self.param: rng.exponential(1 / self.rate)})
 
-    def probability_density(self, state: dict) -> float:
-        return float(expon.pdf(state[self.params[0]], scale=1 / self.rate))
+    def probability_density(self, particle: Particle) -> float:
+        return float(expon.pdf(particle[self.params[0]], scale=1 / self.rate))
 
 
 class SeedPrior(SingleParameterPriorDistribution):
     def __init__(self, param: str) -> None:
         super().__init__(param)
 
-    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[Particle]:
         rng = spawn_rng(seed)
         for _ in range(n):
-            yield {self.param: rng.integers(0, 2**32)}
+            yield Particle({self.param: rng.integers(0, 2**32)})
 
-    def probability_density(self, state: dict) -> float:
-        if self.param in state:
+    def probability_density(self, particle: Particle) -> float:
+        if self.param in particle:
             return 1.0
         else:
             return 0.0
 
 
 ### ----------------------------------------------
-### Multi-parameter prior types ------
+### Multi-parameter prior types
 ### ----------------------------------------------
 class IndependentPriors(MultiParameterPriorDistribution):
     """A multi-parameter prior distribution where each parameter is sampled independently."""
@@ -154,15 +160,15 @@ class IndependentPriors(MultiParameterPriorDistribution):
     def __init__(self, priors: list[PriorDistribution]) -> None:
         super().__init__(priors)
 
-    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[dict]:
+    def sample(self, n: int, seed: SeedSequence | None) -> Iterator[Particle]:
         for _ in range(n):
             sample = {}
             for prior in self.priors:
                 sample.update(next(prior.sample(1, seed)))
-            yield sample
+            yield Particle(sample)
 
-    def probability_density(self, state: dict) -> float:
+    def probability_density(self, particle: Particle) -> float:
         density = 1.0
         for prior in self.priors:
-            density *= prior.probability_density(state)
+            density *= prior.probability_density(particle)
         return density

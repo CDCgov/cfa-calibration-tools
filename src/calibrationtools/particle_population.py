@@ -1,4 +1,4 @@
-from typing import Any, Sequence
+from typing import Sequence
 
 from .particle import Particle
 
@@ -6,40 +6,40 @@ from .particle import Particle
 class ParticlePopulation:
     def __init__(
         self,
-        initial_states: Sequence[dict[str, Any]] | None = None,
-        initial_weights: Sequence[float] | None = None,
+        states: Sequence[dict[str, any]] | None = None,
+        weights: Sequence[float] | None = None,
     ):
-        self._particles: list[Particle] = []
+        self._particles: list[Particle] = (
+            [] if states is None else [Particle(x) for x in states]
+        )
 
-        initial_states = [] if initial_states is None else initial_states
-        initial_weights = [] if initial_weights is None else initial_weights
+        if weights is None:
+            self._weights = [1.0] * len(self._particles)
+        else:
+            self._weights = list(weights)
 
-        n_states = len(initial_states)
-
-        if len(initial_weights) > 0 and len(initial_weights) != n_states:
+        if len(self._weights) > 0 and len(self._weights) != len(
+            self._particles
+        ):
             raise ValueError(
-                "Length of initial_weights must match length of initial_states"
-            )
-
-        if n_states > 0 and not initial_weights:
-            initial_weights: list[float] = [1.0] * n_states
-
-        for state, weight in zip(initial_states, initial_weights):
-            self.add(
-                Particle(state=state, weight=weight), normalize_weights=False
+                "Length of weights must match length of particles"
             )
 
         self.normalize_weights()
-
-    def __repr__(self):
-        return f"ParticlePopulation(size={self.size}, ESS={self.ess})"
 
     @property
     def particles(self) -> list[Particle]:
         return self._particles
 
-    def add(self, particle: Particle, normalize_weights: bool = True):
-        self._particles.append(particle)
+    @property
+    def weights(self) -> list[float]:
+        return self._weights
+
+    def add_particle(
+        self, state: dict[str, any], weight=1.0, normalize_weights: bool = True
+    ):
+        self._particles.append(Particle(state))
+        self._weights.append(weight)
         if normalize_weights:
             self.normalize_weights()
 
@@ -48,9 +48,7 @@ class ParticlePopulation:
         if self.total_weight == 0:
             return 0.0
         else:
-            return (self.total_weight**2) / sum(
-                p.weight**2.0 for p in self.particles
-            )
+            return (self.total_weight**2) / sum(w**2 for w in self.weights)
 
     @property
     def is_empty(self) -> bool:
@@ -64,12 +62,15 @@ class ParticlePopulation:
     def total_weight(self) -> float:
         if self.is_empty:
             return 0.0
-        return sum(p.weight for p in self.particles)
+        return sum(self.weights)
 
     def normalize_weights(self):
         if self.is_empty:
             return
         else:
             normalization_factor = 1.0 / self.total_weight
-            for p in self.particles:
-                p.weight *= normalization_factor
+            for i in range(self.size):
+                self.weights[i] *= normalization_factor
+
+    def __repr__(self):
+        return f"ParticlePopulation(size={self.size}, ESS={self.ess})"

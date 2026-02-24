@@ -1,9 +1,11 @@
+import py
 import pytest
 from numpy.random import SeedSequence
 
 from calibrationtools import (
     IndependentKernels,
     NormalKernel,
+    Particle,
     SeedKernel,
 )
 from calibrationtools.prior_distribution import (
@@ -11,6 +13,21 @@ from calibrationtools.prior_distribution import (
     SeedPrior,
     UniformPrior,
 )
+
+
+@pytest.fixture
+def state():
+    return {"x": 1.0, "y": 2.0}
+
+
+@pytest.fixture
+def particle(state):
+    return Particle(state)
+
+
+@pytest.fixture
+def state2():
+    return {"x": 3.0, "y": 4.0}
 
 
 @pytest.fixture

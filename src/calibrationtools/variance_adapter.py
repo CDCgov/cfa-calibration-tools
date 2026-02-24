@@ -3,8 +3,11 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from .particle import ParticlePopulation
+from calibrationtools import PerturbationKernel
+
+from .particle_population import ParticlePopulation
 from .perturbation_kernel import (
+    CompositePerturbationKernel,
     MultiParameterPerturbationKernel,
     MultivariateNormalKernel,
     NormalKernel,
@@ -24,11 +27,20 @@ class VarianceAdapter(ABC):
         pass
 
 
+class AdaptIdentityVariance(VarianceAdapter):
+    """No adaptation of variance."""
+
+    def adapt(
+        self, population: ParticlePopulation, kernel: PerturbationKernel
+    ) -> None:
+        pass
+
+
 class AdaptNormalVariance(VarianceAdapter):
     def adapt(
         self,
         population: ParticlePopulation,
-        kernel: MultiParameterPerturbationKernel,
+        kernel: CompositePerturbationKernel,
     ) -> None:
         normal_kernel: NormalKernel | None = None
         for k in kernel.kernels:
@@ -37,11 +49,12 @@ class AdaptNormalVariance(VarianceAdapter):
                 break
         if normal_kernel is None:
             return
-        states = [
-            particle.state[normal_kernel.params[0]]
-            for particle in population.all_particles
+
+        norm_params = [
+            particle[normal_kernel.params[0]]
+            for particle in population.particles
         ]
-        var = np.var(states)
+        var = np.var(norm_params)
         normal_kernel.std_dev = math.sqrt(var * 2.0)
 
 
@@ -49,7 +62,7 @@ class AdaptMultivariateNormalVariance(VarianceAdapter):
     def adapt(
         self,
         population: ParticlePopulation,
-        kernel: MultiParameterPerturbationKernel,
+        kernel: CompositePerturbationKernel,
     ) -> None:
         mvn_kernel: MultivariateNormalKernel | None = None
         for k in kernel.kernels:
@@ -60,8 +73,8 @@ class AdaptMultivariateNormalVariance(VarianceAdapter):
             return
         states_matrix = np.array(
             [
-                [particle.state[param] for param in mvn_kernel.params]
-                for particle in population.all_particles
+                [particle[param] for param in mvn_kernel.params]
+                for particle in population.particles
             ]
         )
         cov_matrix = np.cov(states_matrix.T)

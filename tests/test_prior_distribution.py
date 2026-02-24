@@ -3,7 +3,12 @@ from math import exp
 from numpy.random import SeedSequence
 from scipy.stats import expon, lognorm, norm
 
-from calibrationtools import IndependentPriors, SeedPrior, UniformPrior
+from calibrationtools import (
+    IndependentPriors,
+    Particle,
+    SeedPrior,
+    UniformPrior,
+)
 from calibrationtools.prior_distribution import (
     ExponentialPrior,
     LogNormalPrior,
@@ -30,9 +35,9 @@ def test_uniform_prior_sampling(
 def test_uniform_prior_probability() -> None:
     prior = UniformPrior(param="x", min=0.0, max=10.0)
 
-    assert prior.probability_density({"x": 5.0}) == 1.0 / 10.0
-    assert prior.probability_density({"x": -1.0}) == 0.0
-    assert prior.probability_density({"x": 11.0}) == 0.0
+    assert prior.probability_density(Particle({"x": 5.0})) == 1.0 / 10.0
+    assert prior.probability_density(Particle({"x": -1.0})) == 0.0
+    assert prior.probability_density(Particle({"x": 11.0})) == 0.0
 
 
 def test_seed_prior_sampling(
