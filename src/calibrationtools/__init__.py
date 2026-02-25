@@ -1,4 +1,5 @@
-from .particle import Particle, ParticlePopulation
+from .particle import Particle
+from .particle_population import ParticlePopulation
 from .perturbation_kernel import (
     IndependentKernels,
     MultivariateNormalKernel,

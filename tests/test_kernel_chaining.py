@@ -1,9 +1,10 @@
 """Tests for kernel chaining behavior in CompositePerturbationKernel.
 
 These tests verify that kernels are applied sequentially (each sees the
-result from the previous kernel) rather than all seeing the original state.
+result from the previous kernel) rather than all seeing the original particle.
 """
 
+import copy
 from typing import Any
 
 import numpy as np
@@ -12,9 +13,10 @@ from numpy.random import SeedSequence
 from calibrationtools import (
     IndependentKernels,
     MultivariateNormalKernel,
+    Particle,
+    PerturbationKernel,
     SeedKernel,
 )
-from calibrationtools.perturbation_kernel import PerturbationKernel
 
 
 def test_kernels_chain_sequentially() -> None:
@@ -30,15 +32,15 @@ def test_kernels_chain_sequentially() -> None:
             self.received_type: Any | None = None
 
         def perturb(
-            self, from_state: dict, seed_sequence: SeedSequence
-        ) -> dict:
-            self.received_type = type(from_state.get("x"))
-            result = from_state.copy()
-            result["y"] = 999
-            return result
+            self, from_particle: Particle, seed_sequence: SeedSequence
+        ) -> Particle:
+            self.received_type = type(from_particle.get("x"))
+            to_particle = copy.deepcopy(from_particle)
+            to_particle["y"] = 999
+            return to_particle
 
         def transition_probability(
-            self, to_state: dict, from_state: dict
+            self, to_particle: Particle, from_particle: Particle
         ) -> float:
             return 1.0
 
@@ -48,10 +50,10 @@ def test_kernels_chain_sequentially() -> None:
     # If they don't chain, type_checker should see original int
     kernels = IndependentKernels([mvn_kernel, type_checker])
 
-    initial_state = {"x": 42, "y": 0}
+    initial_particle = Particle({"x": 42, "y": 0})
     seed_seq = SeedSequence(123)
 
-    result = kernels.perturb(initial_state, seed_seq)
+    result = kernels.perturb(initial_particle, seed_seq)
 
     # MVN should have made x a float
     assert isinstance(result["x"], (float, np.floating)), (
@@ -77,11 +79,11 @@ def test_correct_kernel_order_preserves_types() -> None:
         ]
     )
 
-    initial_state = {"seed": 12345, "x": 1.0, "y": 2.0}
+    initial_particle = Particle({"seed": 12345, "x": 1.0, "y": 2.0})
     seed_seq = SeedSequence(999)
 
     # Should complete without error
-    result = correct_kernels.perturb(initial_state, seed_seq)
+    result = correct_kernels.perturb(initial_particle, seed_seq)
 
     # Seed should be integer
     assert isinstance(result["seed"], (int, np.integer)), (
@@ -109,10 +111,10 @@ def test_seed_kernel_order_matters_with_chaining() -> None:
         ]
     )
 
-    initial_state = {"seed": 12345, "x": 1.0}
+    initial_particle = Particle({"seed": 12345, "x": 1.0})
     seed_seq = SeedSequence(999)
 
-    result = bad_order_1.perturb(initial_state, seed_seq)
+    result = bad_order_1.perturb(initial_particle, seed_seq)
 
     # MVN corrupts the integer seed to float
     assert isinstance(result["seed"], (float, np.floating)), (
@@ -128,7 +130,7 @@ def test_seed_kernel_order_matters_with_chaining() -> None:
         ]
     )
 
-    result = good_order.perturb(initial_state, seed_seq)
+    result = good_order.perturb(initial_particle, seed_seq)
 
     # SeedKernel ensures integer
     assert isinstance(result["seed"], (int, np.integer)), (
