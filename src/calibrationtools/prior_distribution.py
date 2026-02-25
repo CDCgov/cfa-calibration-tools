@@ -63,6 +63,10 @@ class UniformPrior(SingleParameterPriorDistribution):
         super().__init__(param)
         self.min = min
         self.max = max
+        if self.min >= self.max:
+            raise ValueError(
+                "Minimum must be less than maximum for UniformPrior."
+            )
 
     def sample(
         self, n: int, seed: SeedSequence | None
@@ -87,6 +91,10 @@ class NormalPrior(SingleParameterPriorDistribution):
         super().__init__(param)
         self.mean = mean
         self.std_dev = std_dev
+        if self.std_dev <= 0:
+            raise ValueError(
+                "Standard deviation must be positive for NormalPrior."
+            )
 
     def sample(
         self, n: int, seed: SeedSequence | None
@@ -110,6 +118,10 @@ class LogNormalPrior(SingleParameterPriorDistribution):
         super().__init__(param)
         self.mean = mean
         self.std_dev = std_dev
+        if self.std_dev <= 0:
+            raise ValueError(
+                "Standard deviation must be positive for LogNormalPrior."
+            )
 
     def sample(
         self, n: int, seed: SeedSequence | None
@@ -132,6 +144,8 @@ class ExponentialPrior(SingleParameterPriorDistribution):
     def __init__(self, param: str, rate: float) -> None:
         super().__init__(param)
         self.rate = rate
+        if self.rate <= 0:
+            raise ValueError("Rate must be positive for ExponentialPrior.")
 
     def sample(
         self, n: int, seed: SeedSequence | None

@@ -24,33 +24,35 @@ class ABCSampler:
         variance_adapter: VarianceAdapter,
         max_attempts_per_proposal: int = 10_000,
         seed: int | None = None,
+        verbose: bool = True,
     ):
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
         self.tolerance_values = tolerance_values
-        self.priors = priors
-        self.perturbation_kernel = perturbation_kernel
-        self.variance_adapter = variance_adapter
+        self._priors = priors
+        self._perturbation_kernel = perturbation_kernel
+        self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
         self.outputs_to_distance = outputs_to_distance
         self.target_data = target_data
         self.model_runner = model_runner
         self.seed = seed
-        self.seed_sequence = SeedSequence(seed)
+        self._seed_sequence = SeedSequence(seed)
         self.previous_population_archive: dict[int, ParticlePopulation] = {}
+        self.verbose = verbose
 
         self._updater = _ParticleUpdater(
-            self.perturbation_kernel,
-            self.priors,
-            self.variance_adapter,
-            self.seed_sequence,
+            self._perturbation_kernel,
+            self._priors,
+            self._variance_adapter,
+            self._seed_sequence,
         )
 
     @property
-    def population(self) -> ParticlePopulation:
+    def particle_population(self) -> ParticlePopulation:
         return self._updater.particle_population
 
-    @population.setter
+    @particle_population.setter
     def particle_population(self, population: ParticlePopulation):
         self._updater.set_particle_population(population)
 
@@ -59,14 +61,15 @@ class ABCSampler:
         proposed_population = ParticlePopulation()
 
         for generation in range(len(self.tolerance_values)):
-            print(
-                f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
-            )
+            if self.verbose:
+                print(
+                    f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
+                )
 
             # Rejection sampling algorithm
             attempts = 0
             while proposed_population.size < self.generation_particle_count:
-                if attempts % 100 == 0:
+                if self.verbose and attempts > 0 and attempts % 100 == 0:
                     print(
                         f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
                         end="\r",
@@ -104,7 +107,7 @@ class ABCSampler:
         """Return a particle from the prior distribution"""
         if not n:
             n = self.generation_particle_count
-        sample_states = self.priors.sample(n, self.seed_sequence)
+        sample_states = self._priors.sample(n, self._seed_sequence)
         population = ParticlePopulation(states=sample_states)
         return population
 
