@@ -56,7 +56,7 @@ class ABCSampler:
     def particle_population(self, population: ParticlePopulation):
         self._updater.set_particle_population(population)
 
-    def run(self):
+    def run(self, **kwargs: Any):
         self.particle_population = self.sample_particles_from_priors()
         proposed_population = ParticlePopulation()
 
@@ -77,7 +77,7 @@ class ABCSampler:
                 attempts += 1
                 # Create the parameter inputs for the runner by sampling perturbed value from previous population
                 proposed_particle = self.sample_proposed_particle()
-                params = self.particles_to_params(proposed_particle)
+                params = self.particles_to_params(proposed_particle, **kwargs)
 
                 # Generate the distance metric from model run
                 outputs = self.model_runner.simulate(params)

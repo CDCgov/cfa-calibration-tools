@@ -36,7 +36,6 @@
 # !your_data_file.csv
 # !your_data_directory/
 
-
 #####
 # Python
 # https://github.com/github/gitignore/blob/main/Python.gitignore
@@ -326,6 +325,8 @@ replay_pid*
 
 #Emacs
 *~
+*.org
+
 #####
 # Rust
 # https://github.com/github/gitignore/blob/main/Rust.gitignore
