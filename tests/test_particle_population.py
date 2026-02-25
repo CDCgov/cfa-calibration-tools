@@ -1,10 +1,10 @@
 import pytest
 
-from calibrationtools import ParticlePopulation
+from calibrationtools import Particle, ParticlePopulation
 
 
 @pytest.fixture
-def initial_states(state, state2) -> list[dict[str, any]]:
+def initial_states(state, state2) -> list[dict[str, Particle]]:
     return [state, state2]
 
 
@@ -73,7 +73,7 @@ def test_particle_population_normalize_weights() -> None:
 def test_empty_particle_population_properties() -> None:
     population = ParticlePopulation()
 
-    assert population.is_empty is True
+    assert population.is_empty() is True
     assert population.size == 0
     assert population.total_weight == 0.0
     assert population.ess == 0.0

@@ -8,9 +8,9 @@ from calibrationtools import PerturbationKernel
 from .particle_population import ParticlePopulation
 from .perturbation_kernel import (
     CompositePerturbationKernel,
-    MultiParameterPerturbationKernel,
     MultivariateNormalKernel,
     NormalKernel,
+    UniformKernel,
 )
 
 
@@ -22,7 +22,7 @@ class VarianceAdapter(ABC):
     def adapt(
         self,
         population: ParticlePopulation,
-        kernel: MultivariateNormalKernel | NormalKernel,
+        kernel: PerturbationKernel,
     ) -> None:
         pass
 
@@ -31,7 +31,9 @@ class AdaptIdentityVariance(VarianceAdapter):
     """No adaptation of variance."""
 
     def adapt(
-        self, population: ParticlePopulation, kernel: PerturbationKernel
+        self,
+        population: ParticlePopulation,
+        kernel: PerturbationKernel,
     ) -> None:
         pass
 
@@ -40,13 +42,16 @@ class AdaptNormalVariance(VarianceAdapter):
     def adapt(
         self,
         population: ParticlePopulation,
-        kernel: CompositePerturbationKernel,
+        kernel: PerturbationKernel,
     ) -> None:
         normal_kernel: NormalKernel | None = None
-        for k in kernel.kernels:
-            if isinstance(k, NormalKernel):
-                normal_kernel = k
-                break
+        if isinstance(kernel, NormalKernel):
+            normal_kernel = kernel
+        elif isinstance(kernel, CompositePerturbationKernel):
+            for k in kernel.kernels:
+                if isinstance(k, NormalKernel):
+                    normal_kernel = k
+                    break
         if normal_kernel is None:
             return
 
@@ -58,17 +63,45 @@ class AdaptNormalVariance(VarianceAdapter):
         normal_kernel.std_dev = math.sqrt(var * 2.0)
 
 
+class AdaptUniformVariance(VarianceAdapter):
+    def adapt(
+        self,
+        population: ParticlePopulation,
+        kernel: PerturbationKernel,
+    ) -> None:
+        uniform_kernel: UniformKernel | None = None
+        if isinstance(kernel, UniformKernel):
+            uniform_kernel = kernel
+        elif isinstance(kernel, CompositePerturbationKernel):
+            for k in kernel.kernels:
+                if isinstance(k, UniformKernel):
+                    uniform_kernel = k
+                    break
+        if uniform_kernel is None:
+            return
+
+        unif_params = [
+            particle[uniform_kernel.params[0]]
+            for particle in population.particles
+        ]
+        var = np.var(unif_params)
+        uniform_kernel.width = math.sqrt(var * 2.0) * 2.0
+
+
 class AdaptMultivariateNormalVariance(VarianceAdapter):
     def adapt(
         self,
         population: ParticlePopulation,
-        kernel: CompositePerturbationKernel,
+        kernel: PerturbationKernel,
     ) -> None:
         mvn_kernel: MultivariateNormalKernel | None = None
-        for k in kernel.kernels:
-            if isinstance(k, MultivariateNormalKernel):
-                mvn_kernel = k
-                break
+        if isinstance(kernel, MultivariateNormalKernel):
+            mvn_kernel = kernel
+        elif isinstance(kernel, CompositePerturbationKernel):
+            for k in kernel.kernels:
+                if isinstance(k, MultivariateNormalKernel):
+                    mvn_kernel = k
+                    break
         if mvn_kernel is None:
             return
         states_matrix = np.array(

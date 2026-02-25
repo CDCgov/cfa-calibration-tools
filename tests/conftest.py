@@ -1,4 +1,3 @@
-import py
 import pytest
 from numpy.random import SeedSequence
 

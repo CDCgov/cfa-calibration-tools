@@ -37,6 +37,7 @@ repos:
     # Run the type checker.
     - id: ty-check
       additional_dependencies: [pytest>=9.0.2]
+      args: ['--ignore=unresolved-import']
 
 # R
 -   repo: https://github.com/lorenzwalthert/precommit

@@ -49,7 +49,7 @@ class DummyModelRunner:
 
 
 def particles_to_params(particle):
-    return particle.state
+    return particle
 
 
 def outputs_to_distance(model_output, target_data):
@@ -73,6 +73,6 @@ sampler.run()
 
 # Print IQR of param1 in the posterior particles
 posterior_particles = sampler.get_posterior_particles()
-param1_values = [p.state["param1"] for p in posterior_particles.all_particles]
+param1_values = [p["param1"] for p in posterior_particles.particles]
 print(posterior_particles)
 print(np.percentile(param1_values, 25), np.percentile(param1_values, 75))

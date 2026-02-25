@@ -23,19 +23,19 @@ class PerturbationKernel(ABC):
     ) -> Particle:
         """Change the particle values based on the perturbation kernel."""
         to_particle = copy.deepcopy(from_particle)
-        if len(self.params) == 1:
-            if isinstance(perturbed_values, np.ndarray):
+        if isinstance(perturbed_values, np.ndarray):
+            if len(perturbed_values) == 1:
                 to_particle[self.params[0]] = type(perturbed_values[0])
             else:
-                to_particle[self.params[0]] = type(perturbed_values)
+                for i, param in enumerate(self.params):
+                    to_particle[param] = type(perturbed_values[i])
         else:
-            for i, param in enumerate(self.params):
-                to_particle[param] = type(perturbed_values[i])
+            to_particle[self.params[0]] = type(perturbed_values)
         return to_particle
 
     @abstractmethod
     def perturb(
-        self, particle: Particle, seed: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -125,10 +125,12 @@ class CompositePerturbationKernel(PerturbationKernel, ABC):
 
 class SeedKernel(SingleParameterPerturbationKernel):
     def perturb(
-        self, from_particle: Particle, seed: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         to_particle = copy.deepcopy(from_particle)
-        to_particle[self.params[0]] = spawn_rng(seed).integers(0, 2**32 - 1)
+        to_particle[self.params[0]] = spawn_rng(seed_sequence).integers(
+            0, 2**32 - 1
+        )
         return to_particle
 
     def transition_probability(
@@ -145,11 +147,11 @@ class UniformKernel(SingleParameterPerturbationKernel):
         self.width = width
 
     def perturb(
-        self, from_particle: Particle, seed: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         return self.change_particle_values(
             from_particle,
-            spawn_rng(seed).uniform(
+            spawn_rng(seed_sequence).uniform(
                 from_particle[self.params[0]] - 0.5 * self.width,
                 from_particle[self.params[0]] + 0.5 * self.width,
             ),
@@ -174,11 +176,11 @@ class NormalKernel(SingleParameterPerturbationKernel):
         self.std_dev = std_dev
 
     def perturb(
-        self, from_particle: Particle, seed: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         return self.change_particle_values(
             from_particle,
-            spawn_rng(seed).normal(
+            spawn_rng(seed_sequence).normal(
                 from_particle[self.params[0]], self.std_dev
             ),
         )
@@ -218,13 +220,13 @@ class MultivariateNormalKernel(MultiParameterPerturbationKernel):
         self.cov_matrix = cov_matrix
 
     def perturb(
-        self, from_particle: Particle, seed: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         if self.cov_matrix is None:
             raise ValueError(
                 "Covariance matrix must be set prior to calling perturb."
             )
-        rng = spawn_rng(seed)
+        rng = spawn_rng(seed_sequence)
         from_values = [from_particle[param] for param in self.params]
         return self.change_particle_values(
             from_particle,

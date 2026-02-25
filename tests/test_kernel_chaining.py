@@ -5,6 +5,7 @@ result from the previous kernel) rather than all seeing the original particle.
 """
 
 import copy
+from typing import Any
 
 import numpy as np
 from numpy.random import SeedSequence
@@ -28,18 +29,18 @@ def test_kernels_chain_sequentially() -> None:
         params = ["y"]
 
         def __init__(self) -> None:
-            self.received_type: any | None = None
+            self.received_type: Any | None = None
 
         def perturb(
-            self, from_particle: dict, seed_sequence: SeedSequence
-        ) -> dict:
+            self, from_particle: Particle, seed_sequence: SeedSequence
+        ) -> Particle:
             self.received_type = type(from_particle.get("x"))
             to_particle = copy.deepcopy(from_particle)
             to_particle["y"] = 999
             return to_particle
 
         def transition_probability(
-            self, to_particle: dict, from_particle: dict
+            self, to_particle: Particle, from_particle: Particle
         ) -> float:
             return 1.0
 

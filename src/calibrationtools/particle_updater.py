@@ -23,6 +23,8 @@ class _ParticleUpdater:
 
     def set_particle_population(self, particle_population: ParticlePopulation):
         self.particle_population = particle_population
+        if self.particle_population.total_weight != 1.0:
+            self.particle_population.normalize_weights()
         self.adapt_variance()
 
     def sample_particle(self) -> Particle:
@@ -32,29 +34,30 @@ class _ParticleUpdater:
             )
         idx = spawn_rng(self.seed_sequence).choice(
             self.particle_population.size,
-            p=[w for w in self.particle_population.weights.values()],
+            p=self.particle_population.weights,
         )
-        return self.particle_population.all_particles[idx]
+        return self.particle_population.particles[idx]
 
-    def perturb_particle(
-        self, particle: Particle, max_attempts: int = 10_000
+    def sample_perturbed_particle(
+        self, max_attempts: int = 10_000
     ) -> Particle:
         for _ in range(max_attempts):
-            new_particle_state = self.perturbation_kernel.perturb(
-                particle.state, self.seed_sequence
+            current_particle = self.sample_particle()
+            new_particle = self.perturbation_kernel.perturb(
+                current_particle, self.seed_sequence
             )
-            if self.priors.probability_density(new_particle_state) > 0:
-                return Particle(
-                    state=new_particle_state, weight=particle.weight
-                )
-        raise RuntimeError("Failed to perturb particle after maximum attempts")
+            if self.priors.probability_density(new_particle) > 0:
+                return Particle(new_particle)
+        raise RuntimeError(
+            "Failed to sample perturbed particle after maximum attempts"
+        )
 
     def calculate_weight(self, particle: Particle) -> float:
-        numerator = self.priors.probability_density(particle.state)
+        numerator = self.priors.probability_density(particle)
         denominator = sum(
-            self.particle_population.all_particles[j].weight
+            self.particle_population.weights[j]
             * self.perturbation_kernel.transition_probability(
-                particle.state, self.particle_population.all_particles[j].state
+                particle, self.particle_population.particles[j]
             )
             for j in range(self.particle_population.size)
         )

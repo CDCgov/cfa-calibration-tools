@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Any, Sequence
 
 from .particle import Particle
 
@@ -6,7 +6,7 @@ from .particle import Particle
 class ParticlePopulation:
     def __init__(
         self,
-        states: Sequence[dict[str, any]] | None = None,
+        states: Sequence[dict[str, Any]] | None = None,
         weights: Sequence[float] | None = None,
     ):
         self._particles: list[Particle] = (
@@ -35,13 +35,9 @@ class ParticlePopulation:
     def weights(self) -> list[float]:
         return self._weights
 
-    def add_particle(
-        self, state: dict[str, any], weight=1.0, normalize_weights: bool = True
-    ):
-        self._particles.append(Particle(state))
+    def add_particle(self, particle: Particle, weight: float):
+        self._particles.append(particle)
         self._weights.append(weight)
-        if normalize_weights:
-            self.normalize_weights()
 
     @property
     def ess(self) -> float:
@@ -51,21 +47,20 @@ class ParticlePopulation:
             return (self.total_weight**2) / sum(w**2 for w in self.weights)
 
     @property
-    def is_empty(self) -> bool:
-        return self.size == 0
-
-    @property
     def size(self) -> int:
         return len(self.particles)
 
     @property
     def total_weight(self) -> float:
-        if self.is_empty:
+        if self.is_empty():
             return 0.0
         return sum(self.weights)
 
+    def is_empty(self) -> bool:
+        return self.size == 0
+
     def normalize_weights(self):
-        if self.is_empty:
+        if self.is_empty():
             return
         else:
             normalization_factor = 1.0 / self.total_weight
