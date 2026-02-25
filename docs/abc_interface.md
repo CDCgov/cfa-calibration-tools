@@ -1,130 +1,77 @@
-## Potential structures to keep from abc-smc
-- Particles  this structure can be the same for now (particles to params for model output), but this will eventually need to work with MRP
-- Generation  reframe as a population of particles
-- Particle updater  operates at population level
-- Variance adapter  operates at population level
-- Prior distribution  element of experiment controller
-- Perturbation kernels  element of experiment controller in concert with variance adapter
-- Spawn RNG  we do want a method for handling RNGs, this is one option
+# ABC-SMC interface
+## Algorithm for ABC-SMC
+1. Sample $n$ particles from the joint prior distribution $\pi(\theta)$ and store as current population set $\mathbb{A}$
+2. Initialize an empty proposed particle population $\mathbb{B}$
+3. For each generation $g$ specified in the tolerance error array $\vec\epsilon$
+    a. While $\mathbb{B}$ has fewer than $n$ particles:
+        i. Sample a particle $j$ from $\mathbb{A}$
+        ii. Perturb selected particle to make $\hat\theta_j$
+        iii. If $\pi(\hat\theta_j) > 0$, continue, otherwise go to 3.a.i
+        iv. Run model with particle $\hat\theta_j$
+        v. Collect outputs and calculate distance $d_j$
+        vi. If $d_j<\epsilon_g$,
+            1. Calculate weight $w_j$ based on $\mathbb{A}$ and $\pi(\theta)$
+            2. Add $\hat\theta_j$ with weight $w_j$ to population $\mathbb{B}$
+        vii. Go to 3.a
+    b. Archive population $\mathbb{A}$
+    c. Normalize weights of population $\mathbb{B}$ and adapt perturbation variance
+    d. Set $\mathbb{A}$ to $\mathbb{B}$ and initialize new population $\mathbb{B}$
 
-
-## Orchestrator script design
+## Orchestrator script example
 ```python run_calibration.py
 #| evaluate: false
-def particles_to_params():
 
-def outputs_to_distance():
+# Create the prior distribution list
+P = IndependentPriors(
+    [
+        UniformPrior("param1", 0, 1),
+        NormalPrior("param2", 0, 1),
+        LogNormalPrior("param3", 0, 1),
+        ExponentialPrior("param4", 1),
+        SeedPrior("seed"),
+    ]
+)
 
-## This will be substituted by MRP
-def model_runner():
+# Make list of independent kernels for the parameter perturbations
+K = IndependentKernels(
+    [
+        MultivariateNormalKernel(
+            [p.params[0] for p in P.priors if not isinstance(p, SeedPrior)],
+        ),
+        SeedKernel("seed"),
+    ]
+)
 
+# Set the variance adapter for altering perturbation kernel steps sizes across SMC generations
+V = AdaptMultivariateNormalVariance()
+
+# Import or define the model runner
+class SomeModelRunner:
+    # The model runner must contain a `simulate` method
+    def simulate(self, params):
+
+# Function to convert a particle into parameter set for the model runner
+def particles_to_params(particle):
+    return particle
+
+# Function to convert outputs from the model runner to a distance measure for use in algorithm step 3.a.v
+def outputs_to_distance(model_output, target_data):
+    return abs(model_output - target_data)
+
+# Define the smapler using assembled components
 sampler = ABCSampler(
-    generation_particle_count = 100,
-    tolerance_values = [10, 5, 1],
-    priors = params_priors,
-    perturbations,
-    particles_to_params,
-    outputs_to_distance,
-    target_data = data_df,
-    model_runner = model_runner,
-    seed = 12354)
+    generation_particle_count=500,
+    tolerance_values=[5.0, 0.5, 0.1],
+    priors=P,
+    perturbation_kernel=K,
+    variance_adapter=V,
+    particles_to_params=particles_to_params,
+    outputs_to_distance=outputs_to_distance,
+    target_data=0.5,
+    model_runner=SomeModelRunner(),
+    seed=123,
+)
 
+# run the calibration routine
 sampler.run()
-posterior_particles = sampler.get_posterior_particles()
-```
-
-## Algorithm design
-```python abc_sampler.py
-#| evaluate: false
-class ABCSampler:
-    ''' Combines functionality from abc_smc.ParticleUpdater and abc_smc.Experiment'''
-    def __init__(
-            generation_particle_count, # Number of particles to accept for each generation
-            tolerance_values, # Tolerance threshold of acceptance for distacne in each step, length is the number of steps in the SMC algorithm
-            priors, # Dictionary containing distribution information
-            perturbations, # Dictionary controlling methods (variance adapter and kernels) and parameter kernels
-            variance_adapter, # Object specifeid for controlling the change in variance across SMC steps
-            particles_to_params, # Function to turn particles into parameter sets for the runner
-            outputs_to_distance, # Fucntion to turn model outputs into distances given target data
-            target_data, # Observed data to be used in calibration
-            model_runner, # Protocol to turn parameter sets into model outputs
-            seed # Seed for overall calibration runner
-    ):
-        ## Validation and initialization here
-
-        ## Init updater
-        self.updater = _ParticleUpdater(perturbations, variance_adapter)
-
-    def run(self):
-        previous_population = self.sample_particles_from_priors()
-
-        for generation in range(len(self.tolerance_values)):
-            print(
-                f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}... previous population size is {previous_population.size}"
-            )
-            current_population = ParticlePopulation()  # Inits a new population
-            self.set_population(
-                previous_population
-            )  # sets `all_particles` to the previous population
-
-            # Rejection sampling algorithm
-            attempts = 0
-            while current_population.size < self.generation_particle_count:
-                if attempts % 100 == 0:
-                    print(
-                        f"Attempt {attempts}... current population size is {current_population.size}. Acceptance rate is {current_population.size / attempts if attempts > 0 else 0:.4f}",
-                        end="\r",
-                    )
-                attempts += 1
-                # Create the parameter inputs for the runner by sampling perturbed value from previous population
-                particle = self.sample_particle()
-                perturbed_particle = self.perturb_particle(particle)
-                params = self.particles_to_params(perturbed_particle)
-
-                # Generate the distance metric from model run
-                outputs = self.model_runner.simulate(params)
-                err = self.outputs_to_distance(outputs, self.target_data)
-
-                # Add the particle to the population if accepted
-                if err < self.tolerance_values[generation]:
-                    perturbed_particle.weight = self.calculate_weight(
-                        perturbed_particle
-                    )
-                    current_population.add(perturbed_particle)
-
-            # Archive the previous generation population and make new population for next step
-            self.previous_population_archive.update(
-                {generation: previous_population}
-            )
-            current_population.normalize_weights()
-            previous_population = current_population
-
-        # Store posterior particle population
-        self.posterior_population = current_population
-
-    def set_population(self, population: ParticlePopulation):
-        self._updater.set_particle_population(population)
-
-    def sample_particles_from_priors(self, n=None) -> ParticlePopulation:
-        '''Return a particle from the prior distribution'''
-        if not n:
-            n = self.generation_particle_count
-        population = ParticlePopulation()
-        for _ in range(n):
-            particle_state = self.priors.sample_state()
-            population.add(Particle(state=particle_state))
-        return population
-
-    def perturb_particle(self, particle: Particle) -> Particle:
-        return self._updater.perturb_particle(particle)
-
-    def sample_particle(self) -> Particle:
-        return self._updater.sample_particle()
-
-    def calculate_weight(self, particle) -> float:
-        return self._updater.calculate_weight(particle)
-
-    def get_posterior_particles(self) -> ParticlePopulation:
-        return self.posterior_population
-
 ```

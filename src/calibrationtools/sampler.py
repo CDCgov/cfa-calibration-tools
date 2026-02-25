@@ -22,9 +22,11 @@ class ABCSampler:
         model_runner: Any,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
+        max_attempts_per_proposal: int = 10_000,
         seed: int | None = None,
     ):
         self.generation_particle_count = generation_particle_count
+        self.max_attempts_per_proposal = max_attempts_per_proposal
         self.tolerance_values = tolerance_values
         self.priors = priors
         self.perturbation_kernel = perturbation_kernel
@@ -110,7 +112,9 @@ class ABCSampler:
         return self._updater.sample_particle()
 
     def sample_proposed_particle(self) -> Particle:
-        return self._updater.sample_perturbed_particle()
+        return self._updater.sample_perturbed_particle(
+            max_attempts=self.max_attempts_per_proposal
+        )
 
     def calculate_weight(self, particle) -> float:
         return self._updater.calculate_weight(particle)
