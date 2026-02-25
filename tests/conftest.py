@@ -2,9 +2,11 @@ import pytest
 from numpy.random import SeedSequence
 
 from calibrationtools import (
+    AdaptIdentityVariance,
     IndependentKernels,
     NormalKernel,
     Particle,
+    ParticlePopulation,
     SeedKernel,
 )
 from calibrationtools.prior_distribution import (
@@ -67,6 +69,21 @@ def Kc() -> IndependentKernels:
 
 
 @pytest.fixture
+def particle_population() -> ParticlePopulation:
+    particles = [
+        {"p": 0.1, "seed": 0},
+        {"p": 0.5, "seed": 1},
+        {"p": 0.9, "seed": 2},
+    ]
+    return ParticlePopulation(states=particles, weights=[0.2, 0.3, 0.5])
+
+
+@pytest.fixture
+def proposed_particle() -> Particle:
+    return Particle({"p": 0.6, "seed": 3})
+
+
+@pytest.fixture
 def N() -> int:
     return 10
 
@@ -89,3 +106,8 @@ def P() -> IndependentPriors:
 @pytest.fixture
 def Pc() -> IndependentPriors:
     return IndependentPriors([UniformPrior("p", 0.0, 1.0), SeedPrior("seed")])
+
+
+@pytest.fixture
+def V() -> AdaptIdentityVariance:
+    return AdaptIdentityVariance()

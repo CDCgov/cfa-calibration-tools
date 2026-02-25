@@ -1,5 +1,6 @@
 from .particle import Particle
 from .particle_population import ParticlePopulation
+from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
     MultivariateNormalKernel,
@@ -16,6 +17,7 @@ from .prior_distribution import (
 )
 from .sampler import ABCSampler
 from .variance_adapter import (
+    AdaptIdentityVariance,
     AdaptMultivariateNormalVariance,
     AdaptNormalVariance,
     VarianceAdapter,
@@ -25,6 +27,7 @@ __all__ = [
     "ABCSampler",
     "Particle",
     "ParticlePopulation",
+    "_ParticleUpdater",
     "PriorDistribution",
     "UniformPrior",
     "SeedPrior",
@@ -38,4 +41,5 @@ __all__ = [
     "VarianceAdapter",
     "AdaptNormalVariance",
     "AdaptMultivariateNormalVariance",
+    "AdaptIdentityVariance",
 ]

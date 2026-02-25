@@ -21,9 +21,6 @@ class _ParticleUpdater:
         self.priors = priors
         self.variance_adapter = variance_adapter
         self.seed_sequence = seed_sequence
-        self.calculate_transition_probability = np.vectorize(
-            self.perturbation_kernel.transition_probability
-        )
 
     def set_particle_population(self, particle_population: ParticlePopulation):
         self.particle_population = particle_population
@@ -58,8 +55,13 @@ class _ParticleUpdater:
 
     def calculate_weight(self, particle: Particle) -> float:
         numerator = self.priors.probability_density(particle)
-        transition_probs = self.calculate_transition_probability(
-            particle, self.particle_population.particles
+        transition_probs = np.array(
+            [
+                self.perturbation_kernel.transition_probability(
+                    to_particle=particle, from_particle=p
+                )
+                for p in self.particle_population.particles
+            ]
         )
 
         denominator = np.sum(
@@ -75,7 +77,4 @@ class _ParticleUpdater:
     def adapt_variance(self):
         self.variance_adapter.adapt(
             self.particle_population, self.perturbation_kernel
-        )
-        self.calculate_transition_probability = np.vectorize(
-            self.perturbation_kernel.transition_probability
         )
