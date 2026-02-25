@@ -63,7 +63,7 @@ class ABCSampler:
         for generation in range(len(self.tolerance_values)):
             if self.verbose:
                 print(
-                    f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
+                    f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}... Previous population is {self.particle_population}"
                 )
 
             # Rejection sampling algorithm
