@@ -11,3 +11,9 @@ uv run python -m example_model.example_model packages/example_model/tests/model_
 
 Which will write `model_output.json` with the results of the run.  You
 can specify a different location with the `-o` command line argument.
+
+To run the calibration example, run
+
+```bash
+uv run python -m example_model.calibrate
+```

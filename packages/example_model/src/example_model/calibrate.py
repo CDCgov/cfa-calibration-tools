@@ -74,7 +74,7 @@ def particles_to_params(particle, **kwargs):
     return model_params
 
 
-def outputs_to_distance(model_output, target_data):
+def outputs_to_distance(model_output, target_data, **kwargs):
     return abs(np.sum(model_output) - target_data)
 
 
@@ -88,7 +88,7 @@ sampler = ABCSampler(
     outputs_to_distance=outputs_to_distance,
     target_data=5,
     model_runner=model,
-    seed=None,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
+    seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
 sampler.run(base_inputs=default_inputs)
@@ -98,8 +98,8 @@ sampler.run(base_inputs=default_inputs)
 ##===================================#
 # Print IQR of param1 in the posterior particles
 posterior_particles = sampler.get_posterior_particles()
-p_values = [p.state["p"] for p in posterior_particles.all_particles]
-n_values = [p.state["n"] for p in posterior_particles.all_particles]
+p_values = [p["p"] for p in posterior_particles.particles]
+n_values = [p["n"] for p in posterior_particles.particles]
 
 print(
     f"param p(25-75):{np.percentile(p_values, 25)} - {np.percentile(p_values, 75)}"

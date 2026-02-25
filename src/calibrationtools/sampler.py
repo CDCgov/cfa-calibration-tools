@@ -57,6 +57,12 @@ class ABCSampler:
         self._updater.set_particle_population(population)
 
     def run(self, **kwargs: Any):
+        for k in kwargs.keys():
+            if k in self.__class__.__dict__:
+                raise ValueError(
+                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Attributes cannot be set from `.run()`"
+                )
+
         self.particle_population = self.sample_particles_from_priors()
         proposed_population = ParticlePopulation()
 
