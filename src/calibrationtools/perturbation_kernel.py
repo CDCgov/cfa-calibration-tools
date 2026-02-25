@@ -145,6 +145,8 @@ class UniformKernel(SingleParameterPerturbationKernel):
     def __init__(self, param: str, width: float) -> None:
         super().__init__(param)
         self.width = width
+        if self.width <= 0:
+            raise ValueError("Width must be positive for UniformKernel.")
 
     def perturb(
         self, from_particle: Particle, seed_sequence: SeedSequence | None
@@ -174,6 +176,10 @@ class NormalKernel(SingleParameterPerturbationKernel):
     def __init__(self, param: str, std_dev: float) -> None:
         super().__init__(param)
         self.std_dev = std_dev
+        if self.std_dev <= 0:
+            raise ValueError(
+                "Standard deviation must be positive for NormalKernel."
+            )
 
     def perturb(
         self, from_particle: Particle, seed_sequence: SeedSequence | None
