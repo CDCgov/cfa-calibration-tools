@@ -6,16 +6,17 @@
     1. While $\mathbb{B}_g$ has fewer than $n$ particles:
         1. Sample a particle $j$ from $\mathbb{A}_g$
         2. Perturb selected particle to make $\hat\theta_j$
-        3. If $\pi(\hat\theta_j) > 0$, continue, otherwise go to 3.1.1
+        3. If $\pi(\hat\theta_j) > 0$, continue, otherwise go to 3.i.a
         4. Run model with particle $\hat\theta_j$
         5. Collect outputs and calculate distance $d_j$
         6. If $d_j<\epsilon_g$,
             1. Calculate weight $w_j$ based on $\mathbb{A}_g$ and $\pi(\theta)$
             2. Add $\hat\theta_j$ with weight $w_j$ to population $\mathbb{B}_g$
-        7. Go to 3.1.0
-    2. Archive population $\mathbb{A}_g$
-    3. Normalize weights of population $\mathbb{B}_g$ and adapt perturbation variance
-    4. Set $\mathbb{A}_{g+1}$ to $\mathbb{B}_g$ and initialize new empty population $\mathbb{B}_{g+1}$
+        7. Go to 3.i
+    2. Handle population changes
+        1. Archive population $\mathbb{A}_g$
+        2. Normalize weights of population $\mathbb{B}_g$ and adapt perturbation variance
+        3. Set $\mathbb{A}_{g+1}$ equal to the normalized proposed population
 
 ## Orchestrator script example
 ```python run_calibration.py
