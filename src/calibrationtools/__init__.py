@@ -20,6 +20,7 @@ from .variance_adapter import (
     AdaptIdentityVariance,
     AdaptMultivariateNormalVariance,
     AdaptNormalVariance,
+    AdaptUniformVariance,
     VarianceAdapter,
 )
 
@@ -42,4 +43,5 @@ __all__ = [
     "AdaptNormalVariance",
     "AdaptMultivariateNormalVariance",
     "AdaptIdentityVariance",
+    "AdaptUniformVariance",
 ]

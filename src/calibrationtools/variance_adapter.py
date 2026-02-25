@@ -3,13 +3,12 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from calibrationtools import PerturbationKernel
-
 from .particle_population import ParticlePopulation
 from .perturbation_kernel import (
     CompositePerturbationKernel,
     MultivariateNormalKernel,
     NormalKernel,
+    PerturbationKernel,
     UniformKernel,
 )
 
