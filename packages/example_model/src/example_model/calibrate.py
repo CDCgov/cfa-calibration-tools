@@ -1,7 +1,6 @@
 """Calibrate the example branching process."""
 
 import numpy as np
-from example_model import Binom_BP_Model
 from mrp import Environment
 from mrp.api import apply_dict_overrides
 
@@ -17,6 +16,7 @@ from calibrationtools.prior_distribution import (
 )
 from calibrationtools.sampler import ABCSampler
 from calibrationtools.variance_adapter import AdaptMultivariateNormalVariance
+from example_model import Binom_BP_Model
 
 ##===================================#
 ## Define model
@@ -70,7 +70,7 @@ V = AdaptMultivariateNormalVariance()
 ##===================================#
 def particles_to_params(particle, **kwargs):
     base_inputs = kwargs.get("base_inputs")
-    model_params = apply_dict_overrides(base_inputs, particle.state)
+    model_params = apply_dict_overrides(base_inputs, particle)
     return model_params
 
 
