@@ -1,21 +1,21 @@
 # ABC-SMC interface
 ## Algorithm for ABC-SMC
-1. Sample $n$ particles from the joint prior distribution $\pi(\theta)$ and store as current population set $\mathbb{A}$
-2. Initialize an empty proposed particle population $\mathbb{B}$
+1. Sample $n$ particles from the joint prior distribution $\pi(\theta)$ and store as current population set $\mathbb{A}_0$
+2. Initialize an empty proposed particle population $\mathbb{B}_0$
 3. For each generation $g$ specified in the tolerance error array $\vec\epsilon$
-    a. While $\mathbb{B}$ has fewer than $n$ particles:
-        i. Sample a particle $j$ from $\mathbb{A}$
-        ii. Perturb selected particle to make $\hat\theta_j$
-        iii. If $\pi(\hat\theta_j) > 0$, continue, otherwise go to 3.a.i
-        iv. Run model with particle $\hat\theta_j$
-        v. Collect outputs and calculate distance $d_j$
-        vi. If $d_j<\epsilon_g$,
-            1. Calculate weight $w_j$ based on $\mathbb{A}$ and $\pi(\theta)$
-            2. Add $\hat\theta_j$ with weight $w_j$ to population $\mathbb{B}$
-        vii. Go to 3.a
-    b. Archive population $\mathbb{A}$
-    c. Normalize weights of population $\mathbb{B}$ and adapt perturbation variance
-    d. Set $\mathbb{A}$ to $\mathbb{B}$ and initialize new population $\mathbb{B}$
+    1. While $\mathbb{B}_g$ has fewer than $n$ particles:
+        1. Sample a particle $j$ from $\mathbb{A}_g$
+        2. Perturb selected particle to make $\hat\theta_j$
+        3. If $\pi(\hat\theta_j) > 0$, continue, otherwise go to 3.1.1
+        4. Run model with particle $\hat\theta_j$
+        5. Collect outputs and calculate distance $d_j$
+        6. If $d_j<\epsilon_g$,
+            1. Calculate weight $w_j$ based on $\mathbb{A}_g$ and $\pi(\theta)$
+            2. Add $\hat\theta_j$ with weight $w_j$ to population $\mathbb{B}_g$
+        7. Go to 3.1.0
+    2. Archive population $\mathbb{A}_g$
+    3. Normalize weights of population $\mathbb{B}_g$ and adapt perturbation variance
+    4. Set $\mathbb{A}_{g+1}$ to $\mathbb{B}_g$ and initialize new empty population $\mathbb{B}_{g+1}$
 
 ## Orchestrator script example
 ```python run_calibration.py
