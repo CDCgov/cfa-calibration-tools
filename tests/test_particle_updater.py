@@ -4,17 +4,17 @@ from calibrationtools import ParticlePopulation, _ParticleUpdater
 
 
 @pytest.fixture
-def particle_updater(seed_sequence, K, P, V):
-    updater = _ParticleUpdater(K, P, V, seed_sequence)
+def particle_updater(
+    seed_sequence, K, P, V, particle_population
+) -> _ParticleUpdater:
+    updater = _ParticleUpdater(K, P, V, seed_sequence, particle_population)
     return updater
 
 
 def test_set_particle_population_normalizes_weights(
     particle_updater, particle_population
 ):
-    # Set the particle population in the updater
-    particle_updater.particle_population = particle_population
-
+    assert particle_updater.particle_population == particle_population
     # Check that the weights are normalized
     assert particle_updater.particle_population.total_weight == pytest.approx(
         1.0
@@ -35,17 +35,19 @@ def test_set_particle_population_normalizes_weights(
 
 
 def test_sample_particle(particle_updater, particle_population):
-    particle_updater.particle_population = particle_population
+    assert particle_updater.particle_population == particle_population
     sampled_particle = particle_updater.sample_particle()
     assert sampled_particle in particle_population.particles
 
 
 def test_sample_and_perturb_particle(particle_updater, particle_population):
-    particle_updater.particle_population = particle_population
+    assert particle_updater.particle_population == particle_population
     perturbed_particle = particle_updater.sample_and_perturb_particle()
     assert (
         perturbed_particle not in particle_population.particles
     )  # Perturbed particle should not be the same as any in the population
+    # Assert that the updater is unchanged by sample and perturb
+    assert particle_updater.particle_population == particle_population
     assert (
         particle_updater.priors.probability_density(perturbed_particle) > 0
     )  # Perturbed particle should have non-zero prior density
@@ -72,7 +74,7 @@ def test_sample_and_perturb_particle_max_attempts(
 def test_calculate_weight(
     particle_updater, particle_population, proposed_particle
 ):
-    particle_updater.particle_population = particle_population
+    assert particle_updater.particle_population == particle_population
     weight = particle_updater.calculate_weight(proposed_particle)
     assert weight >= 0  # Weights should be non-negative
 
@@ -102,7 +104,7 @@ def test_calculate_weight_zero_prob_perturbation(
             return 0.0  # Zero transition probability
 
     particle_updater.perturbation_kernel = ZeroTransitionPerturbationKernel()
-    particle_updater.particle_population = particle_population
+    assert particle_updater.particle_population == particle_population
 
     proposed_particle = {
         "p": 0.5,
