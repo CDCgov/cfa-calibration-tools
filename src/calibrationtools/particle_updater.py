@@ -16,16 +16,27 @@ class _ParticleUpdater:
         priors: PriorDistribution,
         variance_adapter: VarianceAdapter,
         seed_sequence: SeedSequence | None = None,
+        particle_population: ParticlePopulation | None = None,
     ):
         self.perturbation_kernel = perturbation_kernel
         self.priors = priors
         self.variance_adapter = variance_adapter
         self.seed_sequence = seed_sequence
+        self._particle_population = (
+            particle_population
+            if particle_population
+            else ParticlePopulation()
+        )
 
-    def set_particle_population(self, particle_population: ParticlePopulation):
-        self.particle_population = particle_population
-        if self.particle_population.total_weight != 1.0:
-            self.particle_population.normalize_weights()
+    @property
+    def particle_population(self) -> ParticlePopulation:
+        return self._particle_population
+
+    @particle_population.setter
+    def particle_population(self, particle_population: ParticlePopulation):
+        self._particle_population = particle_population
+        if self._particle_population.total_weight != 1.0:
+            self._particle_population.normalize_weights()
         self.adapt_variance()
 
     def sample_particle(self) -> Particle:

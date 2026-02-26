@@ -74,7 +74,7 @@ def particles_to_params(particle, **kwargs):
     return model_params
 
 
-def outputs_to_distance(model_output, target_data, **kwargs):
+def outputs_to_distance(model_output, target_data):
     return abs(np.sum(model_output) - target_data)
 
 
