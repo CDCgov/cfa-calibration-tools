@@ -4,6 +4,7 @@ This python package provides a simple branching process model intended to be use
 
 This README will describe multiple ways to run the model.
 
+## Running the model
 First open the Python interactive shell within the `uv` environment:
 
 ```bash
@@ -33,13 +34,21 @@ model_inputs = {"max_gen": 15, "n": 3, "p": 0.5, "max_infect": 500}
 env = Environment({"input": model_inputs})
 Binom_BP_Model(env).run()
 ```
-The above examples are very similar to those included in `scripts/direct_runner.py`, which can be run (from the root of the repo) with the following:
+The above examples are very similar to those included in `example_model/direct_runner.py`, which can be run (from the root of the repo) with the following:
 ```bash
 uv sync --all-packages
-uv run python scripts/direct_runner.py
+uv run python -m example_model.direct_runner
 ```
 Additionally, as described in the repo-level README, the model can be run as specified in the `example_model.mrp.toml`, which can be run as follows:
 ```bash
 uv sync --all-packages
 uv run mrp run example_model.mrp.toml
+```
+
+## Running the calibration
+To run the calibration example for this model, run
+
+```bash
+uv sync --all-packages
+uv run python -m example_model.calibrate
 ```

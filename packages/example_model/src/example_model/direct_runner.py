@@ -1,7 +1,8 @@
 """Run the example branching process via Python."""
 
-from example_model import Binom_BP_Model
 from mrp import Environment
+
+from example_model import Binom_BP_Model
 
 # This runs the model directly as a static method
 results = Binom_BP_Model.simulate(
