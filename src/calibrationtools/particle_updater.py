@@ -39,7 +39,7 @@ class _ParticleUpdater:
         )
         return self.particle_population.particles[idx]
 
-    def sample_perturbed_particle(
+    def sample_and_perturb_particle(
         self, max_attempts: int = 10_000
     ) -> Particle:
         for _ in range(max_attempts):

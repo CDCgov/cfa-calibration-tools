@@ -3,6 +3,7 @@ from numpy.random import SeedSequence
 
 from calibrationtools import (
     AdaptIdentityVariance,
+    AdaptNormalVariance,
     IndependentKernels,
     NormalKernel,
     Particle,
@@ -111,3 +112,8 @@ def Pc() -> IndependentPriors:
 @pytest.fixture
 def V() -> AdaptIdentityVariance:
     return AdaptIdentityVariance()
+
+
+@pytest.fixture
+def Vnorm() -> AdaptNormalVariance:
+    return AdaptNormalVariance()

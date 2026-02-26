@@ -40,9 +40,9 @@ def test_sample_particle(particle_updater, particle_population):
     assert sampled_particle in particle_population.particles
 
 
-def test_sample_perturbed_particle(particle_updater, particle_population):
+def test_sample_and_perturb_particle(particle_updater, particle_population):
     particle_updater.set_particle_population(particle_population)
-    perturbed_particle = particle_updater.sample_perturbed_particle()
+    perturbed_particle = particle_updater.sample_and_perturb_particle()
     assert (
         perturbed_particle not in particle_population.particles
     )  # Perturbed particle should not be the same as any in the population
@@ -51,7 +51,7 @@ def test_sample_perturbed_particle(particle_updater, particle_population):
     )  # Perturbed particle should have non-zero prior density
 
 
-def test_sample_perturbed_particle_max_attempts(
+def test_sample_and_perturb_particle_max_attempts(
     particle_updater, particle_population
 ):
     # Create a perturbation kernel that always produces invalid particles
@@ -66,7 +66,7 @@ def test_sample_perturbed_particle_max_attempts(
     particle_updater.set_particle_population(particle_population)
 
     with pytest.raises(RuntimeError):
-        particle_updater.sample_perturbed_particle(max_attempts=5)
+        particle_updater.sample_and_perturb_particle(max_attempts=5)
 
 
 def test_calculate_weight(

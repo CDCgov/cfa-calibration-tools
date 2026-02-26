@@ -82,7 +82,7 @@ class ABCSampler:
                     )
                 attempts += 1
                 # Create the parameter inputs for the runner by sampling perturbed value from previous population
-                proposed_particle = self.sample_proposed_particle()
+                proposed_particle = self.sample_and_perturb_particle()
                 params = self.particles_to_params(proposed_particle, **kwargs)
 
                 # Generate the distance metric from model run
@@ -120,8 +120,8 @@ class ABCSampler:
     def sample_current_particle(self) -> Particle:
         return self._updater.sample_particle()
 
-    def sample_proposed_particle(self) -> Particle:
-        return self._updater.sample_perturbed_particle(
+    def sample_and_perturb_particle(self) -> Particle:
+        return self._updater.sample_and_perturb_particle(
             max_attempts=self.max_attempts_per_proposal
         )
 
