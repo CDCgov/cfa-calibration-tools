@@ -78,9 +78,9 @@ class MultiParameterPerturbationKernel(PerturbationKernel, ABC):
 
 
 class CompositePerturbationKernel(PerturbationKernel, ABC):
-    """Composite kernel applying multiple kernels in a list.
+    """Composite kernel applying multiple kernels sequentially.
 
-    This calss does not implement a specific transition probability,
+    This class does not implement a specific transition probability,
     leaving that to subclasses.
 
     Args:
