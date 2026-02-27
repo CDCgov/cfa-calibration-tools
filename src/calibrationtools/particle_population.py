@@ -10,15 +10,13 @@ class ParticlePopulation:
     such as the effective sample size (ESS).
 
     Args:
-        states (Sequence[dict[str, Any]] | None): Optional initial states to create as Particle objects.
-        weights (Sequence[float] | None): Optional initial weights for the initial states.
-
-    Attributes:
-        particles (list[Particle]): A list of Particle objects in the population.
-        weights (list[float]): A list of weights corresponding to each particle.
-        ess (float): The effective sample size of the particle population.
-        size (int): The number of particles in the population.
-        total_weight (float): The sum of all particle weights.
+        states (Sequence[dict[str, Any]] | None, optional): A sequence of dictionaries
+            representing the states of the particles. If None, an empty particle list
+            is initialized. Defaults to None.
+        weights (Sequence[float] | None, optional): A sequence of weights corresponding
+            to the particles. If None, all specified particle states are assigned equal
+            weights of 1.0. Defaults to None. Supplied weights are normalized to 1.0 upon
+            initialization.
 
     Methods:
         __init__(states, weights):
@@ -32,7 +30,7 @@ class ParticlePopulation:
         __repr__():
             Returns a string representation of the ParticlePopulation instance.
 
-    Errors:
+    Raises:
         ValueError: If the length of weights does not match the length of particles on initialization.
     """
 
@@ -41,21 +39,6 @@ class ParticlePopulation:
         states: Sequence[dict[str, Any]] | None = None,
         weights: Sequence[float] | None = None,
     ):
-        """
-        Initializes a particle population with optional states and weights.
-
-        Args:
-            states (Sequence[dict[str, Any]] | None, optional): A sequence of dictionaries
-                representing the states of the particles. If None, an empty particle list
-                is initialized. Defaults to None.
-            weights (Sequence[float] | None, optional): A sequence of weights corresponding
-                to the particles. If None, all specified particle states are assigned equal
-                weights of 1.0. Defaults to None. Supplied weights are normalized to 1.0 upon
-                initialization.
-
-        Raises:
-            ValueError: If the length of the weights does not match the length of the particles.
-        """
         self._particles: list[Particle] = (
             [] if states is None else [Particle(x) for x in states]
         )

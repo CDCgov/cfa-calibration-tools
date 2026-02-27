@@ -29,9 +29,6 @@ class PerturbationKernel(ABC):
         transition_probability(to_particle, from_particle):
             Abstract method to calculate the kernel transition probability from one particle to another.
             Must be implemented by subclasses.
-
-    Raises:
-        NotImplementedError: If the method is not implemented in a subclass.
     """
 
     params: list[str]
@@ -86,14 +83,9 @@ class CompositePerturbationKernel(PerturbationKernel, ABC):
     This calss does not implement a specific transition probability,
     leaving that to subclasses.
 
-    Attributes:
-        kernels (list[PerturbationKernel]): Component kernels.
-
     Args:
         kernels (list[PerturbationKernel] | None): Component kernels.
     """
-
-    kernels: list[PerturbationKernel]
 
     def __init__(
         self, kernels: list[PerturbationKernel] | None = None
@@ -194,7 +186,8 @@ class UniformKernel(SingleParameterPerturbationKernel):
     This kernel perturbs a parameter by sampling from a uniform distribution
     centered around the parameter's current value, with a specified width.
 
-    Attributes:
+    Args:
+        param (str): The name of the parameter to perturb.
         width (float): The width of the uniform distribution. Must be positive.
 
     Methods:
@@ -210,13 +203,7 @@ class UniformKernel(SingleParameterPerturbationKernel):
 
     Raises:
         ValueError: If the width is not positive.
-
-    Parameters:
-        param (str): The name of the parameter to perturb.
-        width (float): The width of the uniform distribution.
     """
-
-    width: float
 
     def __init__(self, param: str, width: float) -> None:
         super().__init__(param)
@@ -251,7 +238,7 @@ class NormalKernel(SingleParameterPerturbationKernel):
     This kernel perturbs a parameter by sampling from a normal (Gaussian) distribution
     centered around the parameter's current value, with a specified standard deviation.
 
-    Attributes:
+    Args:
         std_dev (float): The standard deviation of the normal distribution. Must be positive.
 
     Args:
@@ -270,8 +257,6 @@ class NormalKernel(SingleParameterPerturbationKernel):
             Computes the transition probability of moving from one particle to another
             under the normal distribution.
     """
-
-    std_dev: float
 
     def __init__(self, param: str, std_dev: float) -> None:
         super().__init__(param)
@@ -335,7 +320,7 @@ class MultivariateNormalKernel(MultiParameterPerturbationKernel):
         the distribution. The covariance matrix must be of the same dimension as the
         number of parameters being perturbed.
 
-        Attributes:
+        Args:
             params (list[str]): A list of parameter names to be perturbed.
             cov_matrix (np.ndarray | None): The covariance matrix for the multivariate
                 normal distribution. Must be set before calling `perturb` or
@@ -358,9 +343,6 @@ class MultivariateNormalKernel(MultiParameterPerturbationKernel):
             ValueError: If the covariance matrix is not set when calling `perturb` or
                 `transition_probability`.
         """
-
-    params: list[str]
-    cov_matrix: np.ndarray | None = None
 
     def __init__(
         self, params: list[str], cov_matrix: np.ndarray | None = None

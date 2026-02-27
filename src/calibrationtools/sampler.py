@@ -18,24 +18,20 @@ class ABCSampler:
     distributions of parameters for a given model by iteratively sampling and perturbing
     particles, and evaluating their distance from observed data using user-supplied functions.
 
-    Attributes:
+    Args:
         generation_particle_count (int): Number of particles to accept per generation for a complete population.
-        max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         tolerance_values (list[float]): List of tolerance values for each generation for evaluating acceptance criterion.
-        _priors (PriorDistribution): Prior distribution of the parameters being calibrated.
-        _perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
-        _variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
+        priors (PriorDistribution): Prior distribution of the parameters being calibrated.
         particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
         outputs_to_distance (Callable[..., float]): Function to compute distance between model outputs and target data.
         target_data (Any): Observed data to compare against.
         model_runner (MRPModel): Model runner to simulate outputs given parameters.
+        perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
+        variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
+        max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         seed (int | None): Random seed for reproducibility.
-        _seed_sequence (SeedSequence): Seed sequence for random number generation throughout the sampler run.
-        drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
-        population_archive (dict[int, ParticlePopulation]): Archive of particle populations from previous generations.
-        smc_step_successes (list[int]): List of number of accepted particles for each successful SMC step. Initializes to zeroes.
         verbose (bool): Whether to print verbose output during execution.
-        _updater (_ParticleUpdater): Internal helper for particle updates.
+        drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
 
     Methods:
         particle_population:
@@ -160,11 +156,11 @@ class ABCSampler:
 
         Returns:
             ParticlePopulation: The particle population representing the posterior
-            distribution.
+                distribution.
 
         Raises:
             ValueError: If the posterior population is not fully populated,
-            indicating that the sampler has not been run to completion.
+                indicating that the sampler has not been run to completion.
         """
         if self.smc_step_successes[-1] != self.generation_particle_count:
             raise ValueError(
@@ -181,11 +177,11 @@ class ABCSampler:
         involves iteratively sampling and perturbing particles, evaluating their fitness
         using a distance metric, and accepting or rejecting them based on a tolerance value.
 
-        Keyword Arguments:
-            **kwargs: Additional keyword arguments that can be passed to the method.
-                      These arguments are used to modify the behavior of the particle
-                      sampling process. Note that the keyword arguments must not conflict
-                      with existing attributes of the class.
+        Args:
+            **kwargs (Any): Additional keyword arguments that can be passed to the method.
+                      These arguments are supplied to the particles_to_params function.
+                      Note that the keyword arguments must not conflict with existing
+                      attributes of the class.
 
         Raises:
             ValueError: If a keyword argument conflicts with an existing attribute of the class.
@@ -198,7 +194,7 @@ class ABCSampler:
             3. Particles that meet the tolerance criteria are accepted and added to the population.
             4. The process continues until the desired number of particles is obtained for the generation.
 
-        Attributes Updated:
+        Args Updated:
             - `smc_step_successes`: A dictionary tracking the number of successful particles
               for each generation.
             - `particle_population`: The final population of particles for the current generation.
@@ -212,7 +208,7 @@ class ABCSampler:
         for k in kwargs.keys():
             if k in self.__class__.__dict__:
                 raise ValueError(
-                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Attributes cannot be set from `.run()`"
+                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
                 )
 
         proposed_population = ParticlePopulation()

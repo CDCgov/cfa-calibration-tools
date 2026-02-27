@@ -16,12 +16,12 @@ class _ParticleUpdater:
     perturbing, and calculating weights for proposed particles, as well as
     adapting the variance of the perturbation kernel.
 
-    Attributes:
+    Args:
         perturbation_kernel (PerturbationKernel): The kernel used to perturb particles.
         priors (PriorDistribution): The prior distribution of particle states. This remains fixed regardless of population changes.
         variance_adapter (VarianceAdapter): The adapter used to adjust the variance of the perturbation kernel according to population particle state variance.
         seed_sequence (SeedSequence | None): An optional seed sequence for random number generation.
-        particle_population (ParticlePopulation): The current population of particles.
+        particle_population (ParticlePopulation | None): The current population of particles.
 
     Methods:
         sample_particle() -> Particle:
@@ -38,10 +38,6 @@ class _ParticleUpdater:
 
         adapt_variance():
             Adapts the variance of the perturbation kernel based on the current particle population.
-
-    Raises:
-        ValueError: If the particle population is not set when attempting to sample a particle.
-        RuntimeError: If a valid perturbed particle cannot be sampled within the maximum number of attempts.
     """
 
     def __init__(
@@ -52,16 +48,6 @@ class _ParticleUpdater:
         seed_sequence: SeedSequence | None = None,
         particle_population: ParticlePopulation | None = None,
     ):
-        """
-        Initializes the ParticleUpdater class.
-
-        Args:
-            perturbation_kernel (PerturbationKernel): The initial kernel used to perturb particles during proposals.
-            priors (PriorDistribution): The prior distribution used for calculating particle weights.
-            variance_adapter (VarianceAdapter): The adapter responsible for adjusting perturbation variance.
-            seed_sequence (SeedSequence | None, optional): A sequence of seeds for replicable random number generation. Defaults to None.
-            particle_population (ParticlePopulation | None, optional): An initial population of particles. If not provided, a new ParticlePopulation instance is created. Defaults to None.
-        """
         self.perturbation_kernel = perturbation_kernel
         self.priors = priors
         self.variance_adapter = variance_adapter
@@ -188,7 +174,7 @@ class _ParticleUpdater:
 
         Raises:
             ValueError: If `variance_adapter` is not an AdaptIdentityVariance and
-            `particle_population` is empty, adapt variance will fail.
+                `particle_population` is empty, adapt variance will fail.
         """
         if self.particle_population.is_empty() and not isinstance(
             self.variance_adapter, AdaptIdentityVariance

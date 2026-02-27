@@ -17,7 +17,7 @@ class PriorDistribution(ABC):
     generate samples and calculate probability densities for given particles. Subclasses
     must implement the `sample` and `probability_density` methods.
 
-    Attributes:
+    Args:
         params (list[str]): A list of parameter names associated with the prior distribution.
 
     Methods:
@@ -29,8 +29,6 @@ class PriorDistribution(ABC):
             Abstract method to compute the probability density of a given particle.
             Subclasses must implement this method.
     """
-
-    params: list[str]
 
     def __init__(self, params: list[str]) -> None:
         self.params = params
@@ -48,8 +46,6 @@ class PriorDistribution(ABC):
 
 class CompositePriorDistribution(PriorDistribution):
     """Base class for prior distributions that sample multiple parameters."""
-
-    priors: list[PriorDistribution]
 
     def __init__(self, priors: list[PriorDistribution]) -> None:
         super().__init__([])
@@ -83,7 +79,8 @@ class UniformPrior(SingleParameterPriorDistribution):
     for a given parameter. It provides methods to sample from the distribution
     and calculate the probability density for a given particle.
 
-    Attributes:
+    Args:
+        param (str): The name of the parameter this prior is associated with.
         min (float): The lower bound of the uniform distribution.
         max (float): The upper bound of the uniform distribution.
 
@@ -100,10 +97,9 @@ class UniformPrior(SingleParameterPriorDistribution):
             Computes the probability density for a given particle.
             Returns 1.0 / (max - min) if the particle's parameter value is
             within the range [min, max], otherwise returns 0.0.
+    Raises:
+        ValueError: If `min` is greater than or equal to `max`.
     """
-
-    min: float
-    max: float
 
     def __init__(self, param: str, min: float, max: float) -> None:
         super().__init__(param)
@@ -133,7 +129,7 @@ class NormalPrior(SingleParameterPriorDistribution):
     """
     Represents a normal (Gaussian) prior distribution for a single parameter.
 
-    Attributes:
+    Args:
         mean (float): The mean (μ) of the normal distribution.
         std_dev (float): The standard deviation (σ) of the normal distribution.
 
@@ -154,9 +150,6 @@ class NormalPrior(SingleParameterPriorDistribution):
             Computes the probability density of a given particle under the
             normal distribution.
     """
-
-    mean: float
-    std_dev: float
 
     def __init__(self, param: str, mean: float, std_dev: float) -> None:
         super().__init__(param)
@@ -190,7 +183,7 @@ class LogNormalPrior(SingleParameterPriorDistribution):
         in the logarithmic space. This class allows sampling from the distribution
         and calculating the probability density for a given particle.
 
-        Attributes:
+        Args:
             mean (float): The mean of the log-normal distribution in logarithmic space.
             std_dev (float): The standard deviation of the log-normal distribution
                 in logarithmic space.
@@ -209,9 +202,6 @@ class LogNormalPrior(SingleParameterPriorDistribution):
                 Computes the probability density of the log-normal distribution
                 for a given particle.
         """
-
-    mean: float
-    std_dev: float
 
     def __init__(self, param: str, mean: float, std_dev: float) -> None:
         super().__init__(param)
@@ -245,7 +235,8 @@ class ExponentialPrior(SingleParameterPriorDistribution):
     be positive. This class provides methods to sample from the distribution
     and calculate the probability density for a given particle.
 
-    Attributes:
+    Args:
+        param (str): The name of the parameter this prior is associated with.
         rate (float): The rate parameter (λ) of the exponential distribution.
                         Must be positive.
 
@@ -262,9 +253,10 @@ class ExponentialPrior(SingleParameterPriorDistribution):
         probability_density(particle: Particle) -> float:
             Computes the probability density of the given particle under the
             exponential distribution.
-    """
 
-    rate: float
+    Raises:
+        ValueError: If `rate` is not positive.
+    """
 
     def __init__(self, param: str, rate: float) -> None:
         super().__init__(param)
@@ -286,7 +278,7 @@ class SeedPrior(SingleParameterPriorDistribution):
     """
     A prior distribution for a single parameter that generates random integer seeds.
 
-    Attributes:
+    Args:
         param (str): The name of the parameter for which the prior distribution is defined.
 
     Methods:
@@ -320,7 +312,7 @@ class IndependentPriors(CompositePriorDistribution):
     """
     A multi-parameter prior distribution list where each parameter is sampled independently.
 
-    Attributes:
+    Args:
         priors (list[PriorDistribution]): A list of individual prior distributions for each parameter.
     Methods:
         sample(n: int, seed: SeedSequence | None) -> Sequence[dict[str, Any]]:
