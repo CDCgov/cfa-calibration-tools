@@ -14,6 +14,18 @@ from .perturbation_kernel import (
 
 
 class VarianceAdapter(ABC):
+    """
+    Abstract base class interface for adapting the variance of supplied
+    perturbation kernels based on particle population variance.
+
+    Methods
+    -------
+    adapt(population: ParticlePopulation, kernel: PerturbationKernel) -> None
+        Abstract method to adapt the variance of the given perturbation kernel
+        using the specified particle population. This method must be implemented
+        by subclasses.
+    """
+
     def __init__(self) -> None:
         pass
 
@@ -38,6 +50,34 @@ class AdaptIdentityVariance(VarianceAdapter):
 
 
 class AdaptNormalVariance(VarianceAdapter):
+    """
+    A class that adapts the variance of a normal perturbation kernel based on a given particle population.
+
+    Methods
+    -------
+    adapt(population: ParticlePopulation, kernel: PerturbationKernel) -> None
+        Adjusts the standard deviation of a normal perturbation kernel based on the variance
+        of the specified parameter in the particle population. If the kernel is a composite
+        kernel, it searches for a normal kernel within the composite. If no normal kernel is
+        found, the method exits without making changes.
+
+    Parameters
+    ----------
+    population : ParticlePopulation
+        The population of particles used to calculate the variance of the parameter.
+    kernel : PerturbationKernel
+        The perturbation kernel whose variance is to be adapted. This can be a normal kernel
+        or a composite kernel containing a normal kernel.
+
+    Notes
+    -----
+    - The method calculates the variance of the parameter specified in the normal kernel
+      across all particles in the population.
+    - The standard deviation of the normal kernel is updated to the square root of twice
+      the calculated population variance.
+    - If the kernel is not a normal kernel or does not contain one, no changes are made.
+    """
+
     def adapt(
         self,
         population: ParticlePopulation,
@@ -63,6 +103,19 @@ class AdaptNormalVariance(VarianceAdapter):
 
 
 class AdaptUniformVariance(VarianceAdapter):
+    """
+    A class that adjusts the variance of a uniform perturbation kernel based on
+    the variance of a given particle population.
+
+    Methods
+    -------
+    adapt(population: ParticlePopulation, kernel: PerturbationKernel) -> None
+        Adjusts the width of a UniformKernel or a UniformKernel within a
+        CompositePerturbationKernel based on the variance of the specified
+        parameter in the particle population. If no UniformKernel is found,
+        the method exits without making changes.
+    """
+
     def adapt(
         self,
         population: ParticlePopulation,
@@ -88,6 +141,24 @@ class AdaptUniformVariance(VarianceAdapter):
 
 
 class AdaptMultivariateNormalVariance(VarianceAdapter):
+    """
+    A class that adapts the covariance matrix of a multivariate normal perturbation kernel
+    based on the particle population.
+
+    Methods:
+        adapt(population: ParticlePopulation, kernel: PerturbationKernel) -> None:
+            Adjusts the covariance matrix of a `MultivariateNormalKernel` or a
+            `CompositePerturbationKernel` containing a `MultivariateNormalKernel`
+            using the particle population. If no `MultivariateNormalKernel` is found,
+            the method exits without making changes.
+
+    Notes:
+        - The covariance matrix is scaled by a factor of 2.0 after being computed
+          from the particle states.
+        - The method assumes that the `population` contains particles with parameters
+          matching those specified in the `MultivariateNormalKernel`.
+    """
+
     def adapt(
         self,
         population: ParticlePopulation,

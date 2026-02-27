@@ -10,6 +10,30 @@ from .spawn_rng import spawn_rng
 
 
 class PerturbationKernel(ABC):
+    """
+    PerturbationKernel is an abstract base class (ABC) that defines the structure for perturbation kernels
+    used to modify particle values and calculate transition probabilities in particle-based algorithms.
+
+    Attributes:
+        params (list[str]): A list of parameter names that the perturbation kernel operates on.
+
+    Methods:
+        change_particle_values(from_particle, perturbed_values, type=float):
+            Generates a new particle based on the provided perturbed param values.
+            Supports both scalar and array-based perturbations in the particle state.
+
+        perturb(from_particle, seed_sequence):
+            Abstract method to generate new values by perturbing the original particle state.
+            Must be implemented by subclasses.
+
+        transition_probability(to_particle, from_particle):
+            Abstract method to calculate the kernel transition probability from one particle to another.
+            Must be implemented by subclasses.
+
+    Raises:
+        NotImplementedError: If the method is not implemented in a subclass.
+    """
+
     params: list[str]
 
     def __init__(self) -> None:
@@ -57,7 +81,10 @@ class MultiParameterPerturbationKernel(PerturbationKernel, ABC):
 
 
 class CompositePerturbationKernel(PerturbationKernel, ABC):
-    """Composite kernel applying multiple independent kernels.
+    """Composite kernel applying multiple kernels in a list.
+
+    This calss does not implement a specific transition probability,
+    leaving that to subclasses.
 
     Attributes:
         kernels (list[PerturbationKernel]): Component kernels.
@@ -124,6 +151,29 @@ class CompositePerturbationKernel(PerturbationKernel, ABC):
 
 
 class SeedKernel(SingleParameterPerturbationKernel):
+    """
+    This kernel is designed to perturb a seed parameter of a particle
+    with a new integer value. The transition probability is always 1.0,
+    indicating that the perturbation is deterministic given the seed sequence.
+
+    Methods:
+        perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+            Creates a new particle by copying the input particle and modifying
+            the specified parameter with a randomly generated integer.
+
+        transition_probability(to_particle: Particle, from_particle: Particle) -> float:
+            Returns the transition probability between two particles, which is
+            always 1.0 for this kernel.
+
+    Parameters:
+        params (list): A list containing the name of the "seed" parameter.
+
+    Notes:
+        - The random integer is u32, generated in the range [0, 2^32 - 1].
+        - The `spawn_rng` function is used to create a random number generator
+          from the provided seed sequence.
+    """
+
     def perturb(
         self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
@@ -140,6 +190,32 @@ class SeedKernel(SingleParameterPerturbationKernel):
 
 
 class UniformKernel(SingleParameterPerturbationKernel):
+    """
+    This kernel perturbs a parameter by sampling from a uniform distribution
+    centered around the parameter's current value, with a specified width.
+
+    Attributes:
+        width (float): The width of the uniform distribution. Must be positive.
+
+    Methods:
+        __init__(param: str, width: float) -> None:
+            Initializes the UniformKernel with the parameter name and width.
+
+        perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+            Perturbs the specified parameter of a particle using a uniform distribution.
+
+        transition_probability(to_particle: Particle, from_particle: Particle) -> float:
+            Computes the transition probability of moving from one particle to another
+            under the uniform distribution.
+
+    Raises:
+        ValueError: If the width is not positive.
+
+    Parameters:
+        param (str): The name of the parameter to perturb.
+        width (float): The width of the uniform distribution.
+    """
+
     width: float
 
     def __init__(self, param: str, width: float) -> None:
@@ -171,6 +247,30 @@ class UniformKernel(SingleParameterPerturbationKernel):
 
 
 class NormalKernel(SingleParameterPerturbationKernel):
+    """
+    This kernel perturbs a parameter by sampling from a normal (Gaussian) distribution
+    centered around the parameter's current value, with a specified standard deviation.
+
+    Attributes:
+        std_dev (float): The standard deviation of the normal distribution. Must be positive.
+
+    Args:
+        param (str): The name of the parameter to perturb.
+        std_dev (float): The standard deviation of the normal distribution.
+
+    Raises:
+        ValueError: If `std_dev` is not positive.
+
+    Methods:
+        perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+            Perturbs the value of the specified parameter in the given particle using
+            a normal distribution.
+
+        transition_probability(to_particle: Particle, from_particle: Particle) -> float:
+            Computes the transition probability of moving from one particle to another
+            under the normal distribution.
+    """
+
     std_dev: float
 
     def __init__(self, param: str, std_dev: float) -> None:
@@ -205,6 +305,19 @@ class NormalKernel(SingleParameterPerturbationKernel):
 
 
 class IndependentKernels(CompositePerturbationKernel):
+    """
+    A composite perturbation kernel that combines multiple independent kernels.
+
+    This class represents a perturbation kernel where the transition probability
+    between particles is computed as the product of the transition probabilities
+    of the individual kernels.
+
+    Methods:
+        transition_probability(to_particle: Particle, from_particle: Particle) -> float:
+            Computes the transition probability from one particle to another
+            by multiplying the transition probabilities of the individual kernels.
+    """
+
     def transition_probability(
         self, to_particle: Particle, from_particle: Particle
     ) -> float:
@@ -215,6 +328,37 @@ class IndependentKernels(CompositePerturbationKernel):
 
 
 class MultivariateNormalKernel(MultiParameterPerturbationKernel):
+    class MultivariateNormalKernel:
+        """
+        This class is used to perturb particles in a parameter space defined by a
+        multivariate normal distribution. It requires a covariance matrix to define
+        the distribution. The covariance matrix must be of the same dimension as the
+        number of parameters being perturbed.
+
+        Attributes:
+            params (list[str]): A list of parameter names to be perturbed.
+            cov_matrix (np.ndarray | None): The covariance matrix for the multivariate
+                normal distribution. Must be set before calling `perturb` or
+                `transition_probability`.
+
+        Methods:
+            __init__(params: list[str], cov_matrix: np.ndarray | None = None):
+                Initializes the kernel with the given parameters and covariance matrix.
+
+            perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+                Perturbs the given particle using the multivariate normal distribution.
+                Raises a ValueError if the covariance matrix is not set.
+
+            transition_probability(to_particle: Particle, from_particle: Particle) -> float:
+                Computes the transition probability of moving from one particle to another
+                under the multivariate normal distribution. Raises a ValueError if the
+                covariance matrix is not set.
+
+        Raises:
+            ValueError: If the covariance matrix is not set when calling `perturb` or
+                `transition_probability`.
+        """
+
     params: list[str]
     cov_matrix: np.ndarray | None = None
 
