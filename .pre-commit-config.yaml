@@ -39,6 +39,12 @@ repos:
       additional_dependencies: [pytest>=9.0.2]
       args: ['--ignore=unresolved-import']
 
+- repo: https://github.com/jsh9/pydoclint
+  rev: 0.8.3
+  hooks:
+    - id: pydoclint
+      args: ['--config', 'pyproject.toml']
+
 # R
 -   repo: https://github.com/lorenzwalthert/precommit
     rev: v0.4.3.9017

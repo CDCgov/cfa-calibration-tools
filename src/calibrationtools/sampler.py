@@ -12,6 +12,55 @@ from .variance_adapter import VarianceAdapter
 
 
 class ABCSampler:
+    """
+    ABCSampler is a class that implements an Approximate Bayesian Computation (ABC)
+    Sequential Monte Carlo (SMC) sampler. This sampler is used to estimate posterior
+    distributions of parameters for a given model by iteratively sampling and perturbing
+    particles, and evaluating their distance from observed data using user-supplied functions.
+
+    Args:
+        generation_particle_count (int): Number of particles to accept per generation for a complete population.
+        tolerance_values (list[float]): List of tolerance values for each generation for evaluating acceptance criterion.
+        priors (PriorDistribution): Prior distribution of the parameters being calibrated.
+        particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
+        outputs_to_distance (Callable[..., float]): Function to compute distance between model outputs and target data.
+        target_data (Any): Observed data to compare against.
+        model_runner (MRPModel): Model runner to simulate outputs given parameters.
+        perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
+        variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
+        max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
+        seed (int | None): Random seed for reproducibility.
+        verbose (bool): Whether to print verbose output during execution.
+        drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
+
+    Methods:
+        particle_population:
+            Getter and setter for the current particle population. Automatically archives
+            the previous population if `drop_previous_population_data` is False.
+
+        get_posterior_particles() -> ParticlePopulation:
+            Returns the posterior particle population after the sampler has run to completion.
+
+        run(**kwargs: Any):
+            Executes the ABC-SMC algorithm. Raises an error if any keyword argument conflicts
+            with existing attributes.
+
+        sample_priors(n: int = 1) -> Sequence[dict[str, Any]]:
+            Samples `n` states from the prior distribution.
+
+        sample_particle_from_priors() -> Particle:
+            Samples a single particle from the prior distribution.
+
+        sample_particle() -> Particle:
+            Samples a particle from the current population.
+
+        sample_and_perturb_particle() -> Particle:
+            Samples and perturbs a particle from the current population.
+
+        calculate_weight(particle) -> float:
+            Calculates the weight of a given particle based on its prior and perturbed probabilities.
+    """
+
     def __init__(
         self,
         generation_particle_count: int,
@@ -59,6 +108,32 @@ class ABCSampler:
 
     @particle_population.setter
     def particle_population(self, population: ParticlePopulation):
+        """
+        Updates the particle population for the sampler.
+
+        If `drop_previous_population_data` is set to False and there is existing
+        particle population data, the current particle population is archived
+        before updating to the new population.
+
+        Args:
+            population (ParticlePopulation): The new particle population to set.
+
+        Attributes:
+            drop_previous_population_data (bool): Determines whether to discard
+                previous population data or archive it.
+            _updater.particle_population (ParticlePopulation): The current particle
+                population managed by the updater.
+            population_archive (dict): A dictionary storing archived particle
+                populations, indexed by step.
+
+        Behavior:
+            - If `drop_previous_population_data` is False and there is existing
+              particle population data, the current population is archived with
+              a step index.
+            - Updates the `_updater.particle_population` with the new population.
+            - Weights of the new population are normalized and the perturbation
+              variance is adapted by the particle updater's setter method.
+        """
         if (
             not self.drop_previous_population_data
             and self._updater.particle_population.size > 0
@@ -72,6 +147,21 @@ class ABCSampler:
         self._updater.particle_population = population
 
     def get_posterior_particles(self) -> ParticlePopulation:
+        """
+        Retrieve the posterior particle population.
+
+        This method returns the current particle population representing the posterior
+        distribution after the sampling process has been completed. It ensures
+        that the posterior population is fully populated before returning it.
+
+        Returns:
+            ParticlePopulation: The particle population representing the posterior
+                distribution.
+
+        Raises:
+            ValueError: If the posterior population is not fully populated,
+                indicating that the sampler has not been run to completion.
+        """
         if self.smc_step_successes[-1] != self.generation_particle_count:
             raise ValueError(
                 "Posterior population is not fully populated. Please run the sampler to completion before accessing the posterior population."
@@ -79,10 +169,46 @@ class ABCSampler:
         return self.particle_population
 
     def run(self, **kwargs: Any):
+        """
+        Executes the Sequential Monte Carlo (SMC) sampling process.
+
+        This method performs the SMC algorithm to generate a population of particles
+        that approximate the posterior distribution of the model parameters. The process
+        involves iteratively sampling and perturbing particles, evaluating their fitness
+        using a distance metric, and accepting or rejecting them based on a tolerance value.
+
+        Args:
+            **kwargs (Any): Additional keyword arguments that can be passed to the method.
+                      These arguments are supplied to the particles_to_params function.
+                      Note that the keyword arguments must not conflict with existing
+                      attributes of the class.
+
+        Raises:
+            ValueError: If a keyword argument conflicts with an existing attribute of the class.
+
+        Process:
+            1. For each generation, particles are sampled either from the prior distribution
+               (for the first generation) or by perturbing particles from the previous generation.
+            2. The sampled particles are evaluated using the model to compute a distance metric
+               relative to the target data.
+            3. Particles that meet the tolerance criteria are accepted and added to the population.
+            4. The process continues until the desired number of particles is obtained for the generation.
+
+        Args Updated:
+            - `smc_step_successes`: A dictionary tracking the number of successful particles
+              for each generation.
+            - `particle_population`: The final population of particles for the current generation.
+            - `perturbation_kernel`: The perturbation kernel may be updated by the variance adapter based on the successive particle population.
+            - `population_archive`: If `drop_previous_population_data` is False, previous populations are archived before updating to the new population.
+
+        Notes:
+            - The method prints progress information if `verbose` is set to True.
+            - The acceptance rate is displayed periodically during the sampling process.
+        """
         for k in kwargs.keys():
             if k in self.__class__.__dict__:
                 raise ValueError(
-                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Attributes cannot be set from `.run()`"
+                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
                 )
 
         proposed_population = ParticlePopulation()

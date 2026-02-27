@@ -21,3 +21,7 @@ dev = ["pytest>=9.0.2", "ty>=0.0.14", "scipy-stubs>=1.16.3.0"]
 
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[tool.pydoclint]
+style = 'google'
+exclude = '\.git|tests|packages'
