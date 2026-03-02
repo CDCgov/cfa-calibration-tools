@@ -258,7 +258,6 @@ class ABCSampler:
                 "attempts": smc_step_attempts,
             },
             self.tolerance_values,
-            originator_perturbation_kernel,
             self._priors,
         )
 
