@@ -4,7 +4,7 @@ from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_population_metrics import ParticlePopulationMetrics
 from .particle_updater import _ParticleUpdater
-from .prior_distribution import PriorDistribution, nonseed_param_names
+from .prior_distribution import nonseed_param_names
 
 
 class CalibrationResults:
@@ -16,7 +16,15 @@ class CalibrationResults:
         population_archive (dict[int, ParticlePopulation]): A dictionary mapping generation indices to their corresponding particle populations, representing the history of particle populations across generations if saved during the sampler run.
         success_counts (dict[str, list[int]]): A dictionary containing lists of particles per generation, success counts, and attempt counts for each generation, with keys "generation_particle_count", "successes" and "attempts".
         tolerance_values (list[float]): A list of tolerance values for each generation
-        priors (PriorDistribution): The prior distribution used for sampling particles, which remains fixed throughout the calibration process.
+    Methods:
+        fitted_params() -> list[str]: Returns a list of parameter names that were fitted during the calibration process, excluding any seed parameters.
+        posterior_particles() -> ParticlePopulation: Returns the particle population representing the posterior distribution after the final generation of the calibration process.
+        ess() -> float: Returns the effective sample size (ESS) of the posterior particle population, which is a measure of the diversity of the particles and the quality of the approximation to the posterior distribution.
+        credible_intervals() -> dict[str, tuple[float, float]]: Returns a dictionary mapping parameter names to their corresponding credible intervals, which are calculated based on the quantiles of the posterior particle population for the fitted parameters.
+        point_estimates() -> dict[str, float]: Returns a dictionary mapping parameter names to their corresponding point estimates, which are calculated as the weighted average of the parameter values in the posterior particle population for the fitted parameters.
+        acceptance_rates() -> list[float]: Returns a list of acceptance rates for each generation, calculated as the ratio of successful particles to attempted particles for each generation.
+        sample_posterior_particles(n: int = 1, perturb: bool = False) -> list[Particle]: Samples particles from the posterior distribution, with an option to apply perturbation to the sampled particles using the perturbation kernel from the particle updater.
+        get_diagnostics() -> dict[str, Any]: Runs diagnostics on the calibration results, including ESS values across generations, credible intervals, point estimates, acceptance rates, quantiles, posterior weights, covariance matrix, and correlation matrix for the fitted parameters.
     """
 
     def __init__(
@@ -25,7 +33,6 @@ class CalibrationResults:
         population_archive: dict[int, ParticlePopulation],
         success_counts: dict[str, list[int]],
         tolerance_values: list[float],
-        priors: PriorDistribution,
     ):
         self._updater = _updater
         self.posterior = ParticlePopulationMetrics(
@@ -38,7 +45,7 @@ class CalibrationResults:
         self.smc_step_successes = success_counts["successes"]
         self.smc_step_attempts = success_counts["attempts"]
         self.tolerance_values = tolerance_values
-        self.priors = priors
+        self.priors = _updater.priors
 
         self.aggregate_acceptance_rate = (
             sum(self.smc_step_successes) / sum(self.smc_step_attempts)

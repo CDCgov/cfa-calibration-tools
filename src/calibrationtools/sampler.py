@@ -258,7 +258,6 @@ class ABCSampler:
                 "attempts": smc_step_attempts,
             },
             self.tolerance_values,
-            self._priors,
         )
 
         # Reset particle sampler updater to original perturbation kernel for consistent performance on re-run

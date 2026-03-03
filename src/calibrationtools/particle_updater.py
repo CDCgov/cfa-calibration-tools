@@ -20,7 +20,7 @@ class _ParticleUpdater:
         perturbation_kernel (PerturbationKernel): The kernel used to perturb particles.
         priors (PriorDistribution): The prior distribution of particle states. This remains fixed regardless of population changes.
         variance_adapter (VarianceAdapter): The adapter used to adjust the variance of the perturbation kernel according to population particle state variance.
-        seed_sequence (SeedSequence | None): An optional seed sequence for random number generation.
+        seed_sequence (SeedSequence): A seed sequence for random number generation.
         particle_population (ParticlePopulation | None): The current population of particles.
 
     Methods:
@@ -45,7 +45,7 @@ class _ParticleUpdater:
         perturbation_kernel: PerturbationKernel,
         priors: PriorDistribution,
         variance_adapter: VarianceAdapter,
-        seed_sequence: SeedSequence | None = None,
+        seed_sequence: SeedSequence,
         particle_population: ParticlePopulation | None = None,
     ):
         self.perturbation_kernel = perturbation_kernel

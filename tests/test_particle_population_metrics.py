@@ -53,7 +53,7 @@ def test_get_credible_intervals(metrics):
         lower_quantile=0.25, upper_quantile=0.75, params=["param1"]
     )
     assert "param1" in intervals
-    assert intervals["param1"] == (1., 2.)
+    assert intervals["param1"] == (1.0, 2.0)
 
     with pytest.raises(ValueError):
         metrics.get_credible_intervals(lower_quantile=1.1, upper_quantile=0.9)
