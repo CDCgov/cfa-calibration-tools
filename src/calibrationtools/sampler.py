@@ -1,5 +1,6 @@
 from typing import Any, Callable, Sequence
 
+import numpy as np
 from mrp import MRPModel
 from numpy.random import SeedSequence
 
@@ -72,7 +73,7 @@ class ABCSampler:
         model_runner: MRPModel,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
-        max_attempts_per_proposal: int = 10_000,
+        max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         seed: int | None = None,
         verbose: bool = True,
         drop_previous_population_data: bool = False,
