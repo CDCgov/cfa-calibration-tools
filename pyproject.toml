@@ -1,6 +1,6 @@
 [project]
 name = "calibrationtools"
-version = "0.1.0"
+version = "0.1.1"
 description = "Calibration runner framework to fit models to data."
 readme = "README.md"
 requires-python = ">=3.12"
