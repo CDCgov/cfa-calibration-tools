@@ -27,7 +27,7 @@ class _ParticleUpdater:
         sample_particle() -> Particle:
             Samples a particle from the current population based on their weights.
 
-        sample_and_perturb_particle(max_attempts: int = 10_000) -> Particle:
+        sample_and_perturb_particle(max_attempts: int = np.iinfo(np.int32).max) -> Particle:
             Samples a particle, perturbs it using the perturbation kernel, and returns
             the perturbed particle. Raises a RuntimeError if a valid particle cannot
             be sampled within the maximum number of attempts.
@@ -100,7 +100,7 @@ class _ParticleUpdater:
         return self.particle_population.particles[idx]
 
     def sample_and_perturb_particle(
-        self, max_attempts: int = 10_000
+        self, max_attempts: int = np.iinfo(np.int32).max
     ) -> Particle:
         """
         Samples a particle from the current population and applies a perturbation to it,
