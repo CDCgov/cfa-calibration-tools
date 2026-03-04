@@ -1,0 +1,89 @@
+{
+    "type": "object",
+    "properties": {
+        "priors": {
+            "$ref": "#/$defs/priors"
+        }
+    },
+    "required": ["priors"],
+    "$defs": {
+        "priors": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "lognormal": {
+                            "type": "object",
+                            "properties": {
+                                "mean": {"type": "number"},
+                                "sigma": {"type": "number"}
+                            },
+                            "required": ["mean", "sigma"]
+                        }
+                    },
+                    "required": ["lognormal"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "uniform": {
+                            "type": "object",
+                            "properties": {
+                                "min": {"type": "number"},
+                                "max": {"type": "number"}
+                            },
+                            "required": ["min", "max"]
+                        }
+                    },
+                    "required": ["uniform"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "gamma": {
+                            "type": "object",
+                            "properties": {
+                                "shape": {"type": "number"},
+                                "rate": {"type": "number"}
+                            },
+                            "required": ["shape", "rate"]
+                        }
+                    },
+                    "required": ["gamma"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "normal": {
+                            "type": "object",
+                            "properties": {
+                                "mean": {"type": "number"},
+                                "sigma": {"type": "number"}
+                            },
+                            "required": ["mean", "sigma"]
+                        }   
+                    },
+                    "required": ["normal"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "exponential": {
+                            "type": "object",
+                            "properties": {
+                                "rate": {"type": "number"}
+                            },
+                            "required": ["rate"]
+                        }   
+                    },
+                    "required": ["exponential"],
+                    "additionalProperties": false
+                }
+            ]
+        }
+    }
+}
