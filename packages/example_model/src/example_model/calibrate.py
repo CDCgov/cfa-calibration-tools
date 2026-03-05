@@ -9,11 +9,6 @@ from calibrationtools.perturbation_kernel import (
     MultivariateNormalKernel,
     SeedKernel,
 )
-from calibrationtools.prior_distribution import (
-    IndependentPriors,
-    SeedPrior,
-    UniformPrior,
-)
 from calibrationtools.sampler import ABCSampler
 from calibrationtools.variance_adapter import AdaptMultivariateNormalVariance
 from example_model import Binom_BP_Model
@@ -45,18 +40,23 @@ model = Binom_BP_Model(env=env)
 ##===================================#
 ## Define priors
 ##===================================#
-P = IndependentPriors(
-    [
-        UniformPrior("n", 0, 5),
-        UniformPrior("p", 0, 1),
-        SeedPrior("seed"),
-    ]
-)
+P = {
+    "priors": {
+        "p": {
+            "distribution": "uniform",
+            "parameters": {"min": 0.0, "max": 1.0},
+        },
+        "n": {
+            "distribution": "uniform",
+            "parameters": {"min": 0.0, "max": 5.0},
+        },
+    }
+}
 
 K = IndependentKernels(
     [
         MultivariateNormalKernel(
-            [p.params[0] for p in P.priors if not isinstance(p, SeedPrior)],
+            [p for p in P["priors"].keys()],
         ),
         SeedKernel("seed"),
     ]
