@@ -33,7 +33,7 @@
                 "properties": {
                     "distribution": {"const": "uniform"}
                 }
-            }, 
+            },
             "then": {
                 "properties": {
                     "parameters": {
@@ -46,14 +46,14 @@
                         "additionalProperties": false
                     }
                 }
-            }            
+            }
         },
         "normal_distribution": {
             "if": {
                 "properties": {
                     "distribution": {"const": "normal"}
                 }
-            }, 
+            },
             "then": {
                 "properties": {
                     "parameters": {
@@ -66,14 +66,14 @@
                         "additionalProperties": false
                     }
                 }
-            }            
+            }
         },
         "lognormal_distribution": {
             "if": {
                 "properties": {
                     "distribution": {"const": "lognormal"}
                 }
-            }, 
+            },
             "then": {
                 "properties": {
                     "parameters": {
@@ -86,14 +86,14 @@
                         "additionalProperties": false
                     }
                 }
-            }            
+            }
         },
         "exponential_distribution": {
             "if": {
                 "properties": {
                     "distribution": {"const": "exponential"}
                 }
-            }, 
+            },
             "then": {
                 "properties": {
                     "parameters": {
@@ -105,7 +105,7 @@
                         "additionalProperties": false
                     }
                 }
-            }            
+            }
         }
     }
 }
