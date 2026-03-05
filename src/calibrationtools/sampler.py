@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import numpy as np
@@ -22,7 +23,7 @@ class ABCSampler:
     Args:
         generation_particle_count (int): Number of particles to accept per generation for a complete population.
         tolerance_values (list[float]): List of tolerance values for each generation for evaluating acceptance criterion.
-        priors (PriorDistribution): Prior distribution of the parameters being calibrated.
+        priors (PriorDistribution | dict | Path): Prior distribution of the parameters being calibrated. Can be provided as a PriorDistribution object, a dictionary, or a path to a JSON file containing a valid priors schema.
         particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
         outputs_to_distance (Callable[..., float]): Function to compute distance between model outputs and target data.
         target_data (Any): Observed data to compare against.
@@ -33,6 +34,7 @@ class ABCSampler:
         seed (int | None): Random seed for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
         drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
+        seed_parameter_name (str | None): The name of the seed parameter to include in the priors if `incl_seed_parameter` is True when loading priors from a dictionary or JSON file.
 
     Methods:
         particle_population:
@@ -66,7 +68,7 @@ class ABCSampler:
         self,
         generation_particle_count: int,
         tolerance_values: list[float],
-        priors: PriorDistribution,
+        priors: PriorDistribution | dict | Path,
         particles_to_params: Callable[[Particle], dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
@@ -77,11 +79,11 @@ class ABCSampler:
         seed: int | None = None,
         verbose: bool = True,
         drop_previous_population_data: bool = False,
+        seed_parameter_name: str | None = "seed",
     ):
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
         self.tolerance_values = tolerance_values
-        self._priors = priors
         self._perturbation_kernel = perturbation_kernel
         self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
@@ -102,6 +104,21 @@ class ABCSampler:
             self._seed_sequence,
             ParticlePopulation(),
         )
+
+        if isinstance(priors, PriorDistribution):
+            self._priors = priors
+        elif isinstance(priors, dict):
+            from .load_priors import independent_priors_from_dict
+
+            self._priors = independent_priors_from_dict(
+                priors,
+                incl_seed_parameter=seed_parameter_name is not None,
+                seed_parameter_name=seed_parameter_name,
+            )
+        elif isinstance(priors, Path) or isinstance(priors, str):
+            from .load_priors import load_priors_from_json
+
+            self._priors = load_priors_from_json(priors)
 
     @property
     def particle_population(self) -> ParticlePopulation:
