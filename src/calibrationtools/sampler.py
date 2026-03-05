@@ -6,6 +6,7 @@ from numpy.random import SeedSequence
 
 from .particle import Particle
 from .particle_population import ParticlePopulation
+from .particle_reader import default_particle_reader
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
@@ -23,12 +24,13 @@ class ABCSampler:
         generation_particle_count (int): Number of particles to accept per generation for a complete population.
         tolerance_values (list[float]): List of tolerance values for each generation for evaluating acceptance criterion.
         priors (PriorDistribution): Prior distribution of the parameters being calibrated.
-        particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
         outputs_to_distance (Callable[..., float]): Function to compute distance between model outputs and target data.
         target_data (Any): Observed data to compare against.
         model_runner (MRPModel): Model runner to simulate outputs given parameters.
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
+        particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
+            - defaults to default_particle_reader that looks for kwargs of default_params and parameter_headers
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         seed (int | None): Random seed for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
@@ -67,12 +69,14 @@ class ABCSampler:
         generation_particle_count: int,
         tolerance_values: list[float],
         priors: PriorDistribution,
-        particles_to_params: Callable[[Particle], dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: MRPModel,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
+        particles_to_params: Callable[
+            [Particle], dict
+        ] = default_particle_reader,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         seed: int | None = None,
         verbose: bool = True,
