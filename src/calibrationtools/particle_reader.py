@@ -4,7 +4,10 @@ from mrp.api import apply_dict_overrides
 
 from .particle import Particle
 
-def unflatten_parameter_name(flattened_name: str, value: Any) -> dict[str, Any]:
+
+def unflatten_parameter_name(
+    flattened_name: str, value: Any
+) -> dict[str, Any]:
     """
     Unflattens a parameter name by splitting it on dots.
 
@@ -20,7 +23,10 @@ def unflatten_parameter_name(flattened_name: str, value: Any) -> dict[str, Any]:
         param_dict = {key: param_dict}
     return param_dict
 
-def unflatten_particle(particle: Particle, parameter_name_header: str | None = None) -> dict[str, Any]:
+
+def unflatten_particle(
+    particle: Particle, parameter_name_header: str | None = None
+) -> dict[str, Any]:
     """
     Parse a particle's state into a dictionary of parameter values, unflattening parameter names as needed.
 
@@ -33,7 +39,9 @@ def unflatten_particle(particle: Particle, parameter_name_header: str | None = N
     particle_params = {}
     for param_name, value in particle.items():
         if parameter_name_header:
-            parameter_name_header = parameter_name_header.rstrip(".")  # Remove trailing dot if present
+            parameter_name_header = parameter_name_header.rstrip(
+                "."
+            )  # Remove trailing dot if present
             par_name_to_flatten = ".".join([parameter_name_header, param_name])
         else:
             par_name_to_flatten = param_name
@@ -42,10 +50,8 @@ def unflatten_particle(particle: Particle, parameter_name_header: str | None = N
 
     return particle_params
 
-def default_particle_reader(
-        particle: Particle,
-        **kwargs
-    ) -> dict[str, Any]:
+
+def default_particle_reader(particle: Particle, **kwargs) -> dict[str, Any]:
     """
     Convert a particle's state into a dictionary of parameter values.
 
@@ -61,7 +67,9 @@ def default_particle_reader(
     parameter_name_header = kwargs.get("parameter_name_header")
 
     # Get the unflattende particle parameter dictionary
-    particle_params = unflatten_particle(particle, parameter_name_header=parameter_name_header)
+    particle_params = unflatten_particle(
+        particle, parameter_name_header=parameter_name_header
+    )
 
     # Override default parameters with unflattened particle parameter set
     model_params = apply_dict_overrides(default_params, particle_params)
