@@ -106,7 +106,6 @@ def test_default_particle_reader_no_header(dense_particle, default_param_dict):
         parameter_name_header=header,
     )
 
-    # Without the mathcing headers, the particle params are appended
-    # this is not a desirable beahvior
+    # Without the matching headers, the particle params are appended instead of merged
     default_param_dict.update(unflatten_particle(dense_particle))
     assert model_params == default_param_dict
