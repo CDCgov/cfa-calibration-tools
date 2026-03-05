@@ -97,14 +97,6 @@ class ABCSampler:
         self.smc_step_successes = [0] * len(tolerance_values)
         self.verbose = verbose
 
-        self._updater = _ParticleUpdater(
-            self._perturbation_kernel,
-            self._priors,
-            self._variance_adapter,
-            self._seed_sequence,
-            ParticlePopulation(),
-        )
-
         if isinstance(priors, PriorDistribution):
             self._priors = priors
         elif isinstance(priors, dict):
@@ -119,6 +111,14 @@ class ABCSampler:
             from .load_priors import load_priors_from_json
 
             self._priors = load_priors_from_json(priors)
+
+        self._updater = _ParticleUpdater(
+            self._perturbation_kernel,
+            self._priors,
+            self._variance_adapter,
+            self._seed_sequence,
+            ParticlePopulation(),
+        )
 
     @property
     def particle_population(self) -> ParticlePopulation:
