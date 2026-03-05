@@ -24,7 +24,7 @@ def dense_dict() -> dict[str, Any]:
 def default_param_dict() -> dict[str, Any]:
     return {
         "model_inputs": {
-            "model_name": {
+            "model_name.global_params": {
                 "param1": {"unused_variant": {"component": 2.0}},
                 "param2": {"component": 1.0},
                 "default_param": 18.0,
@@ -56,22 +56,23 @@ def test_unflatten_particle(dense_particle):
     assert param_dict == expected
 
     param_dict_with_header = unflatten_particle(
-        dense_particle, parameter_name_header="header1.header2"
+        dense_particle, parameter_headers=["header1", "header2"]
     )
     assert param_dict_with_header == {"header1": {"header2": expected}}
 
 
 def test_default_particle_reader(dense_particle, default_param_dict):
-    header = "model_inputs.model_name"
+    header = ["model_inputs", "model_name.global_params"]
     model_params = default_particle_reader(
         dense_particle,
         default_params=default_param_dict,
-        parameter_name_header=header,
+        parameter_headers=header,
     )
 
+    # Parameter headers should allow for '.' in their names
     expected = {
         "model_inputs": {
-            "model_name": {
+            "model_name.global_params": {
                 "param1": {
                     "variant": {"component": 3.0, "extra_component": 5.0},
                     "unused_variant": {"component": 2.0},
@@ -93,17 +94,17 @@ def test_default_particle_reader(dense_particle, default_param_dict):
     # Fails to yield expected results with header and using just update
     updated_params = copy.deepcopy(default_param_dict)
     updated_params.update(
-        unflatten_particle(dense_particle, parameter_name_header=header)
+        unflatten_particle(dense_particle, parameter_headers=header)
     )
     assert model_params != updated_params
 
 
 def test_default_particle_reader_no_header(dense_particle, default_param_dict):
-    header = None
+    header = []
     model_params = default_particle_reader(
         dense_particle,
         default_params=default_param_dict,
-        parameter_name_header=header,
+        parameter_headers=header,
     )
 
     # Without the matching headers, the particle params are appended instead of merged

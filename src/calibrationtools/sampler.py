@@ -30,7 +30,7 @@ class ABCSampler:
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
         particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
-            - defaults to default_particle_reader that looks for kwargs of default_params and parameter_name_header
+            - defaults to default_particle_reader that looks for kwargs of default_params and parameter_headers
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         seed (int | None): Random seed for reproducibility.
         verbose (bool): Whether to print verbose output during execution.

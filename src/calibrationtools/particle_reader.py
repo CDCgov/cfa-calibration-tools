@@ -25,27 +25,22 @@ def unflatten_parameter_name(
 
 
 def unflatten_particle(
-    particle: Particle, parameter_name_header: str | None = None
+    particle: Particle, parameter_headers: list[str] = []
 ) -> dict[str, Any]:
     """
     Parse a particle's state into a dictionary of parameter values, unflattening parameter names as needed.
 
     Args:
         particle (Particle): The particle whose state is to be parsed.
-        parameter_name_header (str | None): An optional header to prepend to parameter names before unflattening.
+        parameter_headers (list[str]): An optional list of headers to prepend to parameter names before unflattening.
     Returns:
         dict[str, Any]: A dictionary of parameter values derived from the particle's state.
     """
     particle_params = {}
     for param_name, value in particle.items():
-        if parameter_name_header:
-            parameter_name_header = parameter_name_header.rstrip(
-                "."
-            )  # Remove trailing dot if present
-            par_name_to_flatten = ".".join([parameter_name_header, param_name])
-        else:
-            par_name_to_flatten = param_name
-        unflattened = unflatten_parameter_name(par_name_to_flatten, value)
+        unflattened = unflatten_parameter_name(param_name, value)
+        for header in reversed(parameter_headers):
+            unflattened = {header: unflattened}
         particle_params = apply_dict_overrides(particle_params, unflattened)
 
     return particle_params
@@ -59,16 +54,18 @@ def default_particle_reader(particle: Particle, **kwargs) -> dict[str, Any]:
         particle (Particle): The particle whose state is to be converted.
         **kwargs:
             - default_params (dict, optional): A dictionary of default parameter values to override with the particle's state. Defaults to an empty dictionary.
-            - parameter_name_header (str, optional): An optional header to prepend to parameter names before unflattening.
+            - parameter_headers (list[str], optional): An optional, ordered header list to prepend as keys to parameter names before unflattening.
     Returns:
         dict[str, Any]: A dictionary of parameter values derived from the particle's state.
     """
     default_params = kwargs.get("default_params", {})
-    parameter_name_header = kwargs.get("parameter_name_header")
+    parameter_headers = kwargs.get("parameter_headers", [])
+    if isinstance(parameter_headers, str):
+        parameter_headers = [parameter_headers]
 
     # Get the unflattende particle parameter dictionary
     particle_params = unflatten_particle(
-        particle, parameter_name_header=parameter_name_header
+        particle, parameter_headers=parameter_headers
     )
 
     # Override default parameters with unflattened particle parameter set
