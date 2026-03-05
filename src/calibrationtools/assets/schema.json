@@ -1,0 +1,111 @@
+{
+    "$id": "https://github.com/CDCGov/cfa-calibration-tools/src/assets/schema.json",
+    "type": "object",
+    "properties": {
+        "priors": {
+            "type": "object",
+            "additionalProperties": {
+                "$ref": "#/$defs/parameter_prior"
+            }
+        }
+    },
+    "required": ["priors"],
+    "$defs": {
+        "parameter_prior": {
+            "type": "object",
+            "properties": {
+                "distribution": {
+                    "enum": ["uniform", "normal", "lognormal", "exponential"]
+                },
+                "parameters": {"type": "object"}
+            },
+            "allOf": [
+                {"$ref": "#/$defs/uniform_distribution"},
+                {"$ref": "#/$defs/normal_distribution"},
+                {"$ref": "#/$defs/lognormal_distribution"},
+                {"$ref": "#/$defs/exponential_distribution"}
+            ],
+            "required": ["distribution", "parameters"],
+            "additionalProperties": false
+        },
+        "uniform_distribution": {
+            "if": {
+                "properties": {
+                    "distribution": {"const": "uniform"}
+                }
+            }, 
+            "then": {
+                "properties": {
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "min": {"type": "number"},
+                            "max": {"type": "number"}
+                        },
+                        "required": ["min", "max"],
+                        "additionalProperties": false
+                    }
+                }
+            }            
+        },
+        "normal_distribution": {
+            "if": {
+                "properties": {
+                    "distribution": {"const": "normal"}
+                }
+            }, 
+            "then": {
+                "properties": {
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mean": {"type": "number"},
+                            "std_dev": {"type": "number", "exclusiveMinimum": 0}
+                        },
+                        "required": ["mean", "std_dev"],
+                        "additionalProperties": false
+                    }
+                }
+            }            
+        },
+        "lognormal_distribution": {
+            "if": {
+                "properties": {
+                    "distribution": {"const": "lognormal"}
+                }
+            }, 
+            "then": {
+                "properties": {
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mean": {"type": "number"},
+                            "std_dev": {"type": "number", "exclusiveMinimum": 0}
+                        },
+                        "required": ["mean", "std_dev"],
+                        "additionalProperties": false
+                    }
+                }
+            }            
+        },
+        "exponential_distribution": {
+            "if": {
+                "properties": {
+                    "distribution": {"const": "exponential"}
+                }
+            }, 
+            "then": {
+                "properties": {
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "rate": {"type": "number", "exclusiveMinimum": 0}
+                        },
+                        "required": ["rate"],
+                        "additionalProperties": false
+                    }
+                }
+            }            
+        }
+    }
+}

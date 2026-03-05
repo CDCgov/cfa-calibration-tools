@@ -15,6 +15,7 @@ from .prior_distribution import (
     SeedPrior,
     UniformPrior,
 )
+from .load_priors import load_priors_from_json, independent_priors_from_dict, validate_schema
 from .sampler import ABCSampler
 from .variance_adapter import (
     AdaptIdentityVariance,
@@ -44,4 +45,7 @@ __all__ = [
     "AdaptMultivariateNormalVariance",
     "AdaptIdentityVariance",
     "AdaptUniformVariance",
+    "load_priors_from_json",
+    "independent_priors_from_dict",
+    "validate_schema",
 ]
