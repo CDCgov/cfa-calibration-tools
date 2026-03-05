@@ -1,7 +1,7 @@
 from math import exp
 
 from numpy.random import SeedSequence
-from scipy.stats import expon, lognorm, norm
+from scipy.stats import beta, expon, gamma, lognorm, norm
 
 from calibrationtools import (
     IndependentPriors,
@@ -10,7 +10,9 @@ from calibrationtools import (
     UniformPrior,
 )
 from calibrationtools.prior_distribution import (
+    BetaPrior,
     ExponentialPrior,
+    GammaPrior,
     LogNormalPrior,
     NormalPrior,
 )
@@ -108,6 +110,44 @@ def test_exponential_prior_probability() -> None:
     assert prior.probability_density(Particle({"x": 0.5})) == expon.pdf(
         0.5, scale=0.5
     )
+
+
+def test_gamma_prior_sampling(seed_sequence: SeedSequence) -> None:
+    shape = 2.0
+    scale = 3.0
+    prior = GammaPrior(param="x", shape=shape, scale=scale)
+    samples = [s["x"] for s in prior.sample(5, seed_sequence)]
+
+    assert all(v >= 0 for v in samples)
+    assert all(isinstance(v, float) for v in samples)
+
+
+def test_gamma_prior_probability() -> None:
+    shape = 2.0
+    scale = 3.0
+    prior = GammaPrior(param="x", shape=shape, scale=scale)
+    expected = gamma.pdf(5.0, a=shape, scale=scale)
+
+    assert prior.probability_density(Particle({"x": 5.0})) == expected
+
+
+def test_beta_prior_sampling(seed_sequence: SeedSequence) -> None:
+    alpha = 2.0
+    beta_param = 5.0
+    prior = BetaPrior(param="x", alpha=alpha, beta=beta_param)
+    samples = [s["x"] for s in prior.sample(5, seed_sequence)]
+
+    assert all(0 <= v <= 1 for v in samples)
+    assert all(isinstance(v, float) for v in samples)
+
+
+def test_beta_prior_probability() -> None:
+    alpha = 2.0
+    beta_param = 5.0
+    prior = BetaPrior(param="x", alpha=alpha, beta=beta_param)
+    expected = beta.pdf(0.5, a=alpha, b=beta_param)
+
+    assert prior.probability_density(Particle({"x": 0.5})) == expected
 
 
 def test_independent_priors_sampling(

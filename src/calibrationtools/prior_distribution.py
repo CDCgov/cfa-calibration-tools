@@ -3,7 +3,7 @@ from typing import Any, Sequence
 
 import numpy as np
 from numpy.random import SeedSequence
-from scipy.stats import expon, lognorm, norm
+from scipy.stats import beta, expon, gamma, lognorm, norm
 
 from .particle import Particle
 from .spawn_rng import spawn_rng
@@ -272,6 +272,85 @@ class ExponentialPrior(SingleParameterPriorDistribution):
 
     def probability_density(self, particle: Particle) -> float:
         return float(expon.pdf(particle[self.params[0]], scale=1 / self.rate))
+
+
+class GammaPrior(SingleParameterPriorDistribution):
+    """
+    Represents a gamma prior distribution for a single parameter.
+
+    The gamma distribution is defined by a shape parameter (k) and a scale parameter (θ),
+    both of which must be positive. This class provides methods to sample from the distribution
+    and calculate the probability density for a given particle.
+
+    Args:
+        param (str): The name of the parameter this prior is associated with.
+        shape (float): The shape parameter (k) of the gamma distribution. Must be positive.
+        scale (float): The scale parameter (θ) of the gamma distribution. Must be positive.
+
+    Raises:
+        ValueError: If `shape` or `scale` is not positive.
+    """
+
+    def __init__(self, param: str, shape: float, scale: float) -> None:
+        super().__init__(param)
+        self.shape = shape
+        self.scale = scale
+        if self.shape <= 0:
+            raise ValueError("Shape must be positive for GammaPrior.")
+        if self.scale <= 0:
+            raise ValueError("Scale must be positive for GammaPrior.")
+
+    def sample(
+        self, n: int, seed: SeedSequence | None
+    ) -> Sequence[dict[str, Any]]:
+        rng = spawn_rng(seed)
+        return [
+            {self.param: rng.gamma(self.shape, scale=self.scale)}
+            for _ in range(n)
+        ]
+
+    def probability_density(self, particle: Particle) -> float:
+        return float(
+            gamma.pdf(particle[self.params[0]], a=self.shape, scale=self.scale)
+        )
+
+
+class BetaPrior(SingleParameterPriorDistribution):
+    """
+    Represents a beta prior distribution for a single parameter.
+
+    The beta distribution is defined by two shape parameters (α and β), both of which must be positive.
+    This class provides methods to sample from the distribution and calculate the probability density for a given particle.
+
+    Args:
+        param (str): The name of the parameter this prior is associated with.
+        alpha (float): The first shape parameter (α) of the beta distribution. Must be positive.
+        beta (float): The second shape parameter (β) of the beta distribution. Must be positive.
+    Raises:
+        ValueError: If `alpha` or `beta` is not positive.
+    """
+
+    def __init__(self, param: str, alpha: float, beta: float) -> None:
+        super().__init__(param)
+        self.alpha = alpha
+        self.beta = beta
+        if self.alpha <= 0:
+            raise ValueError("Alpha must be positive for BetaPrior.")
+        if self.beta <= 0:
+            raise ValueError("Beta must be positive for BetaPrior.")
+
+    def sample(
+        self, n: int, seed: SeedSequence | None
+    ) -> Sequence[dict[str, Any]]:
+        rng = spawn_rng(seed)
+        return [
+            {self.param: rng.beta(self.alpha, self.beta)} for _ in range(n)
+        ]
+
+    def probability_density(self, particle: Particle) -> float:
+        return float(
+            beta.pdf(particle[self.params[0]], a=self.alpha, b=self.beta)
+        )
 
 
 class SeedPrior(SingleParameterPriorDistribution):
