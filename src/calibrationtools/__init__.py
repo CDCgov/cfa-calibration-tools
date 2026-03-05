@@ -1,3 +1,8 @@
+from .load_priors import (
+    independent_priors_from_dict,
+    load_priors_from_json,
+    validate_schema,
+)
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_updater import _ParticleUpdater
@@ -44,4 +49,7 @@ __all__ = [
     "AdaptMultivariateNormalVariance",
     "AdaptIdentityVariance",
     "AdaptUniformVariance",
+    "load_priors_from_json",
+    "independent_priors_from_dict",
+    "validate_schema",
 ]
