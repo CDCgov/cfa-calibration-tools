@@ -1,0 +1,102 @@
+import pytest
+from typing import Any
+
+import copy
+
+from calibrationtools.particle import Particle
+from calibrationtools.particle_reader import unflatten_particle, unflatten_parameter_name, default_particle_reader
+
+@pytest.fixture
+def dense_dict() -> dict[str, Any]:
+    return {
+        "param1.variant.component": 3.0,
+        "param1.variant.extra_component": 5.0,
+        "param2.component": 7.0
+    }
+
+@pytest.fixture
+def default_param_dict() -> dict[str, Any]:
+    return {
+        "model_inputs": {
+            "model_name": {
+                "param1": {
+                    "unused_variant": {
+                        "component": 2.0
+                    }
+                },
+                "param2": {
+                    "component": 1.0
+                },
+                "default_param": 18.0,
+                "seed": 123
+            }
+        }
+    }
+
+@pytest.fixture
+def dense_particle(dense_dict) -> Particle:
+    return Particle(dense_dict)
+
+def test_unflatten_particle(dense_particle):
+    param_dict = unflatten_particle(dense_particle)
+    expected = {
+        "param1": {
+            "variant": {
+                "component": 3.0,
+                "extra_component": 5.0
+            }
+        },
+        "param2": {
+            "component": 7.0
+        }
+    }
+    assert param_dict == expected
+
+    param_dict_with_header = unflatten_particle(dense_particle, parameter_name_header = "header1.header2")
+    assert param_dict_with_header == {"header1": {"header2": expected}}
+
+def test_default_particle_reader(dense_particle, default_param_dict):
+    header = "model_inputs.model_name"
+    model_params = default_particle_reader(dense_particle, default_param_dict, header)
+
+    expected = {
+        "model_inputs": {
+            "model_name": {
+                "param1": {
+                    "variant": {
+                        "component": 3.0,
+                        "extra_component": 5.0
+                    },
+                    "unused_variant": {
+                        "component": 2.0
+                    }
+                },
+                "param2": {
+                    "component": 7.0
+                },
+                "default_param": 18.0,
+                "seed": 123
+            }
+        }
+    }
+
+    assert model_params == expected
+
+    # Fails to yield expected results without header
+    no_header_params = copy.deepcopy(default_param_dict)
+    no_header_params.update(unflatten_particle(dense_particle))
+    assert model_params != default_param_dict
+
+    # Fails to yield expected results with header and using just update
+    updated_params = copy.deepcopy(default_param_dict)
+    updated_params.update(unflatten_particle(dense_particle, parameter_name_header=header))
+    assert model_params != updated_params
+
+def test_default_particle_reader_no_header(dense_particle, default_param_dict):
+    header = None
+    model_params = default_particle_reader(dense_particle, default_param_dict, header)
+
+    # Without the mathcing headers, the particle params are appended
+    # this is not a desirable beahvior
+    default_param_dict.update(unflatten_particle(dense_particle))
+    assert model_params == default_param_dict

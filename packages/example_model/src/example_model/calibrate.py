@@ -2,7 +2,6 @@
 
 import numpy as np
 from mrp import Environment
-from mrp.api import apply_dict_overrides
 
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
@@ -68,12 +67,6 @@ V = AdaptMultivariateNormalVariance()
 ##===================================#
 ## Run ABC-SMC
 ##===================================#
-def particles_to_params(particle, **kwargs):
-    base_inputs = kwargs.get("base_inputs")
-    model_params = apply_dict_overrides(base_inputs, particle)
-    return model_params
-
-
 def outputs_to_distance(model_output, target_data):
     return abs(np.sum(model_output) - target_data)
 
@@ -84,14 +77,13 @@ sampler = ABCSampler(
     priors=P,
     perturbation_kernel=K,
     variance_adapter=V,
-    particles_to_params=particles_to_params,
     outputs_to_distance=outputs_to_distance,
     target_data=5,
     model_runner=model,
     seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
-sampler.run(base_inputs=default_inputs)
+sampler.run(default_params=default_inputs)
 
 ##===================================#
 ## Get results
