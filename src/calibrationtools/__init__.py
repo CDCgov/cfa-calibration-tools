@@ -6,6 +6,7 @@ from .load_priors import (
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_reader import default_particle_reader, unflatten_particle
+from .particle_population_metrics import ParticlePopulationMetrics
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -39,6 +40,7 @@ __all__ = [
     "ABCSampler",
     "Particle",
     "ParticlePopulation",
+    "ParticlePopulationMetrics",
     "_ParticleUpdater",
     "PriorDistribution",
     "UniformPrior",

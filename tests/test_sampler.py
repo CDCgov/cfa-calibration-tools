@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import pytest
 
+from calibrationtools.calibration_results import CalibrationResults
 from calibrationtools.perturbation_kernel import (
     NormalKernel,
     SeedKernel,
@@ -40,49 +41,54 @@ def sampler(K, P, Vnorm) -> ABCSampler:
 
 def test_abc_sampler_run(K, sampler):
     original_std_dev = K.kernels[0].std_dev
-    original_seed_kernel = K.kernels[1]
-    sampler.run()
-    posterior_particles = sampler.get_posterior_particles()
+    results = sampler.run()
+    assert isinstance(results, CalibrationResults)
+    posterior_particles = results.posterior.particle_population
 
     # Assert success condition after run
     assert all(
         [
             count == sampler.generation_particle_count
-            for count in sampler.smc_step_successes
+            for count in results.smc_step_successes
         ]
     )
 
     # Assess population handling and updating
     assert (
-        len(sampler.population_archive) == len(sampler.tolerance_values)
+        len(results.population_archive) == len(sampler.tolerance_values)
     ) - 1
-    for pop in sampler.population_archive.values():
+    for pop in results.population_archive.values():
         assert len(pop.particles) == sampler.generation_particle_count
         assert pop.total_weight == pytest.approx(1.0)
         assert all(
             p not in posterior_particles.particles for p in pop.particles
         )
 
-    assert sampler.particle_population == posterior_particles
     assert (
         len(posterior_particles.particles) == sampler.generation_particle_count
     )
 
     # Test that the perturbation kernel has been updated by adapter Vnorm
     current_perturbation_kernels = sampler._updater.perturbation_kernel.kernels
+    posterior_perturbation_kernels = (
+        results._updater.perturbation_kernel.kernels
+    )
     assert isinstance(current_perturbation_kernels[0], NormalKernel)
-    assert current_perturbation_kernels[0].std_dev < original_std_dev
+    assert current_perturbation_kernels[0].std_dev == original_std_dev
+    assert posterior_perturbation_kernels[0].std_dev < original_std_dev
 
     assert isinstance(current_perturbation_kernels[1], SeedKernel)
-    assert current_perturbation_kernels[1] == original_seed_kernel
+    assert isinstance(posterior_perturbation_kernels[1], SeedKernel)
 
 
-def test_get_posterior_particles_before_run(sampler):
-    with pytest.raises(
-        ValueError,
-        match="Posterior population is not fully populated. Please run the sampler to completion before accessing the posterior population.",
-    ):
-        sampler.get_posterior_particles()
+def test_sampler_run_repeatable(sampler):
+    # Sampler produces same results when seed is set
+    results1 = sampler.run()
+    results2 = sampler.run()
+
+    assert results1.point_estimates == results2.point_estimates
+    assert results1.ess == results2.ess
+    assert results1.acceptance_rates == results2.acceptance_rates
 
 
 def test_sample_from_priors(sampler):
