@@ -1,3 +1,4 @@
+from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_population_metrics import ParticlePopulationMetrics
@@ -27,6 +28,7 @@ from .variance_adapter import (
 
 __all__ = [
     "ABCSampler",
+    "CalibrationResults",
     "Particle",
     "ParticlePopulation",
     "ParticlePopulationMetrics",
