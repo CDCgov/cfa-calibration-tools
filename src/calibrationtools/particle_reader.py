@@ -6,6 +6,75 @@ from mrp.api import apply_dict_overrides
 from .particle import Particle
 
 
+def flatten_dict(
+    structured_dict: dict[str, Any],
+    parent_key: str = "",
+    sep: str = ".",
+    escape_sep: bool = True,
+) -> dict[str, Any]:
+    """
+    Flattens a nested dictionary by concatenating keys with a separator.
+
+    Args:
+        structured_dict (dict[str, Any]): The nested dictionary to flatten.
+        parent_key (str): The base key to prepend to each key in the flattened dictionary. Defaults to an empty string.
+        sep (str): The separator to use when concatenating keys. Defaults to "."
+        escape_sep (bool): Whether to escape the separator in keys that contain it. If True, occurrences of the separator in keys will be prefixed with a backslash. If False, a ValueError will be raised if any key contains the separator. Defaults to True.
+
+    Returns:
+        dict[str, Any]: A flattened dictionary where nested keys are concatenated with the specified separator.
+    Raises:
+        ValueError: If escape_sep is False and any key in the structured_dict contains the separator
+    """
+    items = []
+    for k, v in structured_dict.items():
+        if sep in k:
+            if escape_sep:
+                k = k.replace(sep, "\\" + sep)
+            else:
+                raise ValueError(
+                    f"Key '{k}' contains the separator '{sep}' and escape_sep is set to False."
+                )
+
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def unflatten_parameter_name(
+    flattened_name: str, value: Any, sep: str = "."
+) -> dict[str, Any]:
+    """
+    Unflattens a parameter name by splitting it on dots.
+
+    Args:
+        flattened_name (str): The flattened parameter name (e.g., "offspring_distribution.NegativeBinomial.mean").
+        value (Any): The value to assign to the unflattened parameter.
+        sep (str): The separator used in the flattened name. Defaults to "."
+    Returns:
+        dict[str, Any]: A dictionary representing the unflattened parameter name (e.g., {"offspring_distribution": {"NegativeBinomial": {"mean2": value}}}).
+    """
+    name_vec = flattened_name.split(sep)
+    param_vec = []
+    i = 0
+    # Corrct for any escaped separators introduced during flattening
+    while i < len(name_vec):
+        if name_vec[i].endswith("\\"):
+            param_vec.append(name_vec[i].replace("\\", ".") + name_vec[i + 1])
+            i += 2
+        else:
+            param_vec.append(name_vec[i])
+            i += 1
+
+    param_dict = {param_vec[-1]: value}
+    for key in reversed(param_vec[:-1]):
+        param_dict = {key: param_dict}
+    return param_dict
+
+
 class ParticleReader:
     """
     ParticleReader is a utility class for converting Particle objects into dictionaries
@@ -143,47 +212,3 @@ class ParticleReader:
                 return read_fn(particle, **kwargs)
         else:
             return self._merge_particle_with_defaults(particle)
-
-
-def flatten_dict(
-    structured_dict: dict[str, Any], parent_key: str = "", sep: str = "."
-) -> dict[str, Any]:
-    """
-    Flattens a nested dictionary by concatenating keys with a separator.
-
-    Args:
-        structured_dict (dict[str, Any]): The nested dictionary to flatten.
-        parent_key (str): The base key to prepend to each key in the flattened dictionary. Defaults to an empty string.
-        sep (str): The separator to use when concatenating keys. Defaults to "."
-
-    Returns:
-        dict[str, Any]: A flattened dictionary where nested keys are concatenated with the specified separator.
-    """
-    items = []
-    for k, v in structured_dict.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
-
-def unflatten_parameter_name(
-    flattened_name: str, value: Any, sep: str = "."
-) -> dict[str, Any]:
-    """
-    Unflattens a parameter name by splitting it on dots.
-
-    Args:
-        flattened_name (str): The flattened parameter name (e.g., "offspring_distribution.NegativeBinomial.mean").
-        value (Any): The value to assign to the unflattened parameter.
-        sep (str): The separator used in the flattened name. Defaults to "."
-    Returns:
-        dict[str, Any]: A dictionary representing the unflattened parameter name (e.g., {"offspring_distribution": {"NegativeBinomial": {"mean2": value}}}).
-    """
-    param_vec = flattened_name.split(sep)
-    param_dict = {param_vec[-1]: value}
-    for key in reversed(param_vec[:-1]):
-        param_dict = {key: param_dict}
-    return param_dict
