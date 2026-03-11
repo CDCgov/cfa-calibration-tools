@@ -5,8 +5,12 @@ from .load_priors import (
 )
 from .particle import Particle
 from .particle_population import ParticlePopulation
-from .particle_reader import default_particle_reader, unflatten_particle
 from .particle_population_metrics import ParticlePopulationMetrics
+from .particle_reader import (
+    ParticleReader,
+    flatten_dict,
+    unflatten_parameter_name,
+)
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -65,6 +69,7 @@ __all__ = [
     "load_priors_from_json",
     "independent_priors_from_dict",
     "validate_schema",
-    "default_particle_reader",
-    "unflatten_particle",
+    "ParticleReader",
+    "flatten_dict",
+    "unflatten_parameter_name",
 ]

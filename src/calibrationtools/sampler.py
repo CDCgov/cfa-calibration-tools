@@ -1,6 +1,6 @@
 from pathlib import Path
 import copy
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Concatenate, Sequence
 
 import numpy as np
 from mrp import MRPModel
@@ -9,7 +9,7 @@ from numpy.random import SeedSequence
 from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_population import ParticlePopulation
-from .particle_reader import default_particle_reader
+from .particle_reader import ParticleReader
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
@@ -32,7 +32,7 @@ class ABCSampler:
         model_runner (MRPModel): Model runner to simulate outputs given parameters.
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
-        particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
+        particles_to_params (Callable[Concatenate[Particle, ...], dict] | None): Function to map particles to model parameters.
             - defaults to default_particle_reader that looks for kwargs of default_params and parameter_headers
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         seed (int | None): Random seed for reproducibility.
@@ -45,7 +45,10 @@ class ABCSampler:
             Getter and setter for the current particle population. Automatically archives
             the previous population if `drop_previous_population_data` is False.
 
-        run(**kwargs: Any):
+        get_posterior_particles() -> ParticlePopulation:
+            Returns the posterior particle population after the sampler has run to completion.
+
+        run(default_params: dict[str, Any] | None = None, **kwargs: Any):
             Executes the ABC-SMC algorithm. Raises an error if any keyword argument conflicts
             with existing attributes.
 
@@ -75,9 +78,8 @@ class ABCSampler:
         model_runner: MRPModel,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
-        particles_to_params: Callable[
-            [Particle], dict
-        ] = default_particle_reader,
+        particles_to_params: Callable[Concatenate[Particle, ...], dict]
+        | None = None,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         seed: int | None = None,
         verbose: bool = True,
@@ -174,7 +176,7 @@ class ABCSampler:
             ParticlePopulation(),
         )
 
-    def run(self, **kwargs: Any) -> CalibrationResults:
+    def run(self, default_params: dict[str, Any] | None = None, **kwargs: Any):
         """
         Executes the Sequential Monte Carlo (SMC) sampling process.
 
@@ -184,6 +186,7 @@ class ABCSampler:
         using a distance metric, and accepting or rejecting them based on a tolerance value.
 
         Args:
+            default_params (dict[str, Any] | None): The default parameters for the particles.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -226,6 +229,11 @@ class ABCSampler:
         )
         smc_step_successes = [0] * len(self.tolerance_values)
         smc_step_attempts = [0] * len(self.tolerance_values)
+        
+        particle_reader = ParticleReader(
+            particle_param_names=self._priors.params,
+            default_params=default_params,
+        )
 
         for generation in range(len(self.tolerance_values)):
             if self.verbose:
@@ -247,7 +255,11 @@ class ABCSampler:
                     proposed_particle = self.sample_particle_from_priors()
                 else:
                     proposed_particle = self.sample_and_perturb_particle()
-                params = self.particles_to_params(proposed_particle, **kwargs)
+                params = particle_reader.read_particle(
+                    proposed_particle,
+                    read_fn=self.particles_to_params,
+                    **kwargs,
+                )
 
                 # Generate the distance metric from model run
                 outputs = self.model_runner.simulate(params)
