@@ -110,6 +110,10 @@ class ParticleReader:
         Creates a mapping from flat particle parameter names to their corresponding flattened keys in the default_params structure.
         This mapping is used to guide the unflattening process when merging particle parameters with defaults.
 
+        Returns:
+            dict[str, str]: A mapping from flat particle parameter names to their corresponding
+            flattened keys in the default_params structure.
+
         Raises:
             ValueError: If a particle parameter name cannot be uniquely matched to a flattened key in default_params (no matches or multiple matches).
         """
