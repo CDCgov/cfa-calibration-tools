@@ -161,6 +161,29 @@ def test_merge_particle_with_defaults(dense_particle, default_param_dict):
     assert reader.default_params != merged
 
 
+def test_merge_particles_with_defaults_light(particle):
+    light_defaults = {"x": 1.5, "y": 2.5, "match_x": 1.0}
+    reader = ParticleReader(
+        ["x", "y"],
+        default_params=light_defaults,
+    )
+    merged = reader._merge_particle_with_defaults(particle)
+    expected_merged = {"x": 1.0, "y": 2.0, "match_x": 1.0}
+    assert merged == expected_merged
+
+
+def test_merge_particles_with_defaults_light_structure(particle):
+    light_defaults = {"x": 1.5, "y": 2.5, "match_x": 1.0}
+    reader = ParticleReader(
+        ["x", "y"],
+        default_params={"model_header": light_defaults},
+    )
+    merged = reader._merge_particle_with_defaults(particle)
+    print(merged)
+    expected_merged = {"model_header": {"x": 1.0, "y": 2.0, "match_x": 1.0}}
+    assert merged == expected_merged
+
+
 def test_merge_particle_without_defaults(dense_particle, nested_dict):
     all_names = list(dense_particle.keys())
     reader = ParticleReader(

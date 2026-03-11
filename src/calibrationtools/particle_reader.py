@@ -9,16 +9,14 @@ from .particle import Particle
 def flatten_dict(
     structured_dict: dict[str, Any],
     parent_key: str = "",
-    sep: str = ".",
     escape_sep: bool = True,
 ) -> dict[str, Any]:
     """
-    Flattens a nested dictionary by concatenating keys with a separator.
+    Flattens a nested dictionary by concatenating keys with a '.' separator.
 
     Args:
         structured_dict (dict[str, Any]): The nested dictionary to flatten.
         parent_key (str): The base key to prepend to each key in the flattened dictionary. Defaults to an empty string.
-        sep (str): The separator to use when concatenating keys. Defaults to "."
         escape_sep (bool): Whether to escape the separator in keys that contain it. If True, occurrences of the separator in keys will be prefixed with a backslash. If False, a ValueError will be raised if any key contains the separator. Defaults to True.
 
     Returns:
@@ -28,24 +26,24 @@ def flatten_dict(
     """
     items = []
     for k, v in structured_dict.items():
-        if sep in k:
+        if "." in k:
             if escape_sep:
-                k = k.replace(sep, "\\" + sep)
+                k = k.replace(".", "\\.")
             else:
                 raise ValueError(
-                    f"Key '{k}' contains the separator '{sep}' and escape_sep is set to False."
+                    f"Key '{k}' contains the separator '.' and escape_sep is set to False."
                 )
 
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        new_key = ".".join([parent_key, k]) if parent_key else k
         if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
+            items.extend(flatten_dict(v, new_key).items())
         else:
             items.append((new_key, v))
     return dict(items)
 
 
 def unflatten_parameter_name(
-    flattened_name: str, value: Any, sep: str = "."
+    flattened_name: str, value: Any
 ) -> dict[str, Any]:
     """
     Unflattens a parameter name by splitting it on dots.
@@ -53,11 +51,10 @@ def unflatten_parameter_name(
     Args:
         flattened_name (str): The flattened parameter name (e.g., "offspring_distribution.NegativeBinomial.mean").
         value (Any): The value to assign to the unflattened parameter.
-        sep (str): The separator used in the flattened name. Defaults to "."
     Returns:
         dict[str, Any]: A dictionary representing the unflattened parameter name (e.g., {"offspring_distribution": {"NegativeBinomial": {"mean2": value}}}).
     """
-    name_vec = flattened_name.split(sep)
+    name_vec = flattened_name.split(".")
     param_vec = []
     i = 0
     # Corrct for any escaped separators introduced during flattening
@@ -113,7 +110,7 @@ class ParticleReader:
         Creates a mapping from flat particle parameter names to their corresponding flattened keys in the default_params structure.
         This mapping is used to guide the unflattening process when merging particle parameters with defaults.
 
-        Rasies:
+        Raises:
             ValueError: If a particle parameter name cannot be uniquely matched to a flattened key in default_params (no matches or multiple matches).
         """
         if self.default_params:
@@ -121,18 +118,23 @@ class ParticleReader:
             name_key = {}
             for param_name in self.particle_param_names:
                 found_match_count = 0
+
                 for flat_name in flat_names.keys():
-                    if flat_name.endswith(param_name):
+                    if flat_name == param_name:
+                        name_key.update({param_name: flat_name})
+                        found_match_count = 1
+                        break
+                    elif flat_name.endswith("." + param_name):
                         name_key.update({param_name: flat_name})
                         found_match_count += 1
-            if found_match_count == 0:
-                raise ValueError(
-                    f"No matching default parameter found for '{param_name}'"
-                )
-            elif found_match_count > 1:
-                raise ValueError(
-                    f"Multiple matching default parameters found for '{param_name}'"
-                )
+                if found_match_count == 0:
+                    raise ValueError(
+                        f"No matching default parameter found for '{param_name}'"
+                    )
+                elif found_match_count > 1:
+                    raise ValueError(
+                        f"Multiple matching default parameters found for '{param_name}'"
+                    )
         else:
             name_key = {
                 param_name: param_name
