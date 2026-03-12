@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
-    "cfa-mrp>=0.0.1",
+    "cfa-mrp>=0.0.4",
     "numpy>=2.3.4",
     "pyarrow>=23.0.0",
     "scipy>=1.16.3",
