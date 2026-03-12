@@ -1,5 +1,10 @@
 from .particle import Particle
 from .particle_population import ParticlePopulation
+from .particle_reader import (
+    ParticleReader,
+    flatten_dict,
+    unflatten_parameter_name,
+)
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -44,4 +49,7 @@ __all__ = [
     "AdaptMultivariateNormalVariance",
     "AdaptIdentityVariance",
     "AdaptUniformVariance",
+    "ParticleReader",
+    "flatten_dict",
+    "unflatten_parameter_name",
 ]
