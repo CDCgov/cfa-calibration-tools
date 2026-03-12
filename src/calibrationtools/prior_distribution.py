@@ -344,3 +344,23 @@ class IndependentPriors(CompositePriorDistribution):
         for prior in self.priors:
             density *= prior.probability_density(particle)
         return density
+
+
+def nonseed_param_names(priors: PriorDistribution) -> list[str]:
+    """
+    Utility function to extract the names of non-seed parameters from a given PriorDistribution.
+
+    Args:
+        priors (PriorDistribution): The prior distribution from which to extract non-seed parameter names.
+
+    Returns:
+        list[str]: A list of parameter names that are not associated with seed parameters.
+    """
+    if isinstance(priors, CompositePriorDistribution):
+        param_names = []
+        for prior in priors.priors:
+            if not isinstance(prior, SeedPrior):
+                param_names.extend(prior.params)
+        return param_names
+    else:
+        return priors.params if not isinstance(priors, SeedPrior) else []
