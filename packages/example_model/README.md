@@ -46,9 +46,31 @@ uv run mrp run example_model.mrp.toml
 ```
 
 ## Running the calibration
-To run the calibration example for this model, run
+To run the calibration example in local Python mode, run
 
 ```bash
 uv sync --all-packages
 uv run python -m example_model.calibrate
 ```
+
+This is the fast path. It evaluates each simulation directly with
+`Binom_BP_Model.simulate(...)` inside the current Python process, without
+going through `mrp`.
+
+To run the same calibration with the Docker-backed MRP config, first build
+the image:
+
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+```
+
+Then run:
+
+```bash
+uv sync --all-packages
+uv run python -m example_model.calibrate --docker
+```
+
+In Docker mode, calibration uses `mrp` under the covers for each simulation
+using `example_model.mrp.docker.toml`. You can also point at an explicit
+MRP config file with `--mrp-config path/to/config.toml`.

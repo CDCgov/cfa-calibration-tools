@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -31,6 +33,7 @@ class ABCSampler:
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
+        max_concurrent_simulations (int): Maximum number of model evaluations to run concurrently.
         seed (int | None): Random seed for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
         drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
@@ -76,6 +79,7 @@ class ABCSampler:
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
+        max_concurrent_simulations: int = 1,
         seed: int | None = None,
         verbose: bool = True,
         drop_previous_population_data: bool = False,
@@ -83,6 +87,11 @@ class ABCSampler:
     ):
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
+        if max_concurrent_simulations < 1:
+            raise ValueError(
+                "max_concurrent_simulations must be at least 1"
+            )
+        self.max_concurrent_simulations = max_concurrent_simulations
         self.tolerance_values = tolerance_values
         self._perturbation_kernel = perturbation_kernel
         self._variance_adapter = variance_adapter
@@ -186,7 +195,24 @@ class ABCSampler:
             )
         return self.particle_population
 
-    def run(self, **kwargs: Any):
+    async def _simulate_async(self, params: dict[str, Any]) -> Any:
+        simulate = self.model_runner.simulate
+        if inspect.iscoroutinefunction(simulate):
+            return await simulate(params)
+
+        outputs = await asyncio.to_thread(simulate, params)
+        if inspect.isawaitable(outputs):
+            return await outputs
+        return outputs
+
+    async def _evaluate_particle_async(
+        self, particle: Particle, params: dict[str, Any]
+    ) -> tuple[Particle, float]:
+        outputs = await self._simulate_async(params)
+        err = self.outputs_to_distance(outputs, self.target_data)
+        return particle, err
+
+    async def run_async(self, **kwargs: Any):
         """
         Executes the Sequential Monte Carlo (SMC) sampling process.
 
@@ -222,6 +248,8 @@ class ABCSampler:
         Notes:
             - The method prints progress information if `verbose` is set to True.
             - The acceptance rate is displayed periodically during the sampling process.
+            - When `max_concurrent_simulations > 1`, model evaluations are run concurrently
+              while particle proposal sampling, weighting, and population updates remain serial.
         """
         for k in kwargs.keys():
             if k in self.__class__.__dict__:
@@ -245,33 +273,55 @@ class ABCSampler:
                         f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
                         end="\r",
                     )
-                attempts += 1
-                # Create the parameter inputs for the runner by sampling perturbed value from previous population
-                if generation == 0:
-                    proposed_particle = self.sample_particle_from_priors()
-                else:
-                    proposed_particle = self.sample_and_perturb_particle()
-                params = self.particles_to_params(proposed_particle, **kwargs)
+                batch_size = self.max_concurrent_simulations
+                evaluation_tasks: list[asyncio.Task[tuple[Particle, float]]] = []
 
-                # Generate the distance metric from model run
-                outputs = self.model_runner.simulate(params)
-                err = self.outputs_to_distance(outputs, self.target_data)
-
-                # Add the particle to the population if accepted
-                if err < self.tolerance_values[generation]:
+                for _ in range(batch_size):
+                    attempts += 1
                     if generation == 0:
-                        particle_weight = 1.0
+                        proposed_particle = self.sample_particle_from_priors()
                     else:
-                        particle_weight = self.calculate_weight(
-                            proposed_particle
-                        )
-                    proposed_population.add_particle(
-                        proposed_particle, particle_weight
+                        proposed_particle = self.sample_and_perturb_particle()
+                    params = self.particles_to_params(
+                        proposed_particle, **kwargs
                     )
+                    evaluation_tasks.append(
+                        asyncio.create_task(
+                            self._evaluate_particle_async(
+                                proposed_particle, params
+                            )
+                        )
+                    )
+
+                evaluated_particles = await asyncio.gather(
+                    *evaluation_tasks
+                )
+                for proposed_particle, err in evaluated_particles:
+                    if proposed_population.size >= self.generation_particle_count:
+                        break
+                    if err < self.tolerance_values[generation]:
+                        if generation == 0:
+                            particle_weight = 1.0
+                        else:
+                            particle_weight = self.calculate_weight(
+                                proposed_particle
+                            )
+                        proposed_population.add_particle(
+                            proposed_particle, particle_weight
+                        )
 
             self.smc_step_successes[generation] = proposed_population.size
             self.particle_population = proposed_population
             proposed_population = ParticlePopulation()
+
+    def run(self, **kwargs: Any):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.run_async(**kwargs))
+        raise RuntimeError(
+            "ABCSampler.run() cannot be called from an active event loop. Use `await sampler.run_async(...)` instead."
+        )
 
     def sample_priors(self, n: int = 1) -> Sequence[dict[str, Any]]:
         """Return a sequence of states sampled from the prior distribution"""

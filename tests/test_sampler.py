@@ -1,4 +1,6 @@
 from copy import deepcopy
+import threading
+import time
 
 import pytest
 
@@ -12,6 +14,25 @@ from calibrationtools.sampler import ABCSampler
 class DummyModelRunner:
     def simulate(self, params):
         return 0.5 + params["p"]
+
+
+class TrackingModelRunner:
+    def __init__(self, delay: float = 0.01):
+        self.delay = delay
+        self._active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def simulate(self, params):
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(self.delay)
+            return 0.5 + params["p"]
+        finally:
+            with self._lock:
+                self._active -= 1
 
 
 def particles_to_params(particle):
@@ -108,3 +129,47 @@ def test_sample_from_priors_repeatable(sampler):
     states2 = sampler2.sample_priors(5)
 
     assert states1 == states2
+
+
+def test_abc_sampler_limits_parallel_simulations(K, P, Vnorm):
+    tracker = TrackingModelRunner()
+    sampler = ABCSampler(
+        generation_particle_count=4,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=tracker,
+        max_concurrent_simulations=2,
+        seed=123,
+        verbose=False,
+    )
+
+    sampler.run()
+
+    assert tracker.max_active == 2
+    assert sampler.get_posterior_particles().size == 4
+
+
+def test_abc_sampler_rejects_invalid_parallelism(K, P, Vnorm):
+    with pytest.raises(
+        ValueError,
+        match="max_concurrent_simulations must be at least 1",
+    ):
+        ABCSampler(
+            generation_particle_count=4,
+            tolerance_values=[0.5],
+            priors=P,
+            perturbation_kernel=K,
+            variance_adapter=Vnorm,
+            particles_to_params=particles_to_params,
+            outputs_to_distance=outputs_to_distance,
+            target_data=0.75,
+            model_runner=DummyModelRunner(),
+            max_concurrent_simulations=0,
+            seed=123,
+            verbose=False,
+        )

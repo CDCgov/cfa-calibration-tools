@@ -1,0 +1,25 @@
+input = "packages/example_model/defaults.json"
+
+[model]
+spec = "example_model"
+version = "0.0.1"
+
+[runtime]
+command = "docker"
+args = [
+  "run",
+  "--rm",
+  "-i",
+  "--user",
+  "1000:1000",
+  "-v",
+  ".:/work",
+  "-w",
+  "/work",
+  "cfa-calibration-tools-example-model-python:latest",
+]
+
+
+[output]
+spec = "filesystem"
+dir = "./output"

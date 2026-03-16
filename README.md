@@ -21,10 +21,42 @@ uv sync --all-packages --all-extras
 uv run mrp run example_model.mrp.toml
 
 ## Override parameters
-uv run mrp run example_model.mrp.toml --input seed=42 --input max_gen=10
+uv run --package example-model mrp run example_model.mrp.toml --input seed=42 --input max_gen=10
 ```
 
 You can run `uv tool install cfa-mrp` to omit the `uv run`.
+
+to run the docker version, first create the docker image:
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+```
+Then just run:
+```bash
+uv run --package example-model mrp run example_model.mrp.docker.toml
+```
+
+## Running the example calibration
+
+Run the calibration in local Python mode with:
+
+```bash
+uv run python -m example_model.calibrate
+```
+
+This is the fast path and runs simulations directly in-process, without
+going through `mrp`.
+
+Run the calibration through the Docker-backed MRP config with:
+
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+uv run python -m example_model.calibrate --docker
+```
+
+In Docker mode, calibration uses `mrp` under the covers for each simulation
+and points it at `example_model.mrp.docker.toml`. You can also route
+calibration through a specific MRP config with
+`uv run python -m example_model.calibrate --mrp-config path/to/config.toml`.
 
 ## General Disclaimer
 
