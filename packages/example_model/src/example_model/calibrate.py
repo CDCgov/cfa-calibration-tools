@@ -97,12 +97,10 @@ print(results)
 
 # Example user print function
 print("Posterior estimates table example:")
-for p in P.priors:
-    par_name = p.params[0]
-    if not isinstance(p, SeedPrior):
-        print(
-            f"{par_name}: {results.point_estimates[par_name]:.2f}, 95% CI: {[f'{v:.2f}' for v in results.credible_intervals[par_name]]}"
-        )
+for par_name in P["priors"].keys():
+    print(
+        f"{par_name}: {results.point_estimates[par_name]:.2f}, 95% CI: {[f'{v:.2f}' for v in results.credible_intervals[par_name]]}"
+    )
 
 diagnostics = results.get_diagnostics()
 
