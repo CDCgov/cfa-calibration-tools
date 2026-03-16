@@ -15,7 +15,7 @@
             "type": "object",
             "properties": {
                 "distribution": {
-                    "enum": ["uniform", "normal", "lognormal", "exponential"]
+                    "enum": ["uniform", "normal", "lognormal", "exponential", "gamma", "beta"]
                 },
                 "parameters": {"type": "object"}
             },
@@ -23,7 +23,9 @@
                 {"$ref": "#/$defs/uniform_distribution"},
                 {"$ref": "#/$defs/normal_distribution"},
                 {"$ref": "#/$defs/lognormal_distribution"},
-                {"$ref": "#/$defs/exponential_distribution"}
+                {"$ref": "#/$defs/exponential_distribution"},
+                {"$ref": "#/$defs/gamma_distribution"},
+                {"$ref": "#/$defs/beta_distribution"}
             ],
             "required": ["distribution", "parameters"],
             "additionalProperties": false
@@ -102,6 +104,46 @@
                             "rate": {"type": "number", "exclusiveMinimum": 0}
                         },
                         "required": ["rate"],
+                        "additionalProperties": false
+                    }
+                }
+            }
+        },
+        "gamma_distribution": {
+            "if": {
+                "properties": {
+                    "distribution": {"const": "gamma"}
+                }
+            },
+            "then": {
+                "properties": {
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "shape": {"type": "number", "exclusiveMinimum": 0},
+                            "scale": {"type": "number", "exclusiveMinimum": 0}
+                        },
+                        "required": ["shape", "scale"],
+                        "additionalProperties": false
+                    }
+                }
+            }
+        },
+        "beta_distribution": {
+            "if": {
+                "properties": {
+                    "distribution": {"const": "beta"}
+                }
+            },
+            "then": {
+                "properties": {
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "alpha": {"type": "number", "exclusiveMinimum": 0},
+                            "beta": {"type": "number", "exclusiveMinimum": 0}
+                        },
+                        "required": ["alpha", "beta"],
                         "additionalProperties": false
                     }
                 }
