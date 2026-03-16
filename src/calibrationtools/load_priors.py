@@ -5,7 +5,9 @@ from pathlib import Path
 import jsonschema
 
 from .prior_distribution import (
+    BetaPrior,
     ExponentialPrior,
+    GammaPrior,
     IndependentPriors,
     LogNormalPrior,
     NormalPrior,
@@ -41,6 +43,8 @@ def independent_priors_from_dict(
         seed_parameter_name (str | None): The name of the seed parameter if incl_seed_parameter is True.
     Returns:
         IndependentPriors: An IndependentPriors object containing the specified priors.
+    Raises:
+        ValueError: If any distribution type is unsupported or if required parameters for a distribution are missing
     """
     validate_schema(priors_dict)
     priors = []
@@ -76,6 +80,26 @@ def independent_priors_from_dict(
                 )
             case "exponential":
                 priors.append(ExponentialPrior(k, rate=parameters["rate"]))
+            case "gamma":
+                priors.append(
+                    GammaPrior(
+                        k,
+                        shape=parameters["shape"],
+                        scale=parameters["scale"],
+                    )
+                )
+            case "beta":
+                priors.append(
+                    BetaPrior(
+                        k,
+                        alpha=parameters["alpha"],
+                        beta=parameters["beta"],
+                    )
+                )
+            case _:
+                raise ValueError(
+                    f"Unsupported distribution type '{distribution}' for parameter '{k}'"
+                )
 
     if incl_seed_parameter and seed_parameter_name is not None:
         priors.append(SeedPrior(seed_parameter_name))
