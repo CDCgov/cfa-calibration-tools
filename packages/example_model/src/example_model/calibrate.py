@@ -91,19 +91,26 @@ sampler = ABCSampler(
     seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
-sampler.run(base_inputs=default_inputs)
+results = sampler.run(base_inputs=default_inputs)
+# Defualt printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
+print(results)
 
-##===================================#
-## Get results
-##===================================#
-# Print IQR of param1 in the posterior particles
-posterior_particles = sampler.get_posterior_particles()
-p_values = [p["p"] for p in posterior_particles.particles]
-n_values = [p["n"] for p in posterior_particles.particles]
+# Example user print function
+print("Posterior estimates table example:")
+for p in P.priors:
+    par_name = p.params[0]
+    if not isinstance(p, SeedPrior):
+        print(
+            f"{par_name}: {results.point_estimates[par_name]:.2f}, 95% CI: {[f'{v:.2f}' for v in results.credible_intervals[par_name]]}"
+        )
 
-print(
-    f"param p(25-75):{np.percentile(p_values, 25)} - {np.percentile(p_values, 75)}"
-)
-print(
-    f"param n(25-75):{np.percentile(n_values, 25)} - {np.percentile(n_values, 75)}"
-)
+diagnostics = results.get_diagnostics()
+
+print("\nAvailable diagnostics metrics:")
+print(diagnostics.keys())
+
+print("\nQuantiles for each parameter:")
+print(diagnostics["quantiles"])
+
+print("\nCorrelation matrix:")
+print(diagnostics["correlation_matrix"])

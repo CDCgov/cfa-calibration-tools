@@ -3,8 +3,10 @@ from .load_priors import (
     load_priors_from_json,
     validate_schema,
 )
+from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_population import ParticlePopulation
+from .particle_population_metrics import ParticlePopulationMetrics
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -36,8 +38,10 @@ from .variance_adapter import (
 
 __all__ = [
     "ABCSampler",
+    "CalibrationResults",
     "Particle",
     "ParticlePopulation",
+    "ParticlePopulationMetrics",
     "_ParticleUpdater",
     "PriorDistribution",
     "UniformPrior",

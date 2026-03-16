@@ -191,3 +191,16 @@ def test_independent_priors_probability() -> None:
     assert (
         indep_prior.probability_density(Particle({"x": 5.0, "y": 10.0})) == 0.0
     )
+
+
+def test_nonseed_param_names() -> None:
+    prior1 = UniformPrior(param="x", min=0.0, max=10.0)
+    prior2 = SeedPrior(param="seed")
+    indep_prior = IndependentPriors([prior1, prior2])
+
+    from calibrationtools.calibration_results import nonseed_param_names
+
+    assert nonseed_param_names(indep_prior) == ["x"]
+    assert nonseed_param_names(IndependentPriors([prior2])) == []
+    assert nonseed_param_names(prior1) == ["x"]
+    assert nonseed_param_names(prior2) == []

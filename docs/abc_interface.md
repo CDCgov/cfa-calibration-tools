@@ -75,5 +75,9 @@ sampler = ABCSampler(
 )
 
 # run the calibration routine
-sampler.run()
+results = sampler.run()
+
+# Return all daignostics and metrics from the results object
+diagnostics = results.get_diagnostics()
+
 ```
