@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -5,6 +6,7 @@ import numpy as np
 from mrp import MRPModel
 from numpy.random import SeedSequence
 
+from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_updater import _ParticleUpdater
@@ -40,9 +42,6 @@ class ABCSampler:
         particle_population:
             Getter and setter for the current particle population. Automatically archives
             the previous population if `drop_previous_population_data` is False.
-
-        get_posterior_particles() -> ParticlePopulation:
-            Returns the posterior particle population after the sampler has run to completion.
 
         run(**kwargs: Any):
             Executes the ABC-SMC algorithm. Raises an error if any keyword argument conflicts
@@ -91,10 +90,8 @@ class ABCSampler:
         self.target_data = target_data
         self.model_runner = model_runner
         self.seed = seed
-        self._seed_sequence = SeedSequence(seed)
         self.drop_previous_population_data = drop_previous_population_data
         self.population_archive: dict[int, ParticlePopulation] = {}
-        self.smc_step_successes = [0] * len(tolerance_values)
         self.verbose = verbose
 
         if isinstance(priors, PriorDistribution):
@@ -112,13 +109,7 @@ class ABCSampler:
 
             self._priors = load_priors_from_json(priors)
 
-        self._updater = _ParticleUpdater(
-            self._perturbation_kernel,
-            self._priors,
-            self._variance_adapter,
-            self._seed_sequence,
-            ParticlePopulation(),
-        )
+        self.init_updater()
 
     @property
     def particle_population(self) -> ParticlePopulation:
@@ -164,29 +155,22 @@ class ABCSampler:
             self.population_archive.update({step: self.particle_population})
         self._updater.particle_population = population
 
-    def get_posterior_particles(self) -> ParticlePopulation:
+    def init_updater(self, K: PerturbationKernel | None = None):
         """
-        Retrieve the posterior particle population.
-
-        This method returns the current particle population representing the posterior
-        distribution after the sampling process has been completed. It ensures
-        that the posterior population is fully populated before returning it.
-
-        Returns:
-            ParticlePopulation: The particle population representing the posterior
-                distribution.
-
-        Raises:
-            ValueError: If the posterior population is not fully populated,
-                indicating that the sampler has not been run to completion.
+        Initializes the particle updater with the current perturbation kernel, priors, variance adapter, seed sequence, and an empty particle population.
         """
-        if self.smc_step_successes[-1] != self.generation_particle_count:
-            raise ValueError(
-                "Posterior population is not fully populated. Please run the sampler to completion before accessing the posterior population."
-            )
-        return self.particle_population
+        if K is None:
+            K = self._perturbation_kernel
+        self._seed_sequence = SeedSequence(self.seed)
+        self._updater = _ParticleUpdater(
+            K,
+            self._priors,
+            self._variance_adapter,
+            self._seed_sequence,
+            ParticlePopulation(),
+        )
 
-    def run(self, **kwargs: Any):
+    def run(self, **kwargs: Any) -> CalibrationResults:
         """
         Executes the Sequential Monte Carlo (SMC) sampling process.
 
@@ -200,6 +184,9 @@ class ABCSampler:
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
                       attributes of the class.
+
+        Returns:
+            CalibrationResults: An object containing the results of the calibration process.
 
         Raises:
             ValueError: If a keyword argument conflicts with an existing attribute of the class.
@@ -230,6 +217,11 @@ class ABCSampler:
                 )
 
         proposed_population = ParticlePopulation()
+        originator_perturbation_kernel = copy.deepcopy(
+            self._updater.perturbation_kernel
+        )
+        smc_step_successes = [0] * len(self.tolerance_values)
+        smc_step_attempts = [0] * len(self.tolerance_values)
 
         for generation in range(len(self.tolerance_values)):
             if self.verbose:
@@ -269,9 +261,26 @@ class ABCSampler:
                         proposed_particle, particle_weight
                     )
 
-            self.smc_step_successes[generation] = proposed_population.size
+            smc_step_successes[generation] = proposed_population.size
+            smc_step_attempts[generation] = attempts
             self.particle_population = proposed_population
             proposed_population = ParticlePopulation()
+
+        results = CalibrationResults(
+            copy.deepcopy(self._updater),
+            self.population_archive,
+            {
+                "generation_particle_count": [self.generation_particle_count]
+                * len(self.tolerance_values),
+                "successes": smc_step_successes,
+                "attempts": smc_step_attempts,
+            },
+            self.tolerance_values,
+        )
+
+        # Reset particle sampler updater to original perturbation kernel for consistent performance on re-run
+        self.init_updater(K=originator_perturbation_kernel)
+        return results
 
     def sample_priors(self, n: int = 1) -> Sequence[dict[str, Any]]:
         """Return a sequence of states sampled from the prior distribution"""
