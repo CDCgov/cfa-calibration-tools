@@ -13,6 +13,7 @@ from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
 from .variance_adapter import VarianceAdapter
+from .executor import LocalParallelExecutor
 
 
 class ABCSampler:
@@ -281,6 +282,57 @@ class ABCSampler:
         # Reset particle sampler updater to original perturbation kernel for consistent performance on re-run
         self.init_updater(K=originator_perturbation_kernel)
         return results
+    
+    def run_parallel(self, chunksize: int = 1, batchsize: int | None = None, max_workers: int | None = None, **kwargs: Any) -> CalibrationResults:
+        """
+        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using a LocalParallelExecutor.
+
+        This method performs the SMC algorithm to generate a population of particles
+        that approximate the posterior distribution of the model parameters. The process
+        involves iteratively sampling and perturbing particles, evaluating their fitness
+        using a distance metric, and accepting or rejecting them based on a tolerance value.
+        The execution is parallelized to improve performance.
+
+        Args:
+            **kwargs (Any): Additional keyword arguments that can be passed to the method.
+                      These arguments are supplied to the particles_to_params function.
+                      Note that the keyword arguments must not conflict with existing
+                        attributes of the class.
+        Returns:
+            CalibrationResults: An object containing the results of the calibration process.
+        """
+        for k in kwargs.keys():
+            if k in self.__class__.__dict__:
+                raise ValueError(
+                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
+                )
+
+        proposed_population = ParticlePopulation()
+        originator_perturbation_kernel = copy.deepcopy(
+            self._updater.perturbation_kernel
+        )
+        smc_step_successes = [0] * len(self.tolerance_values)
+        smc_step_attempts = [0] * len(self.tolerance_values)
+
+        for generation in range(len(self.tolerance_values)):
+            if self.verbose:
+                print(
+                    f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
+                )
+
+            # Rejection sampling algorithm
+            attempts = 0
+            if not max_workers:
+                max_workers = (mp.cpu_count() or 1)
+            if not batchsize:
+                batchsize = max_workers * chunksize
+            while proposed_population.size < self.generation_particle_count:
+                if self.verbose and attempts > 0 and attempts % 100 == 0:
+                    print(
+                        f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
+                        end="\r",
+                    )
+                
 
     def sample_priors(self, n: int = 1) -> Sequence[dict[str, Any]]:
         """Return a sequence of states sampled from the prior distribution"""
