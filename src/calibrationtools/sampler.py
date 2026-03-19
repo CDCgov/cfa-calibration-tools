@@ -2,6 +2,11 @@ import copy
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+
+
 import numpy as np
 from mrp import MRPModel
 from numpy.random import SeedSequence
@@ -13,7 +18,6 @@ from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
 from .variance_adapter import VarianceAdapter
-from .executor import LocalParallelExecutor
 
 
 class ABCSampler:
@@ -314,25 +318,77 @@ class ABCSampler:
         smc_step_successes = [0] * len(self.tolerance_values)
         smc_step_attempts = [0] * len(self.tolerance_values)
 
-        for generation in range(len(self.tolerance_values)):
-            if self.verbose:
-                print(
-                    f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
-                )
+        actual_workers = (
+            min(max_workers, (max(mp.cpu_count(), 1)))
+            if max_workers
+            else (mp.cpu_count() or 1)
+        )
+        if not batchsize:
+            batchsize = self.generation_particle_count
+            warmup = True
+        else:            
+            warmup = False
 
-            # Rejection sampling algorithm
-            attempts = 0
-            if not max_workers:
-                max_workers = (mp.cpu_count() or 1)
-            if not batchsize:
-                batchsize = max_workers * chunksize
-            while proposed_population.size < self.generation_particle_count:
-                if self.verbose and attempts > 0 and attempts % 100 == 0:
+        with ProcessPoolExecutor(max_workers=actual_workers) as executor:
+            for generation in range(len(self.tolerance_values)):
+                if self.verbose:
                     print(
-                        f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
-                        end="\r",
+                        f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
                     )
-                
+
+                # Rejection sampling algorithm
+                attempts = 0
+                while proposed_population.size < self.generation_particle_count:
+                    if proposed_population.size > 0:
+                        if warmup:
+                            batchsize = 10_000
+                        sample_size = int(min(batchsize, (self.generation_particle_count - proposed_population.size) * attempts / proposed_population.size))
+                    else:
+                        sample_size = batchsize
+                    if generation == 0:
+                        proposed_particles = [self.sample_particle_from_priors() for _ in range(sample_size)]
+                    else:
+                        proposed_particles = [self.sample_and_perturb_particle() for _ in range(sample_size)]
+                    if self.verbose and attempts > 0:
+                        print(
+                            f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
+                            end="\r",
+                        )
+                    errs = executor.map(
+                        partial(self._evaluate_particle, **kwargs), proposed_particles, chunksize=chunksize
+                    )
+                    for err, proposed_particle in zip(errs, proposed_particles):
+                        if err < self.tolerance_values[generation] and proposed_population.size < self.generation_particle_count:
+                            if generation == 0:
+                                particle_weight = 1.0
+                            else:
+                                particle_weight = self.calculate_weight(
+                                    proposed_particle
+                                )
+                            proposed_population.add_particle(
+                                proposed_particle, particle_weight
+                            )
+                    attempts += len(proposed_particles)
+                smc_step_successes[generation] = proposed_population.size
+                smc_step_attempts[generation] = attempts
+                self.particle_population = proposed_population
+                proposed_population = ParticlePopulation()
+
+        results = CalibrationResults(
+            copy.deepcopy(self._updater),
+            self.population_archive,
+            {
+                "generation_particle_count": [self.generation_particle_count]
+                * len(self.tolerance_values),
+                "successes": smc_step_successes,
+                "attempts": smc_step_attempts,
+            },
+            self.tolerance_values,
+        )
+
+        # Reset particle sampler updater to original perturbation kernel for consistent performance on re-run
+        self.init_updater(K=originator_perturbation_kernel)
+        return results
 
     def sample_priors(self, n: int = 1) -> Sequence[dict[str, Any]]:
         """Return a sequence of states sampled from the prior distribution"""
@@ -348,6 +404,12 @@ class ABCSampler:
         return self._updater.sample_and_perturb_particle(
             max_attempts=self.max_attempts_per_proposal
         )
+
+    def _evaluate_particle(self, particle: Particle, **kwargs) -> float:
+        params = self.particles_to_params(particle, **kwargs)
+        outputs = self.model_runner.simulate(params)
+        err = self.outputs_to_distance(outputs, self.target_data)
+        return err
 
     def calculate_weight(self, particle) -> float:
         return self._updater.calculate_weight(particle)

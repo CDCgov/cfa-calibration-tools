@@ -4,6 +4,9 @@ import numpy as np
 from mrp import Environment
 from mrp.api import apply_dict_overrides
 
+import timeit
+import json
+
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
     MultivariateNormalKernel,
@@ -80,7 +83,7 @@ def outputs_to_distance(model_output, target_data):
 
 sampler = ABCSampler(
     generation_particle_count=500,
-    tolerance_values=[5.0, 1.0],
+    tolerance_values=[5.0, 4.0, 3.0],
     priors=P,
     perturbation_kernel=K,
     variance_adapter=V,
@@ -91,24 +94,37 @@ sampler = ABCSampler(
     seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
-results = sampler.run_parallel(base_inputs=default_inputs, chunksize=8)
+benchmark_results = []
+
+start = timeit.default_timer()
+results = sampler.run(base_inputs=default_inputs)
+end = timeit.default_timer()
+print(f"Execution time: {end - start} seconds")
+benchmark_results.append({
+    "time": end - start,
+    "attempts": results.smc_step_attempts,
+    "max_workers": None,
+    "chunksize": None
+})
+
+for max_workers in [8, 2]:
+    for chunksize in [8, 128]:
+        start = timeit.default_timer()
+        results = sampler.run_parallel(base_inputs=default_inputs, chunksize=8, max_workers=max_workers, batchsize = 1000)
+        end = timeit.default_timer()
+        print(f"Execution time: {end - start} seconds")
+
+        benchmark_results.append({
+            "time": end - start,
+            "attempts": results.smc_step_attempts,
+            "max_workers": max_workers,
+            "chunksize": chunksize
+        })
+
+        
 # Defualt printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
-print(results)
+for result in benchmark_results:
+    print(f"workers: {result['max_workers']}, chunksize: {result['chunksize']}, time: {result['time']}")
 
-# Example user print function
-print("Posterior estimates table example:")
-for par_name in P["priors"].keys():
-    print(
-        f"{par_name}: {results.point_estimates[par_name]:.2f}, 95% CI: {[f'{v:.2f}' for v in results.credible_intervals[par_name]]}"
-    )
-
-diagnostics = results.get_diagnostics()
-
-print("\nAvailable diagnostics metrics:")
-print(diagnostics.keys())
-
-print("\nQuantiles for each parameter:")
-print(diagnostics["quantiles"])
-
-print("\nCorrelation matrix:")
-print(diagnostics["correlation_matrix"])
+with open("./benchmarks/parallelization_check.json", "w") as fp:
+    json.dump(benchmark_results, fp)
