@@ -79,7 +79,7 @@ class _ParticleUpdater:
             self._particle_population.normalize_weights()
         self.adapt_variance()
 
-    def sample_particle(self) -> Particle:
+    def sample_particle(self, seed_sequence: SeedSequence | None = None) -> Particle:
         """
         Samples a particle from the particle population based on their weights.
 
@@ -93,6 +93,9 @@ class _ParticleUpdater:
             raise ValueError(
                 "Particle population is empty. Please add entries to the particle population before sampling."
             )
+        
+        if not seed_sequence:
+            seed_sequence = self.seed_sequence
         idx = spawn_rng(self.seed_sequence).choice(
             self.particle_population.size,
             p=self.particle_population.weights,
@@ -100,7 +103,7 @@ class _ParticleUpdater:
         return self.particle_population.particles[idx]
 
     def sample_and_perturb_particle(
-        self, max_attempts: int = np.iinfo(np.int32).max
+        self, max_attempts: int = np.iinfo(np.int32).max, seed_sequence: SeedSequence | None = None
     ) -> Particle:
         """
         Samples a particle from the current population and applies a perturbation to it,
@@ -120,10 +123,12 @@ class _ParticleUpdater:
             RuntimeError: If the method fails to sample and perturb a particle
                 within the specified maximum number of attempts.
         """
+        if not seed_sequence:
+            seed_sequence = self.seed_sequence
         for _ in range(max_attempts):
             current_particle = self.sample_particle()
             new_particle = self.perturbation_kernel.perturb(
-                current_particle, self.seed_sequence
+                current_particle, seed_sequence
             )
             if self.priors.probability_density(new_particle) > 0:
                 return Particle(new_particle)

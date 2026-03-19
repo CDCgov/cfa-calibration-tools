@@ -389,20 +389,110 @@ class ABCSampler:
         # Reset particle sampler updater to original perturbation kernel for consistent performance on re-run
         self.init_updater(K=originator_perturbation_kernel)
         return results
+    
+    def run_parallel_by_particle(self, max_workers: int | None = None, chunksize: int = 1, max_attempts: int | None = None, **kwargs):
+        for k in kwargs.keys():
+            if k in self.__class__.__dict__:
+                raise ValueError(
+                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
+                )
 
-    def sample_priors(self, n: int = 1) -> Sequence[dict[str, Any]]:
+        proposed_population = ParticlePopulation()
+        originator_perturbation_kernel = copy.deepcopy(
+            self._updater.perturbation_kernel
+        )
+        smc_step_successes = [0] * len(self.tolerance_values)
+        smc_step_attempts = [0] * len(self.tolerance_values)
+
+        actual_workers = (
+            min(max_workers, (max(mp.cpu_count(), 1)))
+            if max_workers
+            else (mp.cpu_count() or 1)
+        )
+
+        with ProcessPoolExecutor(max_workers=actual_workers) as executor:
+            for generation in range(len(self.tolerance_values)):
+                if self.verbose:
+                    print(
+                        f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
+                    )
+
+                new_particles = executor.map(
+                    partial(
+                        self.get_accepted_particle, 
+                        tolerance=self.tolerance_values[generation],
+                        sample_from_priors=(generation == 0), 
+                        chunksize=chunksize, 
+                        max_attempts=max_attempts, 
+                        **kwargs
+                    ), 
+                    self._seed_sequence.spawn(self.generation_particle_count)
+                )
+
+                total_attempts = 0
+                for particle, attempts in new_particles:
+                    if particle:
+                        if generation == 0:
+                            particle_weight = 1.0
+                        else:
+                            particle_weight = self.calculate_weight(particle)
+                        proposed_population.add_particle(particle, particle_weight)
+                    else:
+                        raise UserWarning(f"Failed to collect a particle after {attempts} attempts")
+                    total_attempts += attempts
+                
+                smc_step_successes[generation] = proposed_population.size
+                smc_step_attempts[generation] = attempts
+                self.particle_population = proposed_population
+                proposed_population = ParticlePopulation()
+                    
+        results = CalibrationResults(
+            copy.deepcopy(self._updater),
+            self.population_archive,
+            {
+                "generation_particle_count": [self.generation_particle_count]
+                * len(self.tolerance_values),
+                "successes": smc_step_successes,
+                "attempts": smc_step_attempts,
+            },
+            self.tolerance_values,
+        )
+        return results
+            
+
+
+    def get_accepted_particle(self, seed_sequence: SeedSequence, tolerance: float, sample_from_priors: bool = False, max_attempts: int | None = None, **kwargs) -> Particle:
+        if not max_attempts:
+            max_attempts = self.max_attempts_per_proposal
+        if not seed_sequence:
+            seed_sequence = self._seed_sequence
+        for i in range(max_attempts):
+            if sample_from_priors:
+                proposed_particle = self.sample_particle_from_priors(seed_sequence)
+            else:
+                proposed_particle = self.sample_and_perturb_particle(seed_sequence)
+            err = self._evaluate_particle(proposed_particle, **kwargs)
+            if err < tolerance:
+                return (proposed_particle, i)
+        return (None, max_attempts)
+
+
+    def sample_priors(self, n: int = 1, seed_sequence: SeedSequence | None = None) -> Sequence[dict[str, Any]]:
         """Return a sequence of states sampled from the prior distribution"""
-        return self._priors.sample(n, self._seed_sequence)
+        if not seed_sequence:
+            seed_sequence = self._seed_sequence
+        return self._priors.sample(n, seed_sequence)
 
-    def sample_particle_from_priors(self) -> Particle:
-        return Particle(self.sample_priors(1)[0])
+    def sample_particle_from_priors(self, seed_sequence: SeedSequence | None = None) -> Particle:
+        return Particle(self.sample_priors(n=1, seed_sequence=seed_sequence)[0])
 
-    def sample_particle(self) -> Particle:
-        return self._updater.sample_particle()
+    def sample_particle(self, seed_sequence: SeedSequence | None = None) -> Particle:
+        return self._updater.sample_particle(seed_sequence)
 
-    def sample_and_perturb_particle(self) -> Particle:
+    def sample_and_perturb_particle(self, seed_sequence: SeedSequence | None = None) -> Particle:
         return self._updater.sample_and_perturb_particle(
-            max_attempts=self.max_attempts_per_proposal
+            max_attempts=self.max_attempts_per_proposal,
+            seed_sequence=seed_sequence,
         )
 
     def _evaluate_particle(self, particle: Particle, **kwargs) -> float:
