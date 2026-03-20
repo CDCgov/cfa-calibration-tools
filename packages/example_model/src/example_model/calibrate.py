@@ -91,7 +91,7 @@ sampler = ABCSampler(
     seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
-results = sampler.run_parallel(base_inputs=default_inputs, chunksize=8)
+results = sampler.run_parallel_by_particle(base_inputs=default_inputs, chunksize=8)
 # Defualt printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
 print(results)
 
