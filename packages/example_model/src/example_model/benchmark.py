@@ -96,21 +96,21 @@ sampler = ABCSampler(
 
 benchmark_results = []
 
-start = timeit.default_timer()
-results = sampler.run(base_inputs=default_inputs)
-end = timeit.default_timer()
-print(f"Execution time: {end - start} seconds")
-benchmark_results.append({
-    "time": end - start,
-    "attempts": results.smc_step_attempts,
-    "max_workers": None,
-    "chunksize": None
-})
+# start = timeit.default_timer()
+# results = sampler.run(base_inputs=default_inputs)
+# end = timeit.default_timer()
+# print(f"Execution time: {end - start} seconds")
+# benchmark_results.append({
+#     "time": end - start,
+#     "attempts": results.smc_step_attempts,
+#     "max_workers": None,
+#     "chunksize": None
+# })
 
 for max_workers in [8, 2]:
     for chunksize in [8, 128]:
         start = timeit.default_timer()
-        results = sampler.run_parallel(base_inputs=default_inputs, chunksize=8, max_workers=max_workers, batchsize = 1000)
+        results = sampler.run_parallel_by_particle(base_inputs=default_inputs, chunksize=1, max_workers=max_workers)
         end = timeit.default_timer()
         print(f"Execution time: {end - start} seconds")
 

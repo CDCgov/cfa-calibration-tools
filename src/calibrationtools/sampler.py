@@ -422,11 +422,11 @@ class ABCSampler:
                         self.get_accepted_particle, 
                         tolerance=self.tolerance_values[generation],
                         sample_from_priors=(generation == 0), 
-                        chunksize=chunksize, 
                         max_attempts=max_attempts, 
                         **kwargs
                     ), 
-                    self._seed_sequence.spawn(self.generation_particle_count)
+                    self._seed_sequence.spawn(self.generation_particle_count), 
+                    chunksize=chunksize
                 )
 
                 total_attempts = 0
