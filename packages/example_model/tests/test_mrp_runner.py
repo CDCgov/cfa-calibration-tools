@@ -93,3 +93,35 @@ def test_mrp_runner_ignores_stdout_preamble(monkeypatch):
     runner = ExampleModelMRPRunner("/tmp/example_model.mrp.toml")
 
     assert runner.simulate({"seed": 123}) == [1, 2]
+
+
+def test_mrp_runner_uses_staged_input_and_output_dirs(
+    monkeypatch, tmp_path
+):
+    input_path = tmp_path / "input.json"
+    input_path.write_text('{"seed": 123, "run_id": "gen-1_particle-1"}')
+    run_output_dir = tmp_path / "output"
+
+    def fake_mrp_run(config_path, overrides, output_dir=None):
+        assert config_path == Path("/tmp/example_model.mrp.toml")
+        assert overrides["input"] == str(input_path)
+        assert output_dir == str(run_output_dir)
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+        (run_output_dir / "output.csv").write_text(
+            "generation,population\n0,1\n1,2\n"
+        )
+        return RunResult(exit_code=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("example_model.mrp_runner.mrp_run", fake_mrp_run)
+
+    runner = ExampleModelMRPRunner("/tmp/example_model.mrp.toml")
+
+    assert (
+        runner.simulate(
+            {"seed": 123},
+            input_path=input_path,
+            output_dir=run_output_dir,
+            run_id="gen-1_particle-1",
+        )
+        == [1, 2]
+    )

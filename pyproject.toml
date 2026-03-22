@@ -19,6 +19,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = ["pytest>=9.0.2", "ty>=0.0.14", "scipy-stubs>=1.16.3.0"]
+cloudops = ["cfa-cloudops @ git+https://github.com/CDCgov/cfa-cloudops.git"]
 
 [tool.uv.workspace]
 members = ["packages/*"]

@@ -1,6 +1,8 @@
 from copy import deepcopy
+import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +35,34 @@ class TrackingModelRunner:
         finally:
             with self._lock:
                 self._active -= 1
+
+
+class FileAwareModelRunner:
+    def __init__(self):
+        self.calls: list[tuple[str, Path, Path]] = []
+
+    def simulate(
+        self,
+        params,
+        *,
+        input_path=None,
+        output_dir=None,
+        run_id=None,
+    ):
+        assert input_path is not None
+        assert output_dir is not None
+        assert run_id is not None
+
+        payload = json.loads(Path(input_path).read_text())
+        assert payload["run_id"] == run_id
+        assert payload == params
+
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        (Path(output_dir) / "runner.json").write_text(
+            json.dumps({"run_id": run_id})
+        )
+        self.calls.append((run_id, Path(input_path), Path(output_dir)))
+        return 0.75
 
 
 def particles_to_params(particle):
@@ -173,3 +203,46 @@ def test_abc_sampler_rejects_invalid_parallelism(K, P, Vnorm):
             seed=123,
             verbose=False,
         )
+
+
+def test_abc_sampler_stages_simulation_inputs_and_outputs(
+    tmp_path, K, P, Vnorm
+):
+    runner = FileAwareModelRunner()
+    sampler = ABCSampler(
+        generation_particle_count=4,
+        tolerance_values=[0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=runner,
+        max_concurrent_simulations=2,
+        seed=123,
+        verbose=False,
+        artifacts_dir=tmp_path,
+    )
+
+    sampler.run()
+
+    assert [call[0] for call in runner.calls] == [
+        "gen-1_particle-1",
+        "gen-1_particle-2",
+        "gen-1_particle-3",
+        "gen-1_particle-4",
+    ]
+
+    for run_id, input_path, output_dir in runner.calls:
+        assert input_path == (
+            tmp_path / "input" / "generation-1" / f"{run_id}.json"
+        )
+        assert output_dir == (
+            tmp_path / "output" / "generation-1" / run_id
+        )
+        assert json.loads(input_path.read_text())["run_id"] == run_id
+        assert json.loads((output_dir / "result.json").read_text()) == 0.75
+        assert json.loads((output_dir / "runner.json").read_text()) == {
+            "run_id": run_id
+        }

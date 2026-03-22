@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Maximum number of simulations to evaluate at once.",
     )
+    parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=Path("."),
+        help="Root directory where calibration writes input and output folders.",
+    )
     return parser.parse_args()
 
 
@@ -84,6 +90,7 @@ def run_calibration(
     *,
     model_runner,
     max_concurrent_simulations: int = 10,
+    artifacts_dir: Path | None = None,
 ):
     kernel = IndependentKernels(
         [
@@ -106,6 +113,7 @@ def run_calibration(
         model_runner=model_runner,
         max_concurrent_simulations=max_concurrent_simulations,
         seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
+        artifacts_dir=artifacts_dir,
     )
     sampler.run(base_inputs=DEFAULT_INPUTS)
 
@@ -126,6 +134,7 @@ def main():
     run_calibration(
         model_runner=resolve_model_runner(args),
         max_concurrent_simulations=args.max_concurrent_simulations,
+        artifacts_dir=args.artifacts_dir,
     )
 
 

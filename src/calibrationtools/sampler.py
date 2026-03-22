@@ -1,4 +1,5 @@
 import asyncio
+import json
 import inspect
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -12,6 +13,7 @@ from .particle_population import ParticlePopulation
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
+from .json_utils import dumps_json, to_jsonable
 from .variance_adapter import VarianceAdapter
 
 
@@ -84,6 +86,7 @@ class ABCSampler:
         verbose: bool = True,
         drop_previous_population_data: bool = False,
         seed_parameter_name: str | None = "seed",
+        artifacts_dir: Path | str | None = None,
     ):
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
@@ -102,6 +105,9 @@ class ABCSampler:
         self.seed = seed
         self._seed_sequence = SeedSequence(seed)
         self.drop_previous_population_data = drop_previous_population_data
+        self.artifacts_dir = (
+            Path(artifacts_dir) if artifacts_dir is not None else None
+        )
         self.population_archive: dict[int, ParticlePopulation] = {}
         self.smc_step_successes = [0] * len(tolerance_values)
         self.verbose = verbose
@@ -195,20 +201,120 @@ class ABCSampler:
             )
         return self.particle_population
 
-    async def _simulate_async(self, params: dict[str, Any]) -> Any:
+    def _simulate(
+        self,
+        params: dict[str, Any],
+        *,
+        input_path: Path | None = None,
+        output_dir: Path | None = None,
+        run_id: str | None = None,
+    ) -> Any:
+        simulate = self.model_runner.simulate
+
+        signature = inspect.signature(simulate)
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        simulate_kwargs: dict[str, Any] = {}
+
+        if input_path is not None and (
+            accepts_kwargs or "input_path" in signature.parameters
+        ):
+            simulate_kwargs["input_path"] = input_path
+        if output_dir is not None and (
+            accepts_kwargs or "output_dir" in signature.parameters
+        ):
+            simulate_kwargs["output_dir"] = output_dir
+        if run_id is not None and (
+            accepts_kwargs or "run_id" in signature.parameters
+        ):
+            simulate_kwargs["run_id"] = run_id
+
+        return simulate(params, **simulate_kwargs)
+
+    async def _simulate_async(
+        self,
+        params: dict[str, Any],
+        *,
+        input_path: Path | None = None,
+        output_dir: Path | None = None,
+        run_id: str | None = None,
+    ) -> Any:
         simulate = self.model_runner.simulate
         if inspect.iscoroutinefunction(simulate):
-            return await simulate(params)
+            return await self._simulate(
+                params,
+                input_path=input_path,
+                output_dir=output_dir,
+                run_id=run_id,
+            )
 
-        outputs = await asyncio.to_thread(simulate, params)
+        outputs = await asyncio.to_thread(
+            self._simulate,
+            params,
+            input_path=input_path,
+            output_dir=output_dir,
+            run_id=run_id,
+        )
         if inspect.isawaitable(outputs):
             return await outputs
         return outputs
 
+    def _build_run_id(
+        self, generation_index: int, proposal_index: int
+    ) -> str:
+        return (
+            f"gen-{generation_index + 1}_particle-{proposal_index + 1}"
+        )
+
+    def _stage_simulation_io(
+        self,
+        generation_index: int,
+        proposal_index: int,
+        params: dict[str, Any],
+    ) -> tuple[dict[str, Any], Path | None, Path | None, str]:
+        run_id = self._build_run_id(generation_index, proposal_index)
+        jsonable_params = to_jsonable(params)
+        jsonable_params["run_id"] = run_id
+
+        if self.artifacts_dir is None:
+            return jsonable_params, None, None, run_id
+
+        generation_name = f"generation-{generation_index + 1}"
+        input_dir = self.artifacts_dir / "input" / generation_name
+        output_dir = (
+            self.artifacts_dir / "output" / generation_name / run_id
+        )
+        input_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        input_path = input_dir / f"{run_id}.json"
+        input_path.write_text(dumps_json(jsonable_params) + "\n")
+
+        return jsonable_params, input_path, output_dir, run_id
+
     async def _evaluate_particle_async(
-        self, particle: Particle, params: dict[str, Any]
+        self,
+        particle: Particle,
+        params: dict[str, Any],
+        *,
+        input_path: Path | None = None,
+        output_dir: Path | None = None,
+        run_id: str | None = None,
     ) -> tuple[Particle, float]:
-        outputs = await self._simulate_async(params)
+        outputs = await self._simulate_async(
+            params,
+            input_path=input_path,
+            output_dir=output_dir,
+            run_id=run_id,
+        )
+        if output_dir is not None:
+            output_path = output_dir / "result.json"
+            output_path.write_text(
+                json.dumps(to_jsonable(outputs), indent=2, sort_keys=True)
+                + "\n"
+            )
         err = self.outputs_to_distance(outputs, self.target_data)
         return particle, err
 
@@ -285,10 +391,24 @@ class ABCSampler:
                     params = self.particles_to_params(
                         proposed_particle, **kwargs
                     )
+                    (
+                        params,
+                        input_path,
+                        output_dir,
+                        run_id,
+                    ) = self._stage_simulation_io(
+                        generation,
+                        attempts - 1,
+                        params,
+                    )
                     evaluation_tasks.append(
                         asyncio.create_task(
                             self._evaluate_particle_async(
-                                proposed_particle, params
+                                proposed_particle,
+                                params,
+                                input_path=input_path,
+                                output_dir=output_dir,
+                                run_id=run_id,
                             )
                         )
                     )

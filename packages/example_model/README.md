@@ -64,6 +64,13 @@ the image:
 docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
 ```
 
+To build the same image and publish it to the Azure Container Registry used by
+CloudOps:
+
+```bash
+uv run --group cloudops python packages/example_model/create_runner.py --push-latest
+```
+
 Then run:
 
 ```bash
