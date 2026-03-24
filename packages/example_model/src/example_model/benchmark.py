@@ -96,35 +96,40 @@ sampler = ABCSampler(
 
 benchmark_results = []
 
-# start = timeit.default_timer()
-# results = sampler.run(base_inputs=default_inputs)
-# end = timeit.default_timer()
-# print(f"Execution time: {end - start} seconds")
-# benchmark_results.append({
-#     "time": end - start,
-#     "attempts": results.smc_step_attempts,
-#     "max_workers": None,
-#     "chunksize": None
-# })
+start = timeit.default_timer()
+results = sampler.run(execution='serial',base_inputs=default_inputs)
+end = timeit.default_timer()
+print(f"Execution time: {end - start} seconds")
+benchmark_results.append({
+    "time": end - start,
+    "attempts": results.smc_step_attempts,
+    "max_workers": None,
+    "chunksize": None
+})
 
-for max_workers in [8, 2]:
-    for chunksize in [8, 128]:
-        start = timeit.default_timer()
-        results = sampler.run_parallel_by_particle(base_inputs=default_inputs, chunksize=1, max_workers=max_workers)
-        end = timeit.default_timer()
-        print(f"Execution time: {end - start} seconds")
+for max_workers in [8, 2, 1]:
+    # for chunksize in [8, 128]:
+    start = timeit.default_timer()
+    results = sampler.run(
+        execution='parallel', 
+        base_inputs=default_inputs, 
+        # chunksize=1, 
+        max_workers=max_workers
+    )
+    end = timeit.default_timer()
+    print(f"Execution time: {end - start} seconds")
 
-        benchmark_results.append({
-            "time": end - start,
-            "attempts": results.smc_step_attempts,
-            "max_workers": max_workers,
-            "chunksize": chunksize
-        })
+    benchmark_results.append({
+        "time": end - start,
+        "attempts": results.smc_step_attempts,
+        # "chunksize": chunksize,
+        "max_workers": max_workers
+    })
 
         
 # Defualt printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
 for result in benchmark_results:
-    print(f"workers: {result['max_workers']}, chunksize: {result['chunksize']}, time: {result['time']}")
+    print(f"workers: {result['max_workers']}, time: {result['time']}")
 
 with open("./benchmarks/parallelization_check.json", "w") as fp:
     json.dump(benchmark_results, fp)

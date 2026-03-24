@@ -1,6 +1,6 @@
 import copy
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, Literal
 
 import sys
 import multiprocessing as mp
@@ -177,7 +177,137 @@ class ABCSampler:
             ParticlePopulation(),
         )
 
-    def run(self, **kwargs: Any) -> CalibrationResults:
+    def run(
+        self, 
+        execution: Literal['serial', 'parallel']='parallel', 
+        max_workers: int = None, 
+        **kwargs: Any
+    ) -> CalibrationResults:
+        """
+        Executes the Sequential Monte Carlo (SMC) sampling process.
+
+        This method performs the SMC algorithm to generate a population of particles
+        that approximate the posterior distribution of the model parameters. The process
+        involves iteratively sampling and perturbing particles, evaluating their fitness
+        using a distance metric, and accepting or rejecting them based on a tolerance value.
+
+        Args:
+            execute (Literal['serial', 'parallel']): Determines whether to run the SMC sampling process in serial or parallel. Defaults to 'serial'.
+            **kwargs (Any): Additional keyword arguments that can be passed to the method.
+                      These arguments are supplied to the particles_to_params function.
+                      Note that the keyword arguments must not conflict with existing
+                      attributes of the class.
+        Returns:
+            CalibrationResults: An object containing the results of the calibration process.
+        """
+        for k in kwargs.keys():
+            if k in self.__class__.__dict__:
+                raise ValueError(
+                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
+                )
+        
+        if execution == 'parallel':
+            n_procs = (
+                min(max_workers, (max(mp.cpu_count(), 1)))
+                if max_workers
+                else (mp.cpu_count() or 1)
+            )
+        else:
+            n_procs = 1
+
+        entropy_history = {}
+
+        for generation in range(len(self.tolerance_values)):
+            proposed_population = ParticlePopulation()
+
+            # Generate the seed sequences used for each particle in the proposed population
+            _sequences = self._seed_sequence.spawn(
+                self.generation_particle_count
+            )
+            entropy_list: list[dict[str, Any]] = [
+                {'id': i, 'seed_sequence': v}
+                for i, v in enumerate(_sequences)
+            ]
+
+            # Select sample method based on generation - from the priors if uninitiated, from the most recent population if available
+            if generation == 0:
+                sample_method = self.sample_particle_from_priors
+            else:
+                sample_method = self.sample_and_perturb_particle
+            
+            if n_procs == 1:
+                accepted_list = []
+                for generator in entropy_list:
+                    accepted_list.append(
+                        self.sample_particles_until_accepted(
+                            entropy=generator,
+                            tolerance=self.tolerance_values[generation],
+                            sample_method=sample_method,
+                            **kwargs
+                        )
+                    )
+            else:
+                if mp.current_process().name == 'MainProcess':
+                    with ProcessPoolExecutor(max_workers=n_procs) as executor:
+                        accepted_list = executor.map(
+                            partial(
+                                self.sample_particles_until_accepted,
+                                tolerance=self.tolerance_values[generation],
+                                sample_method=sample_method,
+                                **kwargs
+                            ),
+                            entropy_list
+                        )
+            accepted_list =(sorted(accepted_list, key = lambda x: x[0]))
+            print(accepted_list[0:3])
+            for id, accepted_values, samples in accepted_list:
+                if accepted_values is not None:
+                    self.step_successes[generation] += 1
+                    if generation == 0:
+                        particle_weight = 1.0
+                    else:
+                        particle_weight = self.calculate_weight(accepted_values)
+                    proposed_population.add_particle(accepted_values, particle_weight)
+                else:
+                    raise UserWarning(f"Particle proposal attempt {id} used {samples} samples and found no acceptable values.")
+                self.step_attempts[generation] += samples
+            entropy_history.update({generation: entropy_list})
+            self.particle_population = proposed_population
+        print(entropy_history[1][0:3])
+        return self.get_results_and_reset()
+    
+    def sample_particles_until_accepted(
+        self,
+        entropy: dict[str, int],
+        tolerance: float,
+        sample_method: Callable[[SeedSequence], Particle],
+        max_attempts: int | None = None,
+        **kwargs
+    ):
+        """
+        Rejection sampling routine to return a single value
+
+        Args:
+            entropy (dict[int, int]): A dictionary containing the particle id and entropy value for the seed sequence used in sampling.
+            tolerance (float): The tolerance value for accepting a particle based on its distance from the target data.
+            sample_method (Callable[..., Particle]): The method used to sample particles, which can be either from the priors or by perturbing existing particles.
+        """
+        if not max_attempts:
+            max_attempts = self.max_attempts_per_proposal
+        generator_seed_sequence = entropy['seed_sequence']
+        if entropy['id'] in [0, 1]:
+            print(f"Generator {entropy['id']} starting with seed {generator_seed_sequence}...")
+        for i in range(max_attempts):
+            proposed_particle = sample_method(generator_seed_sequence)
+            err = self._evaluate_particle(proposed_particle, **kwargs)
+            if err < tolerance:
+                if entropy['id'] in [0, 1]:
+                    print(f"Generator {entropy['id']} ended with seed {generator_seed_sequence}")
+                
+                return (entropy['id'], proposed_particle, i+1)
+        return (entropy['id'], None, max_attempts)
+
+    def run_serial(self, **kwargs: Any) -> CalibrationResults:
         """
         Executes the Sequential Monte Carlo (SMC) sampling process.
 
@@ -342,7 +472,7 @@ class ABCSampler:
 
         return self._reset()
 
-    def _reset(self) -> CalibrationResults:
+    def get_results_and_reset(self) -> CalibrationResults:
         results = CalibrationResults(
             copy.deepcopy(self._updater),
             self.population_archive,

@@ -96,7 +96,7 @@ class _ParticleUpdater:
         
         if not seed_sequence:
             seed_sequence = self.seed_sequence
-        idx = spawn_rng(self.seed_sequence).choice(
+        idx = spawn_rng(seed_sequence).choice(
             self.particle_population.size,
             p=self.particle_population.weights,
         )
@@ -126,7 +126,7 @@ class _ParticleUpdater:
         if not seed_sequence:
             seed_sequence = self.seed_sequence
         for _ in range(max_attempts):
-            current_particle = self.sample_particle()
+            current_particle = self.sample_particle(seed_sequence=seed_sequence)
             new_particle = self.perturbation_kernel.perturb(
                 current_particle, seed_sequence
             )
