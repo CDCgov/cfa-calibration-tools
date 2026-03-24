@@ -71,6 +71,14 @@ CloudOps:
 uv run --group cloudops python packages/example_model/create_runner.py --push-latest
 ```
 
+To check selected CloudOps resources, provide any combination of `--image`,
+`--pool`, and `--job`. If you provide a pool without a job, the script will
+list jobs currently attached to that pool:
+
+```bash
+uv run --group cloudops python packages/example_model/check_runner.py --image cfa-calibration-tools-example-model:latest --pool your-pool-name
+```
+
 Then run:
 
 ```bash
