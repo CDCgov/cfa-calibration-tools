@@ -26,7 +26,7 @@ def updater(
 def test_init_calibration_results(updater):
     results = CalibrationResults(
         _updater=updater,
-        entropy_history={},
+        generator_history={},
         population_archive={},
         success_counts={
             "generation_particle_count": [3, 3],
@@ -52,7 +52,7 @@ def test_calibration_results_validation(updater):
     with pytest.raises(ValueError):
         CalibrationResults(
             _updater=updater,
-            entropy_history={},
+            generator_history={},
             population_archive={},
             success_counts={
                 "generation_particle_count": [3],
@@ -66,7 +66,7 @@ def test_calibration_results_validation(updater):
     with pytest.raises(ValueError):
         CalibrationResults(
             _updater=updater,
-            entropy_history={},
+            generator_history={},
             population_archive={},
             success_counts={
                 "generation_particle_count": [3, 3],
@@ -80,7 +80,7 @@ def test_calibration_results_validation(updater):
     with pytest.raises(ValueError):
         CalibrationResults(
             _updater=updater,
-            entropy_history={},
+            generator_history={},
             population_archive={},
             success_counts={
                 "generation_particle_count": [3, 3],
@@ -97,7 +97,7 @@ def test_calibration_results_validation(updater):
         )  # Add a particle to make total weight > 1
         CalibrationResults(
             _updater=updater,
-            entropy_history={},
+            generator_history={},
             population_archive={},
             success_counts={
                 "generation_particle_count": [3, 3],
@@ -111,7 +111,7 @@ def test_calibration_results_validation(updater):
 def test_sample_posterior_particles(updater):
     results = CalibrationResults(
         _updater=updater,
-        entropy_history={},
+        generator_history={},
         population_archive={},
         success_counts={
             "generation_particle_count": [3, 3],
@@ -139,7 +139,7 @@ def test_sample_posterior_particles(updater):
 def test_sample_posterior_repeatable(updater):
     results = CalibrationResults(
         _updater=copy.deepcopy(updater),
-        entropy_history={},
+        generator_history={},
         population_archive={},
         success_counts={
             "generation_particle_count": [3, 3],
@@ -152,7 +152,7 @@ def test_sample_posterior_repeatable(updater):
 
     results2 = CalibrationResults(
         _updater=copy.deepcopy(updater),
-        entropy_history={},
+        generator_history={},
         population_archive={},
         success_counts={
             "generation_particle_count": [3, 3],
@@ -169,7 +169,7 @@ def test_sample_posterior_repeatable(updater):
 def test_get_diagnostics(updater):
     results = CalibrationResults(
         _updater=updater,
-        entropy_history={},
+        generator_history={},
         population_archive={},
         success_counts={
             "generation_particle_count": [3, 3],

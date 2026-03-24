@@ -118,7 +118,7 @@ class ABCSampler:
         self.init_updater()
         self.step_successes = [0] * len(self.tolerance_values)
         self.step_attempts = [0] * len(self.tolerance_values)
-        self.entropy_history = {}
+        self.generator_history = {}
 
     @property
     def particle_population(self) -> ParticlePopulation:
@@ -278,7 +278,7 @@ class ABCSampler:
             )
         results = CalibrationResults(
             copy.deepcopy(self._updater),
-            self.entropy_history,
+            self.generator_history,
             self.population_archive,
             {
                 "generation_particle_count": [self.generation_particle_count]
@@ -293,7 +293,7 @@ class ABCSampler:
         self.init_updater()
         self.step_successes = [0] * len(self.tolerance_values)
         self.step_attempts = [0] * len(self.tolerance_values)
-        self.entropy_history = {}
+        self.generator_history = {}
         return results
 
     def run_parallel(
@@ -390,7 +390,7 @@ class ABCSampler:
             _sequences = self._seed_sequence.spawn(
                 self.generation_particle_count
             )
-            entropy_list: list[dict[str, Any]] = [
+            generator_list: list[dict[str, Any]] = [
                 {"id": i, "seed_sequence": v} for i, v in enumerate(_sequences)
             ]
 
@@ -404,10 +404,10 @@ class ABCSampler:
             # Serial execution
             if n_procs == 1:
                 accepted_list = []
-                for generator in entropy_list:
+                for generator in generator_list:
                     accepted_list.append(
                         self.sample_particles_until_accepted(
-                            entropy=generator,
+                            generator=generator,
                             tolerance=self.tolerance_values[generation],
                             sample_method=sample_method,
                             **kwargs,
@@ -424,7 +424,7 @@ class ABCSampler:
                                 sample_method=sample_method,
                                 **kwargs,
                             ),
-                            entropy_list,
+                            generator_list,
                         )
 
             # Collect the results from across the accepted particles
@@ -448,14 +448,14 @@ class ABCSampler:
                     )
                 self.step_attempts[generation] += samples
 
-            self.entropy_history.update({generation: entropy_list})
+            self.generator_history.update({generation: generator_list})
             self.particle_population = proposed_population
 
         return self.get_results_and_reset()
 
     def sample_particles_until_accepted(
         self,
-        entropy: dict[str, int | SeedSequence],
+        generator: dict[str, int | SeedSequence],
         tolerance: float,
         sample_method: Callable[[SeedSequence], Particle],
         max_attempts: int | None = None,
@@ -465,7 +465,7 @@ class ABCSampler:
         Rejection sampling routine to return a single value
 
         Args:
-            entropy (dict[str, int | SeedSequence]): A dictionary containing the particle id and seed sequence generator for the random number generator spawn used in sampling.
+            generator (dict[str, int | SeedSequence]): A dictionary containing the particle id and seed sequence generator for the random number generator spawn used in sampling.
             tolerance (float): The tolerance value for accepting a particle based on the error returned from particle_to_distance().
             sample_method (Callable[[SeedSequence], Particle]): The method used to sample particles, which can be either from the priors or by perturbing existing particles when called from the sampler SMC routine. Any method that accepts a seed sequence and returns a particle is valid.
             max_attempts (int | None): The maximum number of attempts to sample and perturb a particle before aborting. If None, it defaults to the sampler's `max_attempts_per_proposal` attribute.
@@ -475,22 +475,13 @@ class ABCSampler:
         """
         if not max_attempts:
             max_attempts = self.max_attempts_per_proposal
-        generator_seed_sequence = entropy["seed_sequence"]
-        if entropy["id"] in [0, 1]:
-            print(
-                f"Generator {entropy['id']} starting with seed {generator_seed_sequence}..."
-            )
+
         for i in range(max_attempts):
-            proposed_particle = sample_method(generator_seed_sequence)
+            proposed_particle = sample_method(generator["seed_sequence"])
             err = self.particle_to_distance(proposed_particle, **kwargs)
             if err < tolerance:
-                if entropy["id"] in [0, 1]:
-                    print(
-                        f"Generator {entropy['id']} ended with seed {generator_seed_sequence}"
-                    )
-
-                return (entropy["id"], proposed_particle, i + 1)
-        return (entropy["id"], None, max_attempts)
+                return (generator["id"], proposed_particle, i + 1)
+        return (generator["id"], None, max_attempts)
 
     def run_parallel_batches(
         self,
