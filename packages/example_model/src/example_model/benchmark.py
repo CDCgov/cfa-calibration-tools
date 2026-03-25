@@ -97,9 +97,7 @@ sampler = ABCSampler(
 benchmark_results = []
 
 start = timeit.default_timer()
-results = sampler.run_serial(
-    base_inputs=default_inputs
-)
+results = sampler.run_serial(base_inputs=default_inputs)
 end = timeit.default_timer()
 print(f"Execution time: {end - start} seconds")
 benchmark_results.append(
