@@ -86,10 +86,6 @@ class ABCSampler:
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
         self.tolerance_values = tolerance_values
-        self._perturbation_kernel = perturbation_kernel
-        self._originator_perturbation_kernel = copy.deepcopy(
-            perturbation_kernel
-        )
         self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
         self.outputs_to_distance = outputs_to_distance
@@ -115,7 +111,7 @@ class ABCSampler:
 
             self._priors = load_priors_from_json(priors)
 
-        self.init_updater()
+        self.init_updater(perturbation_kernel)
         self.step_successes = [0] * len(self.tolerance_values)
         self.step_attempts = [0] * len(self.tolerance_values)
         self.generator_history = {}
@@ -164,13 +160,17 @@ class ABCSampler:
             self.population_archive.update({step: self.particle_population})
         self._updater.particle_population = population
 
-    def init_updater(self):
+    @property
+    def perturbation_kernel(self) -> PerturbationKernel:
+        return self._updater.perturbation_kernel
+
+    def init_updater(self, perturbation_kernel: PerturbationKernel):
         """
         Initializes the particle updater with the current perturbation kernel, priors, variance adapter, seed sequence, and an empty particle population.
         """
         self._seed_sequence = SeedSequence(self.seed)
         self._updater = _ParticleUpdater(
-            self._originator_perturbation_kernel,
+            perturbation_kernel,
             self._priors,
             self._variance_adapter,
             self._seed_sequence,
@@ -257,10 +257,13 @@ class ABCSampler:
         """
         return self._updater.calculate_weight(particle)
 
-    def get_results_and_reset(self) -> CalibrationResults:
+    def get_results_and_reset(
+        self, perturbation_kernel: PerturbationKernel
+    ) -> CalibrationResults:
         """
         Compiles the results of the calibration process into a CalibrationResults object and resets the sampler for potential future runs.
-
+        Args:
+            perturbation_kernel (PerturbationKernel): The originator perturbation kernel to reset to after the run.
         Returns:
             CalibrationResults: An object containing the results of the calibration process, including the final particle population
             and the history of successes and attempts for each generation.
@@ -290,7 +293,7 @@ class ABCSampler:
         )
 
         # Reset particle sampler and successes
-        self.init_updater()
+        self.init_updater(perturbation_kernel)
         self.step_successes = [0] * len(self.tolerance_values)
         self.step_attempts = [0] * len(self.tolerance_values)
         self.generator_history = {}
@@ -374,6 +377,10 @@ class ABCSampler:
                     f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
                 )
 
+        originator_perturbation_kernel = copy.deepcopy(
+            self.perturbation_kernel
+        )
+
         if execution == "parallel":
             n_procs = (
                 min(max_workers, (max(mp.cpu_count(), 1)))
@@ -451,7 +458,7 @@ class ABCSampler:
             self.generator_history.update({generation: generator_list})
             self.particle_population = proposed_population
 
-        return self.get_results_and_reset()
+        return self.get_results_and_reset(originator_perturbation_kernel)
 
     def sample_particles_until_accepted(
         self,
@@ -518,8 +525,6 @@ class ABCSampler:
                     f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
                 )
 
-        proposed_population = ParticlePopulation()
-
         actual_workers = (
             min(max_workers, (max(mp.cpu_count(), 1)))
             if max_workers
@@ -531,6 +536,10 @@ class ABCSampler:
         else:
             warmup = False
 
+        originator_perturbation_kernel = copy.deepcopy(
+            self.perturbation_kernel
+        )
+
         if mp.current_process().name == "MainProcess":
             with ProcessPoolExecutor(max_workers=actual_workers) as executor:
                 for generation in range(len(self.tolerance_values)):
@@ -538,6 +547,8 @@ class ABCSampler:
                         print(
                             f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
                         )
+
+                    proposed_population = ParticlePopulation()
 
                     # Rejection sampling algorithm
                     attempts = 0
@@ -602,6 +613,5 @@ class ABCSampler:
                     self.step_successes[generation] = proposed_population.size
                     self.step_attempts[generation] = attempts
                     self.particle_population = proposed_population
-                    proposed_population = ParticlePopulation()
 
-        return self.get_results_and_reset()
+        return self.get_results_and_reset(originator_perturbation_kernel)

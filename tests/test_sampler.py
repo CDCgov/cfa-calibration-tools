@@ -4,6 +4,7 @@ import pytest
 
 from calibrationtools.calibration_results import CalibrationResults
 from calibrationtools.perturbation_kernel import (
+    IndependentKernels,
     NormalKernel,
     SeedKernel,
 )
@@ -39,9 +40,9 @@ def sampler(K, P, Vnorm) -> ABCSampler:
     )
 
 
-def test_abc_sampler_run(K, sampler):
+def test_abc_sampler_run(K, sampler: ABCSampler):
     original_std_dev = K.kernels[0].std_dev
-    results = sampler.run()
+    results = sampler.run_serial()
     assert isinstance(results, CalibrationResults)
     posterior_particles = results.posterior.particle_population
 
@@ -69,22 +70,27 @@ def test_abc_sampler_run(K, sampler):
     )
 
     # Test that the perturbation kernel has been updated by adapter Vnorm
-    current_perturbation_kernels = sampler._updater.perturbation_kernel.kernels
-    posterior_perturbation_kernels = (
-        results._updater.perturbation_kernel.kernels
-    )
-    assert isinstance(current_perturbation_kernels[0], NormalKernel)
-    assert current_perturbation_kernels[0].std_dev == original_std_dev
+    reset_perturbation = sampler._updater.perturbation_kernel
+    assert isinstance(reset_perturbation, IndependentKernels)
+    reset_perturbation_kernels = reset_perturbation.kernels
+
+    posterior_perturbation = results._updater.perturbation_kernel
+    assert isinstance(posterior_perturbation, IndependentKernels)
+    posterior_perturbation_kernels = posterior_perturbation.kernels
+
+    assert isinstance(reset_perturbation_kernels[0], NormalKernel)
+    assert isinstance(posterior_perturbation_kernels[0], NormalKernel)
+    assert reset_perturbation_kernels[0].std_dev == original_std_dev
     assert posterior_perturbation_kernels[0].std_dev < original_std_dev
 
-    assert isinstance(current_perturbation_kernels[1], SeedKernel)
+    assert isinstance(reset_perturbation_kernels[1], SeedKernel)
     assert isinstance(posterior_perturbation_kernels[1], SeedKernel)
 
 
 def test_sampler_run_repeatable(sampler):
     # Sampler produces same results when seed is set
-    results1 = sampler.run()
-    results2 = sampler.run()
+    results1 = sampler.run_serial()
+    results2 = sampler.run_serial()
 
     assert results1.point_estimates == results2.point_estimates
     assert results1.ess == results2.ess
@@ -114,3 +120,34 @@ def test_sample_from_priors_repeatable(sampler):
     states2 = sampler2.sample_priors(5)
 
     assert states1 == states2
+
+
+def test_sampler_run_parallel_equal(sampler: ABCSampler):
+    # Test that parallel and serial runs produce similar results
+    results_serial = sampler.run_serial()
+    results_parallel = sampler.run_parallel()
+
+    assert results_serial.point_estimates == results_parallel.point_estimates
+    assert results_serial.ess == results_parallel.ess
+    assert results_serial.acceptance_rates == results_parallel.acceptance_rates
+    assert (
+        results_serial.posterior.particle_population.particles
+        == results_parallel.posterior.particle_population.particles
+    )
+    # Assert that the particle generator key history is the same for both runs
+    for generation, generator_list in results_serial.generator_history.items():
+        parallel_generator_list = results_parallel.generator_history[
+            generation
+        ]
+        for gen_serial, gen_parallel in zip(
+            generator_list, parallel_generator_list
+        ):
+            assert gen_serial["id"] == gen_parallel["id"]
+            assert (
+                gen_serial["seed_sequence"].entropy
+                == gen_parallel["seed_sequence"].entropy
+            )
+            assert (
+                gen_serial["seed_sequence"].spawn_key
+                == gen_parallel["seed_sequence"].spawn_key
+            )
