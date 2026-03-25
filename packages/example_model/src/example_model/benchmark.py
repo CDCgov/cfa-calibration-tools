@@ -82,8 +82,8 @@ def outputs_to_distance(model_output, target_data):
 
 
 sampler = ABCSampler(
-    generation_particle_count=500,
-    tolerance_values=[5.0, 4.0, 3.0],
+    generation_particle_count=100,
+    tolerance_values=[5.0, 2.0],
     priors=P,
     perturbation_kernel=K,
     variance_adapter=V,
@@ -97,7 +97,9 @@ sampler = ABCSampler(
 benchmark_results = []
 
 start = timeit.default_timer()
-results = sampler.run(execution="serial", base_inputs=default_inputs)
+results = sampler.run_serial(
+    base_inputs=default_inputs
+)
 end = timeit.default_timer()
 print(f"Execution time: {end - start} seconds")
 benchmark_results.append(
@@ -110,12 +112,9 @@ benchmark_results.append(
 )
 
 for max_workers in [8, 2, 1]:
-    # for chunksize in [8, 128]:
     start = timeit.default_timer()
-    results = sampler.run(
-        execution="parallel",
+    results = sampler.run_parallel(
         base_inputs=default_inputs,
-        # chunksize=1,
         max_workers=max_workers,
     )
     end = timeit.default_timer()
