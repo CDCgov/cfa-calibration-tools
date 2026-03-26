@@ -1,6 +1,7 @@
 import copy
-import sys
 import multiprocessing as mp
+import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -9,7 +10,9 @@ from typing import Any, Callable, Literal, Sequence
 import numpy as np
 from mrp import MRPModel
 from numpy.random import SeedSequence
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
+from . import formatting
 from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_population import ParticlePopulation
@@ -382,9 +385,13 @@ class ABCSampler:
             self.perturbation_kernel
         )
 
+        console = formatting.get_console()
+        overall_start_time = time.time()
+
         if execution == "parallel":
             if sys.platform.startswith("linux"):
                 import multiprocessing
+
                 multiprocessing.set_start_method("fork", force=True)
             n_procs = (
                 min(max_workers, (max(mp.cpu_count(), 1)))
@@ -395,6 +402,9 @@ class ABCSampler:
             n_procs = 1
 
         for generation in range(len(self.tolerance_values)):
+            generation_start_time = time.time()
+
+            # Init the proposed population
             proposed_population = ParticlePopulation()
 
             # Generate the seed sequences used for each particle in the proposed population
@@ -411,57 +421,170 @@ class ABCSampler:
             else:
                 sample_method = self.sample_and_perturb_particle
 
-            # For each particle generator id and seed sequence, create an accepted particle and map to the id.
-            # Serial execution
-            if n_procs == 1:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TextColumn("acceptance: {task.fields[acceptance]}"),
+                TextColumn("•"),
+                TimeElapsedColumn(),
+                TextColumn("•"),
+                TextColumn("ETA: {task.fields[eta]}"),
+                console=console,
+                transient=True,
+            ) as progress:
+                running_progress_bar = progress.add_task(
+                    f"Generation {generation + 1} (tolerance {self.tolerance_values[generation]})...",
+                    total=self.generation_particle_count,
+                    acceptance="N/A",
+                    eta="calculating...",
+                )
                 accepted_list = []
-                for generator in generator_list:
-                    accepted_list.append(
-                        self.sample_particles_until_accepted(
-                            generator=generator,
-                            tolerance=self.tolerance_values[generation],
-                            sample_method=sample_method,
-                            **kwargs,
-                        )
-                    )
-            # Parallel execution
-            else:
-                if mp.current_process().name == "MainProcess":
-                    with ProcessPoolExecutor(max_workers=n_procs) as executor:
-                        accepted_list = executor.map(
-                            partial(
-                                self.sample_particles_until_accepted,
+                total_attempts = 0
+                completed = 0
+                # For each particle generator id and seed sequence, create an accepted particle and map to the id.
+                # Serial execution
+                if n_procs == 1:
+                    for generator in generator_list:
+                        accepted_list.append(
+                            self.sample_particles_until_accepted(
+                                generator=generator,
                                 tolerance=self.tolerance_values[generation],
                                 sample_method=sample_method,
                                 **kwargs,
-                            ),
-                            generator_list,
+                            )
+                        )
+                        total_attempts += accepted_list[-1][2]
+                        completed += 1
+                        elapsed = time.time() - generation_start_time
+                        eta = (
+                            elapsed
+                            * (self.generation_particle_count - completed)
+                            / (completed or 1)
+                            if elapsed > 0 and completed > 0
+                            else 0.0
+                        )
+                        acceptance_rate = (
+                            100.0 * completed / total_attempts
+                            if total_attempts > 0
+                            else 0.0
+                        )
+                        progress.update(
+                            running_progress_bar,
+                            completed=completed,
+                            acceptance=f"{acceptance_rate:.1f}%",
+                            eta=formatting._format_time(eta),
                         )
 
-            # Collect the results from across the accepted particles
-            for id, accepted_particle, samples in sorted(
-                accepted_list, key=lambda x: x[0]
-            ):
-                if accepted_particle is not None:
-                    self.step_successes[generation] += 1
-                    if generation == 0:
-                        particle_weight = 1.0
-                    else:
-                        particle_weight = self.calculate_weight(
-                            accepted_particle
-                        )
-                    proposed_population.add_particle(
-                        accepted_particle, particle_weight
-                    )
+                # Parallel execution
                 else:
-                    raise UserWarning(
-                        f"Particle proposal attempt {id} used {samples} samples and found no acceptable values."
-                    )
-                self.step_attempts[generation] += samples
+                    if mp.current_process().name == "MainProcess":
+                        with ProcessPoolExecutor(
+                            max_workers=n_procs
+                        ) as executor:
+                            for completed_generator in executor.map(
+                                partial(
+                                    self.sample_particles_until_accepted,
+                                    tolerance=self.tolerance_values[
+                                        generation
+                                    ],
+                                    sample_method=sample_method,
+                                    **kwargs,
+                                ),
+                                generator_list,
+                            ):
+                                accepted_list.append(completed_generator)
+                                total_attempts += completed_generator[2]
+                                completed += 1
+                                elapsed = time.time() - generation_start_time
+                                eta = (
+                                    elapsed
+                                    * (
+                                        self.generation_particle_count
+                                        - completed
+                                    )
+                                    / (completed or 1)
+                                    if elapsed > 0 and completed > 0
+                                    else 0.0
+                                )
+                                acceptance_rate = (
+                                    100.0 * completed / total_attempts
+                                    if total_attempts > 0
+                                    else 0.0
+                                )
+                                progress.update(
+                                    running_progress_bar,
+                                    completed=completed,
+                                    acceptance=f"{acceptance_rate:.1f}%",
+                                    eta=formatting._format_time(eta),
+                                )
 
-            self.generator_history.update({generation: generator_list})
-            self.particle_population = proposed_population
+                total_time = time.time() - overall_start_time
+                processing_time = time.time() - generation_start_time
 
+                # Store acceptance statistics
+                acceptance_rate = (
+                    100.0 * completed / total_attempts
+                    if total_attempts > 0
+                    else 0.0
+                )
+                console.print(
+                    f"[green]✓[/green] Generation {generation + 1} run complete! "
+                    f"Tolerance: {self.tolerance_values[generation]}, acceptance rate: {acceptance_rate:.1f}% of {total_attempts} attempts"
+                )
+
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TimeElapsedColumn(),
+                console=console,
+                transient=True,
+            ) as progress:
+                task_id = progress.add_task(
+                    "Calculating weights...",
+                    total=self.generation_particle_count,
+                )
+                # Collect the results from across the accepted particles
+                for id, accepted_particle, samples in sorted(
+                    accepted_list, key=lambda x: x[0]
+                ):
+                    if accepted_particle is not None:
+                        self.step_successes[generation] += 1
+                        if generation == 0:
+                            particle_weight = 1.0
+                        else:
+                            particle_weight = self.calculate_weight(
+                                accepted_particle
+                            )
+                        proposed_population.add_particle(
+                            accepted_particle, particle_weight
+                        )
+                        progress.update(task_id, advance=1)
+                    else:
+                        raise UserWarning(
+                            f"Particle proposal attempt {id} used {samples} samples and found no acceptable values."
+                        )
+                    self.step_attempts[generation] += samples
+
+                self.generator_history.update({generation: generator_list})
+                self.particle_population = proposed_population
+
+                weights_time = (
+                    time.time() - generation_start_time - processing_time
+                )
+                # Summary with checkmark
+                console.print(
+                    f"(Run: {formatting._format_time(processing_time)}, Weights calculation: {formatting._format_time(weights_time)}, total time: {formatting._format_time(total_time)})"
+                )
+
+        # Summary with checkmark
+        console.print(
+            f"[green]✓[/green] Calibration complete! "
+            f"(total time: {formatting._format_time(total_time)})"
+        )
         return self.get_results_and_reset(originator_perturbation_kernel)
 
     def sample_particles_until_accepted(
@@ -490,7 +613,7 @@ class ABCSampler:
         for i in range(max_attempts):
             proposed_particle = sample_method(generator["seed_sequence"])
             err = self.particle_to_distance(proposed_particle, **kwargs)
-            if err < tolerance:
+            if err <= tolerance:
                 return (generator["id"], proposed_particle, i + 1)
         return (generator["id"], None, max_attempts)
 

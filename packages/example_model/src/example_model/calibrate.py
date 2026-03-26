@@ -91,7 +91,7 @@ sampler = ABCSampler(
     seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
-results = sampler.run(base_inputs=default_inputs)
+results = sampler.run(execution="serial", base_inputs=default_inputs)
 # Default printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
 print(results)
 
