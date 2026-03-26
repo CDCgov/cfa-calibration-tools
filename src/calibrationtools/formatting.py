@@ -1,8 +1,9 @@
 from rich.console import Console
-from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+
 
 def get_console() -> Console:
     return Console(force_terminal=True)
+
 
 def _format_time(seconds: float) -> str:
     """Format time duration in human-readable units.

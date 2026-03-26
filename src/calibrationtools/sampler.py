@@ -52,6 +52,9 @@ class ABCSampler:
         drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
         seed_parameter_name (str | None): The name of the seed parameter to include in the priors if `incl_seed_parameter` is True when loading priors from a dictionary or JSON file.
 
+    Raises:
+        ValueError: If `parallel_worker_count` is not positive.
+
     Methods:
         particle_population:
             Getter and setter for the current particle population. Automatically archives
@@ -481,7 +484,9 @@ class ABCSampler:
 
     def _init_generation(
         self, generation: int
-    ) -> tuple[ParticlePopulation, list[dict[str, Any]], Callable[..., Particle]]:
+    ) -> tuple[
+        ParticlePopulation, list[dict[str, Any]], Callable[..., Particle]
+    ]:
         """
         Create per-generation state used by the sampling loop.
         """
@@ -523,7 +528,8 @@ class ABCSampler:
             total_attempts += accepted_list[-1][2]
             elapsed = time.time() - generation_start_time
             eta = (
-                elapsed * (self.generation_particle_count - completed)
+                elapsed
+                * (self.generation_particle_count - completed)
                 / completed
                 if elapsed > 0
                 else 0.0
@@ -693,9 +699,6 @@ class ABCSampler:
                       attributes of the class.
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
-        Raises:
-            ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class
-            UserWarning: If the number of successful particles in any generation is less than the specified generation_particle_count
         """
         self._validate_run_kwargs(kwargs)
         originator_perturbation_kernel = copy.deepcopy(
@@ -830,7 +833,7 @@ class ABCSampler:
         Sample a batch of proposed particles for one generation.
         """
         sample_method = self._get_sample_method(generation)
-        return [sample_method() for _ in range(sample_size)]
+        return [sample_method(None) for _ in range(sample_size)]
 
     def _evaluate_particle_chunk(
         self, proposed_particles: list[Particle], **kwargs: Any
@@ -865,11 +868,7 @@ class ABCSampler:
                 for particle_chunk in particle_chunks
             ]
         )
-        return [
-            err
-            for chunk_result in chunk_results
-            for err in chunk_result
-        ]
+        return [err for chunk_result in chunk_results for err in chunk_result]
 
     def _evaluate_particle_batch(
         self,
@@ -994,8 +993,6 @@ class ABCSampler:
                         attributes of the class.
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
-        Raises:
-            ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class, or if batchsize/chunksize/max_workers are not positive
         """
         self._validate_run_kwargs(kwargs)
         actual_workers = self._resolve_worker_count(max_workers)
