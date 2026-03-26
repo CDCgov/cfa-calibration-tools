@@ -385,7 +385,7 @@ class ABCSampler:
         if execution == "parallel":
             if sys.platform.startswith("linux"):
                 import multiprocessing
-                multiprocessing.set_start_method("spawn", force=True)
+                multiprocessing.set_start_method("fork", force=True)
             n_procs = (
                 min(max_workers, (max(mp.cpu_count(), 1)))
                 if max_workers
