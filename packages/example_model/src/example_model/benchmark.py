@@ -2,6 +2,7 @@
 
 import json
 import timeit
+from pathlib import Path
 
 import numpy as np
 from mrp import Environment
@@ -132,5 +133,8 @@ for max_workers in [8, 2, 1]:
 for result in benchmark_results:
     print(f"workers: {result['max_workers']}, time: {result['time']}")
 
-with open("./benchmarks/parallelization_check.json", "w") as fp:
+benchmark_dir = Path("./benchmarks")
+benchmark_dir.mkdir(exist_ok=True)
+
+with open(benchmark_dir / "parallelization_check.json", "w") as fp:
     json.dump(benchmark_results, fp)

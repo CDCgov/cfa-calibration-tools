@@ -1,7 +1,10 @@
 from copy import deepcopy
+import threading
+import time
 
 import pytest
 
+import calibrationtools.sampler as sampler_module
 from calibrationtools.calibration_results import CalibrationResults
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
@@ -14,6 +17,28 @@ from calibrationtools.sampler import ABCSampler
 class DummyModelRunner:
     def simulate(self, params):
         return 0.5 + params["p"]
+
+
+class UnpickleableModelRunner:
+    def __init__(self):
+        self.bad = lambda x: x
+
+    def simulate(self, params):
+        return 0.5 + params["p"]
+
+
+class NonThreadSafeModelRunner:
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    def simulate(self, params):
+        if not self._lock.acquire(blocking=False):
+            raise RuntimeError("concurrent simulate on shared runner")
+        try:
+            time.sleep(0.01)
+            return 0.5 + params["p"]
+        finally:
+            self._lock.release()
 
 
 def particles_to_params(particle):
@@ -151,3 +176,116 @@ def test_sampler_run_parallel_equal(sampler: ABCSampler):
                 gen_serial["seed_sequence"].spawn_key
                 == gen_parallel["seed_sequence"].spawn_key
             )
+
+
+def test_sampler_run_parallel_with_unpickleable_runner(K, P, Vnorm):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5, 0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=UnpickleableModelRunner(),
+        seed=123,
+    )
+
+    results = sampler.run_parallel(max_workers=2)
+
+    assert isinstance(results, CalibrationResults)
+
+
+def test_sampler_run_parallel_batches_repeatable(sampler):
+    results1 = sampler.run_parallel_batches(
+        max_workers=2, chunksize=2, batchsize=4
+    )
+    results2 = sampler.run_parallel_batches(
+        max_workers=2, chunksize=2, batchsize=4
+    )
+
+    assert results1.point_estimates == results2.point_estimates
+    assert results1.ess == results2.ess
+    assert results1.acceptance_rates == results2.acceptance_rates
+
+
+def test_sampler_run_parallel_batches_with_unpickleable_runner(K, P, Vnorm):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5, 0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=UnpickleableModelRunner(),
+        seed=123,
+    )
+
+    results = sampler.run_parallel_batches(
+        max_workers=2, chunksize=2, batchsize=4
+    )
+
+    assert isinstance(results, CalibrationResults)
+
+
+def test_sampler_parallel_worker_count_default_is_configured(
+    K, P, Vnorm, monkeypatch
+):
+    recorded = {}
+    real_executor = sampler_module.ThreadPoolExecutor
+
+    class RecordingExecutor(real_executor):
+        def __init__(self, *args, **kwargs):
+            recorded["max_workers"] = kwargs.get("max_workers")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(
+        sampler_module, "ThreadPoolExecutor", RecordingExecutor
+    )
+
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5, 0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        parallel_worker_count=3,
+        seed=123,
+    )
+
+    sampler.run_parallel()
+
+    assert recorded["max_workers"] == 3
+
+
+def test_sampler_parallel_worker_failure_does_not_leak_future_errors(
+    K, P, Vnorm, capfd
+):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=NonThreadSafeModelRunner(),
+        seed=123,
+        verbose=False,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="concurrent simulate on shared runner"
+    ):
+        sampler.run_parallel(max_workers=2)
+
+    captured = capfd.readouterr()
+    assert "Future exception was never retrieved" not in captured.err

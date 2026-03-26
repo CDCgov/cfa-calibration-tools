@@ -1,8 +1,8 @@
+import asyncio
 import copy
-import multiprocessing as mp
-import sys
+import threading
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence
@@ -10,7 +10,13 @@ from typing import Any, Callable, Literal, Sequence
 import numpy as np
 from mrp import MRPModel
 from numpy.random import SeedSequence
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskID,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from . import formatting
 from .calibration_results import CalibrationResults
@@ -40,6 +46,7 @@ class ABCSampler:
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
+        parallel_worker_count (int): Default number of workers to use for sampler parallel execution when `max_workers` is not supplied.
         seed (int | None): Random seed for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
         drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
@@ -82,13 +89,17 @@ class ABCSampler:
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
+        parallel_worker_count: int = 10,
         seed: int | None = None,
         verbose: bool = True,
         drop_previous_population_data: bool = False,
         seed_parameter_name: str | None = "seed",
     ):
+        if parallel_worker_count <= 0:
+            raise ValueError("parallel_worker_count must be positive")
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
+        self.parallel_worker_count = parallel_worker_count
         self.tolerance_values = tolerance_values
         self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
@@ -307,7 +318,7 @@ class ABCSampler:
         self, max_workers: int | None = None, **kwargs: Any
     ) -> CalibrationResults:
         """
-        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using a ProcessPoolExecutor.
+        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using async orchestration over a thread pool.
 
         This method performs the SMC algorithm to generate a population of particles
         that approximate the posterior distribution of the model parameters. The process
@@ -316,7 +327,7 @@ class ABCSampler:
         The execution is parallelized to improve performance.
 
         Args:
-            max_workers (int | None): The maximum number of worker processes to use when running in parallel. If None, it defaults to the number of CPU cores available.
+            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -348,6 +359,317 @@ class ABCSampler:
         """
         return self.run(execution="serial", **kwargs)
 
+    def _resolve_worker_count(self, max_workers: int | None) -> int:
+        """
+        Resolve the number of concurrent workers to use for parallel runs.
+        """
+        worker_count = (
+            max_workers
+            if max_workers is not None
+            else self.parallel_worker_count
+        )
+        if worker_count <= 0:
+            raise ValueError("max_workers must be positive")
+        return worker_count
+
+    def _run_coroutine(self, coroutine_factory: Callable[[], Any]) -> Any:
+        """
+        Run an async workflow from synchronous code, even if an event loop is already active.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine_factory())
+
+        result: dict[str, Any] = {}
+        error: dict[str, BaseException] = {}
+
+        def runner():
+            try:
+                result["value"] = asyncio.run(coroutine_factory())
+            except BaseException as exc:  # pragma: no cover - passthrough
+                error["value"] = exc
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join()
+        if "value" in error:
+            raise error["value"]
+        return result["value"]
+
+    async def _collect_accepted_particles_async(
+        self,
+        generator_list: list[dict[str, Any]],
+        tolerance: float,
+        sample_method: Callable[[SeedSequence], Particle],
+        executor: ThreadPoolExecutor,
+        progress: Progress,
+        progress_task_id: TaskID,
+        generation_start_time: float,
+        **kwargs: Any,
+    ) -> tuple[list[tuple[int, Particle | None, int]], int]:
+        """
+        Collect accepted particles concurrently using async orchestration over a thread pool.
+        """
+        accepted_list: list[tuple[int, Particle | None, int]] = []
+        total_attempts = 0
+        completed = 0
+        loop = asyncio.get_running_loop()
+        worker = partial(
+            self.sample_particles_until_accepted,
+            tolerance=tolerance,
+            sample_method=sample_method,
+            **kwargs,
+        )
+        tasks = [
+            loop.run_in_executor(executor, worker, generator)
+            for generator in generator_list
+        ]
+
+        try:
+            for task in asyncio.as_completed(tasks):
+                completed_generator = await task
+                accepted_list.append(completed_generator)
+                total_attempts += completed_generator[2]
+                completed += 1
+                elapsed = time.time() - generation_start_time
+                eta = (
+                    elapsed
+                    * (self.generation_particle_count - completed)
+                    / (completed or 1)
+                    if elapsed > 0 and completed > 0
+                    else 0.0
+                )
+                acceptance_rate = (
+                    100.0 * completed / total_attempts
+                    if total_attempts > 0
+                    else 0.0
+                )
+                progress.update(
+                    progress_task_id,
+                    completed=completed,
+                    acceptance=f"{acceptance_rate:.1f}%",
+                    eta=formatting._format_time(eta),
+                )
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        return accepted_list, total_attempts
+
+    def _validate_run_kwargs(self, kwargs: dict[str, Any]) -> None:
+        """
+        Validate that run-time kwargs do not shadow sampler attributes.
+        """
+        for key in kwargs:
+            if key in self.__class__.__dict__:
+                raise ValueError(
+                    f"Keyword argument '{key}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
+                )
+
+    def _get_sample_method(
+        self, generation: int
+    ) -> Callable[[SeedSequence | None], Particle]:
+        """
+        Return the appropriate proposal method for the current generation.
+        """
+        if generation == 0:
+            return self.sample_particle_from_priors
+        return self.sample_and_perturb_particle
+
+    def _init_generation(
+        self, generation: int
+    ) -> tuple[ParticlePopulation, list[dict[str, Any]], Callable[..., Particle]]:
+        """
+        Create per-generation state used by the sampling loop.
+        """
+        proposed_population = ParticlePopulation()
+        generator_list = [
+            {"id": i, "seed_sequence": seed_sequence}
+            for i, seed_sequence in enumerate(
+                self._seed_sequence.spawn(self.generation_particle_count)
+            )
+        ]
+        sample_method = self._get_sample_method(generation)
+        return proposed_population, generator_list, sample_method
+
+    def _collect_accepted_particles_serial(
+        self,
+        generation: int,
+        generator_list: list[dict[str, Any]],
+        sample_method: Callable[[SeedSequence | None], Particle],
+        progress: Progress,
+        progress_task_id: TaskID,
+        generation_start_time: float,
+        **kwargs: Any,
+    ) -> tuple[list[tuple[int, Particle | None, int]], int]:
+        """
+        Collect accepted particles serially while updating progress.
+        """
+        accepted_list: list[tuple[int, Particle | None, int]] = []
+        total_attempts = 0
+
+        for completed, generator in enumerate(generator_list, start=1):
+            accepted_list.append(
+                self.sample_particles_until_accepted(
+                    generator=generator,
+                    tolerance=self.tolerance_values[generation],
+                    sample_method=sample_method,
+                    **kwargs,
+                )
+            )
+            total_attempts += accepted_list[-1][2]
+            elapsed = time.time() - generation_start_time
+            eta = (
+                elapsed * (self.generation_particle_count - completed)
+                / completed
+                if elapsed > 0
+                else 0.0
+            )
+            acceptance_rate = (
+                100.0 * completed / total_attempts
+                if total_attempts > 0
+                else 0.0
+            )
+            progress.update(
+                progress_task_id,
+                completed=completed,
+                acceptance=f"{acceptance_rate:.1f}%",
+                eta=formatting._format_time(eta),
+            )
+
+        return accepted_list, total_attempts
+
+    def _collect_accepted_particles(
+        self,
+        generation: int,
+        generator_list: list[dict[str, Any]],
+        sample_method: Callable[[SeedSequence | None], Particle],
+        n_workers: int,
+        parallel_executor: ThreadPoolExecutor | None,
+        console: Any,
+        overall_start_time: float,
+        generation_start_time: float,
+        **kwargs: Any,
+    ) -> tuple[list[tuple[int, Particle | None, int]], float, float]:
+        """
+        Collect accepted particles for one generation and emit progress output.
+        """
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("•"),
+            TextColumn("acceptance: {task.fields[acceptance]}"),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TextColumn("ETA: {task.fields[eta]}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress_task_id = progress.add_task(
+                f"Generation {generation + 1} (tolerance {self.tolerance_values[generation]})...",
+                total=self.generation_particle_count,
+                acceptance="N/A",
+                eta="calculating...",
+            )
+            if n_workers == 1:
+                accepted_list, total_attempts = (
+                    self._collect_accepted_particles_serial(
+                        generation=generation,
+                        generator_list=generator_list,
+                        sample_method=sample_method,
+                        progress=progress,
+                        progress_task_id=progress_task_id,
+                        generation_start_time=generation_start_time,
+                        **kwargs,
+                    )
+                )
+            else:
+                assert parallel_executor is not None
+                accepted_list, total_attempts = self._run_coroutine(
+                    lambda: self._collect_accepted_particles_async(
+                        generator_list=generator_list,
+                        tolerance=self.tolerance_values[generation],
+                        sample_method=sample_method,
+                        executor=parallel_executor,
+                        progress=progress,
+                        progress_task_id=progress_task_id,
+                        generation_start_time=generation_start_time,
+                        **kwargs,
+                    )
+                )
+
+            processing_time = time.time() - generation_start_time
+            total_time = time.time() - overall_start_time
+            acceptance_rate = (
+                100.0 * len(accepted_list) / total_attempts
+                if total_attempts > 0
+                else 0.0
+            )
+            console.print(
+                f"[green]✓[/green] Generation {generation + 1} run complete! "
+                f"Tolerance: {self.tolerance_values[generation]}, acceptance rate: {acceptance_rate:.1f}% of {total_attempts} attempts"
+            )
+
+        return accepted_list, processing_time, total_time
+
+    def _finalize_generation(
+        self,
+        generation: int,
+        generator_list: list[dict[str, Any]],
+        accepted_list: list[tuple[int, Particle | None, int]],
+        proposed_population: ParticlePopulation,
+        console: Any,
+        generation_start_time: float,
+        processing_time: float,
+        total_time: float,
+    ) -> None:
+        """
+        Convert accepted proposals into the next particle population.
+        """
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task_id = progress.add_task(
+                "Calculating weights...",
+                total=self.generation_particle_count,
+            )
+            for id, accepted_particle, samples in sorted(
+                accepted_list, key=lambda x: x[0]
+            ):
+                if accepted_particle is None:
+                    raise UserWarning(
+                        f"Particle proposal attempt {id} used {samples} samples and found no acceptable values."
+                    )
+                self.step_successes[generation] += 1
+                particle_weight = (
+                    1.0
+                    if generation == 0
+                    else self.calculate_weight(accepted_particle)
+                )
+                proposed_population.add_particle(
+                    accepted_particle, particle_weight
+                )
+                self.step_attempts[generation] += samples
+                progress.update(task_id, advance=1)
+
+        self.generator_history.update({generation: generator_list})
+        self.particle_population = proposed_population
+        weights_time = time.time() - generation_start_time - processing_time
+        console.print(
+            f"(Run: {formatting._format_time(processing_time)}, Weights calculation: {formatting._format_time(weights_time)}, total time: {formatting._format_time(total_time)})"
+        )
+
     def run(
         self,
         execution: Literal["serial", "parallel"] = "parallel",
@@ -364,7 +686,7 @@ class ABCSampler:
 
         Args:
             execution (Literal['serial', 'parallel']): Determines whether to run the SMC sampling process in serial or parallel. Defaults to 'serial'.
-            max_workers (int | None): The maximum number of worker processes to use when running in parallel. If None, it defaults to the number of CPU cores available. This argument is ignored when execution is set to 'serial'.
+            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`. This argument is ignored when execution is set to 'serial'.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -375,210 +697,57 @@ class ABCSampler:
             ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class
             UserWarning: If the number of successful particles in any generation is less than the specified generation_particle_count
         """
-        for k in kwargs.keys():
-            if k in self.__class__.__dict__:
-                raise ValueError(
-                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
-                )
-
+        self._validate_run_kwargs(kwargs)
         originator_perturbation_kernel = copy.deepcopy(
             self.perturbation_kernel
         )
-
         console = formatting.get_console()
         overall_start_time = time.time()
+        n_workers = (
+            self._resolve_worker_count(max_workers)
+            if execution == "parallel"
+            else 1
+        )
+        parallel_executor = (
+            ThreadPoolExecutor(max_workers=n_workers)
+            if execution == "parallel" and n_workers > 1
+            else None
+        )
 
-        if execution == "parallel":
-            if sys.platform.startswith("linux"):
-                import multiprocessing
-
-                multiprocessing.set_start_method("fork", force=True)
-            n_procs = (
-                min(max_workers, (max(mp.cpu_count(), 1)))
-                if max_workers
-                else (mp.cpu_count() or 1)
-            )
-        else:
-            n_procs = 1
-
-        for generation in range(len(self.tolerance_values)):
-            generation_start_time = time.time()
-
-            # Init the proposed population
-            proposed_population = ParticlePopulation()
-
-            # Generate the seed sequences used for each particle in the proposed population
-            _sequences = self._seed_sequence.spawn(
-                self.generation_particle_count
-            )
-            generator_list: list[dict[str, Any]] = [
-                {"id": i, "seed_sequence": v} for i, v in enumerate(_sequences)
-            ]
-
-            # Select sample method based on generation - from the priors if uninitiated, from the most recent population if available
-            if generation == 0:
-                sample_method = self.sample_particle_from_priors
-            else:
-                sample_method = self.sample_and_perturb_particle
-
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("•"),
-                TextColumn("acceptance: {task.fields[acceptance]}"),
-                TextColumn("•"),
-                TimeElapsedColumn(),
-                TextColumn("•"),
-                TextColumn("ETA: {task.fields[eta]}"),
-                console=console,
-                transient=True,
-            ) as progress:
-                running_progress_bar = progress.add_task(
-                    f"Generation {generation + 1} (tolerance {self.tolerance_values[generation]})...",
-                    total=self.generation_particle_count,
-                    acceptance="N/A",
-                    eta="calculating...",
+        try:
+            for generation in range(len(self.tolerance_values)):
+                generation_start_time = time.time()
+                (
+                    proposed_population,
+                    generator_list,
+                    sample_method,
+                ) = self._init_generation(generation)
+                accepted_list, processing_time, total_time = (
+                    self._collect_accepted_particles(
+                        generation=generation,
+                        generator_list=generator_list,
+                        sample_method=sample_method,
+                        n_workers=n_workers,
+                        parallel_executor=parallel_executor,
+                        console=console,
+                        overall_start_time=overall_start_time,
+                        generation_start_time=generation_start_time,
+                        **kwargs,
+                    )
                 )
-                accepted_list = []
-                total_attempts = 0
-                completed = 0
-                # For each particle generator id and seed sequence, create an accepted particle and map to the id.
-                # Serial execution
-                if n_procs == 1:
-                    for generator in generator_list:
-                        accepted_list.append(
-                            self.sample_particles_until_accepted(
-                                generator=generator,
-                                tolerance=self.tolerance_values[generation],
-                                sample_method=sample_method,
-                                **kwargs,
-                            )
-                        )
-                        total_attempts += accepted_list[-1][2]
-                        completed += 1
-                        elapsed = time.time() - generation_start_time
-                        eta = (
-                            elapsed
-                            * (self.generation_particle_count - completed)
-                            / (completed or 1)
-                            if elapsed > 0 and completed > 0
-                            else 0.0
-                        )
-                        acceptance_rate = (
-                            100.0 * completed / total_attempts
-                            if total_attempts > 0
-                            else 0.0
-                        )
-                        progress.update(
-                            running_progress_bar,
-                            completed=completed,
-                            acceptance=f"{acceptance_rate:.1f}%",
-                            eta=formatting._format_time(eta),
-                        )
-
-                # Parallel execution
-                else:
-                    if mp.current_process().name == "MainProcess":
-                        with ProcessPoolExecutor(
-                            max_workers=n_procs
-                        ) as executor:
-                            for completed_generator in executor.map(
-                                partial(
-                                    self.sample_particles_until_accepted,
-                                    tolerance=self.tolerance_values[
-                                        generation
-                                    ],
-                                    sample_method=sample_method,
-                                    **kwargs,
-                                ),
-                                generator_list,
-                            ):
-                                accepted_list.append(completed_generator)
-                                total_attempts += completed_generator[2]
-                                completed += 1
-                                elapsed = time.time() - generation_start_time
-                                eta = (
-                                    elapsed
-                                    * (
-                                        self.generation_particle_count
-                                        - completed
-                                    )
-                                    / (completed or 1)
-                                    if elapsed > 0 and completed > 0
-                                    else 0.0
-                                )
-                                acceptance_rate = (
-                                    100.0 * completed / total_attempts
-                                    if total_attempts > 0
-                                    else 0.0
-                                )
-                                progress.update(
-                                    running_progress_bar,
-                                    completed=completed,
-                                    acceptance=f"{acceptance_rate:.1f}%",
-                                    eta=formatting._format_time(eta),
-                                )
-
-                total_time = time.time() - overall_start_time
-                processing_time = time.time() - generation_start_time
-
-                # Store acceptance statistics
-                acceptance_rate = (
-                    100.0 * completed / total_attempts
-                    if total_attempts > 0
-                    else 0.0
+                self._finalize_generation(
+                    generation=generation,
+                    generator_list=generator_list,
+                    accepted_list=accepted_list,
+                    proposed_population=proposed_population,
+                    console=console,
+                    generation_start_time=generation_start_time,
+                    processing_time=processing_time,
+                    total_time=total_time,
                 )
-                console.print(
-                    f"[green]✓[/green] Generation {generation + 1} run complete! "
-                    f"Tolerance: {self.tolerance_values[generation]}, acceptance rate: {acceptance_rate:.1f}% of {total_attempts} attempts"
-                )
-
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("•"),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True,
-            ) as progress:
-                task_id = progress.add_task(
-                    "Calculating weights...",
-                    total=self.generation_particle_count,
-                )
-                # Collect the results from across the accepted particles
-                for id, accepted_particle, samples in sorted(
-                    accepted_list, key=lambda x: x[0]
-                ):
-                    if accepted_particle is not None:
-                        self.step_successes[generation] += 1
-                        if generation == 0:
-                            particle_weight = 1.0
-                        else:
-                            particle_weight = self.calculate_weight(
-                                accepted_particle
-                            )
-                        proposed_population.add_particle(
-                            accepted_particle, particle_weight
-                        )
-                        progress.update(task_id, advance=1)
-                    else:
-                        raise UserWarning(
-                            f"Particle proposal attempt {id} used {samples} samples and found no acceptable values."
-                        )
-                    self.step_attempts[generation] += samples
-
-                self.generator_history.update({generation: generator_list})
-                self.particle_population = proposed_population
-
-                weights_time = (
-                    time.time() - generation_start_time - processing_time
-                )
-                # Summary with checkmark
-                console.print(
-                    f"(Run: {formatting._format_time(processing_time)}, Weights calculation: {formatting._format_time(weights_time)}, total time: {formatting._format_time(total_time)})"
-                )
+        finally:
+            if parallel_executor is not None:
+                parallel_executor.shutdown(wait=True)
 
         # Summary with checkmark
         console.print(
@@ -617,6 +786,188 @@ class ABCSampler:
                 return (generator["id"], proposed_particle, i + 1)
         return (generator["id"], None, max_attempts)
 
+    def _resolve_parallel_batch_settings(
+        self, batchsize: int | None, chunksize: int
+    ) -> tuple[int, bool]:
+        """
+        Resolve validated batch execution settings.
+        """
+        if chunksize <= 0:
+            raise ValueError("chunksize must be positive")
+        if batchsize is None:
+            return self.generation_particle_count, True
+        if batchsize <= 0:
+            raise ValueError("batchsize must be positive")
+        return batchsize, False
+
+    def _get_batch_sample_size(
+        self,
+        proposed_population: ParticlePopulation,
+        attempts: int,
+        batchsize: int,
+        warmup: bool,
+    ) -> int:
+        """
+        Estimate how many particles to propose for the next batch.
+        """
+        effective_batchsize = (
+            10_000 if warmup and proposed_population.size > 0 else batchsize
+        )
+        if proposed_population.size == 0:
+            return effective_batchsize
+
+        remaining = self.generation_particle_count - proposed_population.size
+        sample_size = min(
+            effective_batchsize,
+            remaining * attempts / proposed_population.size,
+        )
+        return max(int(sample_size), 1)
+
+    def _sample_generation_particles(
+        self, generation: int, sample_size: int
+    ) -> list[Particle]:
+        """
+        Sample a batch of proposed particles for one generation.
+        """
+        sample_method = self._get_sample_method(generation)
+        return [sample_method() for _ in range(sample_size)]
+
+    def _evaluate_particle_chunk(
+        self, proposed_particles: list[Particle], **kwargs: Any
+    ) -> list[float]:
+        """
+        Evaluate a chunk of proposed particles serially.
+        """
+        return [
+            self.particle_to_distance(proposed_particle, **kwargs)
+            for proposed_particle in proposed_particles
+        ]
+
+    async def _evaluate_particle_batch_async(
+        self,
+        proposed_particles: list[Particle],
+        executor: ThreadPoolExecutor,
+        chunksize: int,
+        **kwargs: Any,
+    ) -> list[float]:
+        """
+        Evaluate a batch of proposed particles concurrently using async orchestration over a thread pool.
+        """
+        loop = asyncio.get_running_loop()
+        worker = partial(self._evaluate_particle_chunk, **kwargs)
+        particle_chunks = [
+            proposed_particles[i : i + chunksize]
+            for i in range(0, len(proposed_particles), chunksize)
+        ]
+        chunk_results = await asyncio.gather(
+            *[
+                loop.run_in_executor(executor, worker, particle_chunk)
+                for particle_chunk in particle_chunks
+            ]
+        )
+        return [
+            err
+            for chunk_result in chunk_results
+            for err in chunk_result
+        ]
+
+    def _evaluate_particle_batch(
+        self,
+        proposed_particles: list[Particle],
+        executor: ThreadPoolExecutor | None,
+        chunksize: int,
+        **kwargs: Any,
+    ) -> list[float]:
+        """
+        Evaluate a batch of proposed particles either serially or with async/threaded execution.
+        """
+        if executor is None or len(proposed_particles) <= chunksize:
+            return self._evaluate_particle_chunk(proposed_particles, **kwargs)
+
+        return self._run_coroutine(
+            lambda: self._evaluate_particle_batch_async(
+                proposed_particles=proposed_particles,
+                executor=executor,
+                chunksize=chunksize,
+                **kwargs,
+            )
+        )
+
+    def _accept_particle_batch(
+        self,
+        generation: int,
+        proposed_population: ParticlePopulation,
+        proposed_particles: list[Particle],
+        errs: list[float],
+    ) -> None:
+        """
+        Accept a batch of evaluated particles into the proposed population.
+        """
+        for err, proposed_particle in zip(errs, proposed_particles):
+            if (
+                err < self.tolerance_values[generation]
+                and proposed_population.size < self.generation_particle_count
+            ):
+                particle_weight = (
+                    1.0
+                    if generation == 0
+                    else self.calculate_weight(proposed_particle)
+                )
+                proposed_population.add_particle(
+                    proposed_particle, particle_weight
+                )
+
+    def _run_generation_parallel_batches(
+        self,
+        generation: int,
+        batchsize: int,
+        warmup: bool,
+        chunksize: int,
+        executor: ThreadPoolExecutor | None,
+        **kwargs: Any,
+    ) -> tuple[ParticlePopulation, int]:
+        """
+        Run one generation of the batched parallel sampler.
+        """
+        if self.verbose:
+            print(
+                f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
+            )
+
+        proposed_population = ParticlePopulation()
+        attempts = 0
+
+        while proposed_population.size < self.generation_particle_count:
+            sample_size = self._get_batch_sample_size(
+                proposed_population=proposed_population,
+                attempts=attempts,
+                batchsize=batchsize,
+                warmup=warmup,
+            )
+            proposed_particles = self._sample_generation_particles(
+                generation=generation, sample_size=sample_size
+            )
+            if self.verbose and attempts > 0:
+                print(
+                    f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
+                    end="\r",
+                )
+            errs = self._evaluate_particle_batch(
+                proposed_particles=proposed_particles,
+                executor=executor,
+                chunksize=chunksize,
+                **kwargs,
+            )
+            self._accept_particle_batch(
+                generation=generation,
+                proposed_population=proposed_population,
+                proposed_particles=proposed_particles,
+                errs=errs,
+            )
+            attempts += len(proposed_particles)
+
+        return proposed_population, attempts
+
     def run_parallel_batches(
         self,
         chunksize: int = 1,
@@ -625,7 +976,7 @@ class ABCSampler:
         **kwargs: Any,
     ) -> CalibrationResults:
         """
-        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using a LocalParallelExecutor.
+        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using async orchestration over a thread pool.
 
         This method performs the SMC algorithm to generate a population of particles
         that approximate the posterior distribution of the model parameters. The process
@@ -635,8 +986,8 @@ class ABCSampler:
 
         Args:
             chunksize (int): The approximate number of parameter sets to process in serial for each task when evaluating in parallel. Defaults to 1.
-            batchsize (int | None): The number of proposed particles to generate in each batch when evaluating in parallel. If None, it defaults to the generation_particle_count. This controls how many particles are proposed at once and submitted to the process pool.
-            max_workers (int | None): The maximum number of worker processes to use when running in parallel. If None, it defaults to the number of CPU cores available.
+            batchsize (int | None): The number of proposed particles to generate in each batch when evaluating in parallel. If None, it defaults to the generation_particle_count. This controls how many particles are proposed at once and submitted to the executor.
+            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -644,101 +995,39 @@ class ABCSampler:
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
         Raises:
-            ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class
+            ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class, or if batchsize/chunksize/max_workers are not positive
         """
-        for k in kwargs.keys():
-            if k in self.__class__.__dict__:
-                raise ValueError(
-                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
-                )
-
-        actual_workers = (
-            min(max_workers, (max(mp.cpu_count(), 1)))
-            if max_workers
-            else (mp.cpu_count() or 1)
+        self._validate_run_kwargs(kwargs)
+        actual_workers = self._resolve_worker_count(max_workers)
+        resolved_batchsize, warmup = self._resolve_parallel_batch_settings(
+            batchsize=batchsize, chunksize=chunksize
         )
-        if not batchsize:
-            batchsize = self.generation_particle_count
-            warmup = True
-        else:
-            warmup = False
-
         originator_perturbation_kernel = copy.deepcopy(
             self.perturbation_kernel
         )
+        executor = (
+            ThreadPoolExecutor(max_workers=actual_workers)
+            if actual_workers > 1
+            else None
+        )
 
-        if mp.current_process().name == "MainProcess":
-            with ProcessPoolExecutor(max_workers=actual_workers) as executor:
-                for generation in range(len(self.tolerance_values)):
-                    if self.verbose:
-                        print(
-                            f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
-                        )
-
-                    proposed_population = ParticlePopulation()
-
-                    # Rejection sampling algorithm
-                    attempts = 0
-                    while (
-                        proposed_population.size
-                        < self.generation_particle_count
-                    ):
-                        if proposed_population.size > 0:
-                            if warmup:
-                                batchsize = 10_000
-                            sample_size = int(
-                                min(
-                                    batchsize,
-                                    (
-                                        self.generation_particle_count
-                                        - proposed_population.size
-                                    )
-                                    * attempts
-                                    / proposed_population.size,
-                                )
-                            )
-                        else:
-                            sample_size = batchsize
-                        if generation == 0:
-                            proposed_particles = [
-                                self.sample_particle_from_priors()
-                                for _ in range(sample_size)
-                            ]
-                        else:
-                            proposed_particles = [
-                                self.sample_and_perturb_particle()
-                                for _ in range(sample_size)
-                            ]
-                        if self.verbose and attempts > 0:
-                            print(
-                                f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
-                                end="\r",
-                            )
-                        errs = executor.map(
-                            partial(self.particle_to_distance, **kwargs),
-                            proposed_particles,
-                            chunksize=chunksize,
-                        )
-                        for err, proposed_particle in zip(
-                            errs, proposed_particles
-                        ):
-                            if (
-                                err < self.tolerance_values[generation]
-                                and proposed_population.size
-                                < self.generation_particle_count
-                            ):
-                                if generation == 0:
-                                    particle_weight = 1.0
-                                else:
-                                    particle_weight = self.calculate_weight(
-                                        proposed_particle
-                                    )
-                                proposed_population.add_particle(
-                                    proposed_particle, particle_weight
-                                )
-                        attempts += len(proposed_particles)
-                    self.step_successes[generation] = proposed_population.size
-                    self.step_attempts[generation] = attempts
-                    self.particle_population = proposed_population
+        try:
+            for generation in range(len(self.tolerance_values)):
+                proposed_population, attempts = (
+                    self._run_generation_parallel_batches(
+                        generation=generation,
+                        batchsize=resolved_batchsize,
+                        warmup=warmup,
+                        chunksize=chunksize,
+                        executor=executor,
+                        **kwargs,
+                    )
+                )
+                self.step_successes[generation] = proposed_population.size
+                self.step_attempts[generation] = attempts
+                self.particle_population = proposed_population
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True)
 
         return self.get_results_and_reset(originator_perturbation_kernel)
