@@ -250,7 +250,7 @@ class ABCSampler:
                 err = self.outputs_to_distance(outputs, self.target_data)
 
                 # Add the particle to the population if accepted
-                if err < self.tolerance_values[generation]:
+                if err <= self.tolerance_values[generation]:
                     if generation == 0:
                         particle_weight = 1.0
                     else:
