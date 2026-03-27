@@ -202,12 +202,16 @@ def test_sampler_run_parallel_batches_repeatable(sampler):
         max_workers=2, chunksize=2, batchsize=4
     )
     results2 = sampler.run_parallel_batches(
-        max_workers=2, chunksize=2, batchsize=4
+        max_workers=1, chunksize=1, batchsize=4
     )
 
     assert results1.point_estimates == results2.point_estimates
     assert results1.ess == results2.ess
     assert results1.acceptance_rates == results2.acceptance_rates
+    assert (
+        results1.posterior.particle_population.particles
+        == results2.posterior.particle_population.particles
+    )
 
 
 def test_sampler_run_parallel_batches_with_unpickleable_runner(K, P, Vnorm):

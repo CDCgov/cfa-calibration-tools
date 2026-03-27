@@ -482,13 +482,13 @@ class ABCSampler:
             return self.sample_particle_from_priors
         return self.sample_and_perturb_particle
 
-    def _init_generation(
+    def _init_particlewise_generation(
         self, generation: int
     ) -> tuple[
         ParticlePopulation, list[dict[str, Any]], Callable[..., Particle]
     ]:
         """
-        Create per-generation state used by the sampling loop.
+        Create particlewise per-generation state used by the sampling loop.
         """
         proposed_population = ParticlePopulation()
         generator_list = [
@@ -724,7 +724,7 @@ class ABCSampler:
                     proposed_population,
                     generator_list,
                     sample_method,
-                ) = self._init_generation(generation)
+                ) = self._init_particlewise_generation(generation)
                 accepted_list, processing_time, total_time = (
                     self._collect_accepted_particles(
                         generation=generation,
@@ -923,49 +923,93 @@ class ABCSampler:
         warmup: bool,
         chunksize: int,
         executor: ThreadPoolExecutor | None,
+        console: Any,
+        overall_start_time: float,
+        generation_start_time: float,
         **kwargs: Any,
-    ) -> tuple[ParticlePopulation, int]:
+    ) -> tuple[ParticlePopulation, int, float, float]:
         """
         Run one generation of the batched parallel sampler.
         """
-        if self.verbose:
-            print(
-                f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
-            )
-
         proposed_population = ParticlePopulation()
         attempts = 0
 
-        while proposed_population.size < self.generation_particle_count:
-            sample_size = self._get_batch_sample_size(
-                proposed_population=proposed_population,
-                attempts=attempts,
-                batchsize=batchsize,
-                warmup=warmup,
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("•"),
+            TextColumn("acceptance: {task.fields[acceptance]}"),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TextColumn("ETA: {task.fields[eta]}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress_task_id = progress.add_task(
+                f"Generation {generation + 1} (tolerance {self.tolerance_values[generation]})...",
+                total=self.generation_particle_count,
+                acceptance="N/A",
+                eta="calculating...",
             )
-            proposed_particles = self._sample_generation_particles(
-                generation=generation, sample_size=sample_size
-            )
-            if self.verbose and attempts > 0:
-                print(
-                    f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
-                    end="\r",
-                )
-            errs = self._evaluate_particle_batch(
-                proposed_particles=proposed_particles,
-                executor=executor,
-                chunksize=chunksize,
-                **kwargs,
-            )
-            self._accept_particle_batch(
-                generation=generation,
-                proposed_population=proposed_population,
-                proposed_particles=proposed_particles,
-                errs=errs,
-            )
-            attempts += len(proposed_particles)
 
-        return proposed_population, attempts
+            while proposed_population.size < self.generation_particle_count:
+                sample_size = self._get_batch_sample_size(
+                    proposed_population=proposed_population,
+                    attempts=attempts,
+                    batchsize=batchsize,
+                    warmup=warmup,
+                )
+                proposed_particles = self._sample_generation_particles(
+                    generation=generation, sample_size=sample_size
+                )
+                errs = self._evaluate_particle_batch(
+                    proposed_particles=proposed_particles,
+                    executor=executor,
+                    chunksize=chunksize,
+                    **kwargs,
+                )
+                self._accept_particle_batch(
+                    generation=generation,
+                    proposed_population=proposed_population,
+                    proposed_particles=proposed_particles,
+                    errs=errs,
+                )
+                attempts += len(proposed_particles)
+
+                elapsed = time.time() - generation_start_time
+                completed = proposed_population.size
+                eta = (
+                    elapsed
+                    * (self.generation_particle_count - completed)
+                    / (completed or 1)
+                    if elapsed > 0 and completed > 0
+                    else 0.0
+                )
+                acceptance_rate = (
+                    100.0 * completed / attempts if attempts > 0 else 0.0
+                )
+                progress.update(
+                    progress_task_id,
+                    completed=completed,
+                    acceptance=f"{acceptance_rate:.1f}%",
+                    eta=formatting._format_time(eta),
+                )
+
+            processing_time = time.time() - generation_start_time
+            total_time = time.time() - overall_start_time
+            acceptance_rate = (
+                100.0 * proposed_population.size / attempts
+                if attempts > 0
+                else 0.0
+            )
+            console.print(
+                f"[green]✓[/green] Generation {generation + 1} run complete! "
+                f"Tolerance: {self.tolerance_values[generation]}, acceptance rate: {acceptance_rate:.1f}% of {attempts} attempts"
+            )
+
+        return proposed_population, attempts, processing_time, total_time
 
     def run_parallel_batches(
         self,
@@ -1002,6 +1046,8 @@ class ABCSampler:
         originator_perturbation_kernel = copy.deepcopy(
             self.perturbation_kernel
         )
+        console = formatting.get_console()
+        overall_start_time = time.time()
         executor = (
             ThreadPoolExecutor(max_workers=actual_workers)
             if actual_workers > 1
@@ -1010,21 +1056,32 @@ class ABCSampler:
 
         try:
             for generation in range(len(self.tolerance_values)):
-                proposed_population, attempts = (
+                generation_start_time = time.time()
+                proposed_population, attempts, processing_time, total_time = (
                     self._run_generation_parallel_batches(
                         generation=generation,
                         batchsize=resolved_batchsize,
                         warmup=warmup,
                         chunksize=chunksize,
                         executor=executor,
+                        console=console,
+                        overall_start_time=overall_start_time,
+                        generation_start_time=generation_start_time,
                         **kwargs,
                     )
                 )
                 self.step_successes[generation] = proposed_population.size
                 self.step_attempts[generation] = attempts
                 self.particle_population = proposed_population
+                console.print(
+                    f"(Run: {formatting._format_time(processing_time)}, total time: {formatting._format_time(total_time)})"
+                )
         finally:
             if executor is not None:
                 executor.shutdown(wait=True)
 
+        console.print(
+            f"[green]✓[/green] Calibration complete! "
+            f"(total time: {formatting._format_time(total_time)})"
+        )
         return self.get_results_and_reset(originator_perturbation_kernel)
