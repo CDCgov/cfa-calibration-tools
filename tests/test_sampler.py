@@ -6,6 +6,7 @@ import pytest
 
 import calibrationtools.sampler as sampler_module
 from calibrationtools.calibration_results import CalibrationResults
+from calibrationtools.particle import Particle
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
     NormalKernel,
@@ -65,37 +66,59 @@ def sampler(K, P, Vnorm) -> ABCSampler:
     )
 
 
-def test_abc_sampler_run(K, sampler: ABCSampler):
+@pytest.fixture()
+def sampler_with_archive(K, P, Vnorm) -> ABCSampler:
+    return ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5, 0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        seed=123,
+        keep_previous_population_data=True,
+    )
+
+
+def test_abc_sampler_run(K, sampler_with_archive: ABCSampler):
     original_std_dev = K.kernels[0].std_dev
-    results = sampler.run_serial()
+    results = sampler_with_archive.run_serial()
     assert isinstance(results, CalibrationResults)
     posterior_particles = results.posterior.particle_population
 
     # Assert success condition after run
     assert all(
         [
-            count == sampler.generation_particle_count
+            count == sampler_with_archive.generation_particle_count
             for count in results.smc_step_successes
         ]
     )
 
     # Assess population handling and updating
     assert (
-        len(results.population_archive) == len(sampler.tolerance_values)
-    ) - 1
+        len(results.population_archive)
+        == len(sampler_with_archive.tolerance_values) - 1
+    )
     for pop in results.population_archive.values():
-        assert len(pop.particles) == sampler.generation_particle_count
+        assert (
+            len(pop.particles)
+            == sampler_with_archive.generation_particle_count
+        )
         assert pop.total_weight == pytest.approx(1.0)
         assert all(
             p not in posterior_particles.particles for p in pop.particles
         )
 
     assert (
-        len(posterior_particles.particles) == sampler.generation_particle_count
+        len(posterior_particles.particles)
+        == sampler_with_archive.generation_particle_count
     )
 
     # Test that the perturbation kernel has been updated by adapter Vnorm
-    reset_perturbation = sampler._updater.perturbation_kernel
+    reset_perturbation = sampler_with_archive._updater.perturbation_kernel
     assert isinstance(reset_perturbation, IndependentKernels)
     reset_perturbation_kernels = reset_perturbation.kernels
 
@@ -112,6 +135,14 @@ def test_abc_sampler_run(K, sampler: ABCSampler):
     assert isinstance(posterior_perturbation_kernels[1], SeedKernel)
 
 
+def test_sampler_run_does_not_archive_previous_population_by_default(
+    sampler: ABCSampler,
+):
+    results = sampler.run_serial()
+
+    assert results.population_archive == {}
+
+
 def test_sampler_run_repeatable(sampler):
     # Sampler produces same results when seed is set
     results1 = sampler.run_serial()
@@ -120,6 +151,43 @@ def test_sampler_run_repeatable(sampler):
     assert results1.point_estimates == results2.point_estimates
     assert results1.ess == results2.ess
     assert results1.acceptance_rates == results2.acceptance_rates
+
+
+def test_sampler_particle_to_distance_delegates_to_evaluator(sampler):
+    class RecordingEvaluator:
+        def __init__(self):
+            self.calls = []
+
+        def distance(self, particle, **kwargs):
+            self.calls.append((particle, kwargs))
+            return 1.23
+
+    recording_evaluator = RecordingEvaluator()
+    sampler._particle_evaluator = recording_evaluator
+    particle = Particle({"p": 0.1, "seed": 0})
+
+    distance = sampler.particle_to_distance(particle, scale=2.0)
+
+    assert distance == 1.23
+    assert recording_evaluator.calls == [(particle, {"scale": 2.0})]
+
+
+def test_sampler_run_resets_internal_run_state(sampler_with_archive):
+    results1 = sampler_with_archive.run_serial()
+    results2 = sampler_with_archive.run_serial()
+
+    expected_archive_size = len(sampler_with_archive.tolerance_values) - 1
+
+    assert sampler_with_archive.step_successes == [0] * len(
+        sampler_with_archive.tolerance_values
+    )
+    assert sampler_with_archive.step_attempts == [0] * len(
+        sampler_with_archive.tolerance_values
+    )
+    assert sampler_with_archive.generator_history == {}
+    assert sampler_with_archive.population_archive == {}
+    assert len(results1.population_archive) == expected_archive_size
+    assert len(results2.population_archive) == expected_archive_size
 
 
 def test_sample_from_priors(sampler):
@@ -167,14 +235,14 @@ def test_sampler_run_parallel_equal(sampler: ABCSampler):
         for gen_serial, gen_parallel in zip(
             generator_list, parallel_generator_list
         ):
-            assert gen_serial["id"] == gen_parallel["id"]
+            assert gen_serial.id == gen_parallel.id
             assert (
-                gen_serial["seed_sequence"].entropy
-                == gen_parallel["seed_sequence"].entropy
+                gen_serial.seed_sequence.entropy
+                == gen_parallel.seed_sequence.entropy
             )
             assert (
-                gen_serial["seed_sequence"].spawn_key
-                == gen_parallel["seed_sequence"].spawn_key
+                gen_serial.seed_sequence.spawn_key
+                == gen_parallel.seed_sequence.spawn_key
             )
 
 
@@ -293,3 +361,24 @@ def test_sampler_parallel_worker_failure_does_not_leak_future_errors(
 
     captured = capfd.readouterr()
     assert "Future exception was never retrieved" not in captured.err
+
+
+def test_sampler_verbose_false_suppresses_output(K, P, Vnorm, capfd):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        seed=123,
+        verbose=False,
+    )
+
+    sampler.run_serial()
+
+    captured = capfd.readouterr()
+    assert captured.out == ""
