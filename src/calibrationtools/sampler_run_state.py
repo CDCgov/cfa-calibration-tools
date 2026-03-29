@@ -19,9 +19,6 @@ class SamplerRunState:
         generation_count (int): Number of configured generations in the run.
         keep_previous_population_data (bool): Whether previous populations
             should be archived between generations.
-
-    Returns:
-        None
     """
 
     def __init__(
@@ -29,21 +26,6 @@ class SamplerRunState:
         generation_count: int,
         keep_previous_population_data: bool,
     ) -> None:
-        """Initialize per-run bookkeeping for the sampler.
-
-        This constructor stores the generation count and archive behavior, then
-        creates the initial empty run state.
-
-        Args:
-            generation_count (int): Number of configured generations in the
-                run.
-            keep_previous_population_data (bool): Whether previous populations
-                should be archived between generations.
-
-        Returns:
-            None
-        """
-
         self.generation_count = generation_count
         self.keep_previous_population_data = keep_previous_population_data
         self.reset()
@@ -55,11 +37,6 @@ class SamplerRunState:
         fresh execution without leaking counters or archived populations from a
         previous run.
 
-        Args:
-            None.
-
-        Returns:
-            None
         """
 
         self.step_successes = [0] * self.generation_count
@@ -82,8 +59,6 @@ class SamplerRunState:
             generator_slots (list[GeneratorSlot]): Generator slots used for the
                 generation.
 
-        Returns:
-            None
         """
 
         self.generator_history[generation] = list(generator_slots)
@@ -106,8 +81,6 @@ class SamplerRunState:
             successes (int): Total accepted particles produced by the
                 generation.
 
-        Returns:
-            None
         """
 
         self.step_attempts[generation] = attempts
@@ -126,8 +99,6 @@ class SamplerRunState:
             previous_population (ParticlePopulation): Population currently
                 stored on the sampler before replacement.
 
-        Returns:
-            None
         """
 
         if (

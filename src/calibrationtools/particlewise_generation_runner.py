@@ -31,7 +31,7 @@ class ParticlewiseGenerationConfig:
     execution methods can depend on named fields instead of long parameter
     lists.
 
-    Args:
+    Attributes:
         generation_particle_count (int): Number of accepted particles required
             to complete a generation.
         tolerance_values (list[float]): Acceptance tolerance for each
@@ -52,9 +52,6 @@ class ParticlewiseGenerationConfig:
             Callback that stores the finalized population on the sampler.
         reporter (SamplerReporter): Reporter used for progress and summary
             output.
-
-    Returns:
-        None
     """
 
     generation_particle_count: int
@@ -77,7 +74,7 @@ class ParticlewiseGenerationRequest:
     across sampler iterations, including executor access, timing markers, and
     keyword arguments forwarded into particle evaluation.
 
-    Args:
+    Attributes:
         generation (int): Zero-based generation index to execute.
         n_workers (int): Number of workers available to the generation.
         parallel_executor (ThreadPoolExecutor | None): Executor used for
@@ -88,9 +85,6 @@ class ParticlewiseGenerationRequest:
             generation.
         particle_kwargs (dict[str, Any]): Keyword arguments forwarded into
             particle evaluation.
-
-    Returns:
-        None
     """
 
     generation: int
@@ -109,16 +103,13 @@ class ParticlewiseGenerationState:
     and generation-specific sample method so helper methods can share that data
     without long positional argument lists.
 
-    Args:
+    Attributes:
         proposed_population (ParticlePopulation): Population being filled for
             the active generation.
         generator_slots (list[GeneratorSlot]): Proposal slots used to preserve
             deterministic ordering across execution modes.
         sample_method (Callable[[SeedSequence | None], Particle]): Proposal
             function for the active generation.
-
-    Returns:
-        None
     """
 
     proposed_population: ParticlePopulation
@@ -139,9 +130,6 @@ class ParticlewiseGenerationRunner:
             used across particlewise generations.
         run_state (SamplerRunState): Mutable bookkeeping for the active sampler
             run.
-
-    Returns:
-        None
     """
 
     def __init__(
@@ -149,22 +137,6 @@ class ParticlewiseGenerationRunner:
         config: ParticlewiseGenerationConfig,
         run_state: SamplerRunState,
     ) -> None:
-        """Store the collaborators needed to execute particlewise generations.
-
-        This constructor keeps the runner lightweight by receiving a grouped
-        configuration object for stable dependencies and a separate run-state
-        object for per-run bookkeeping.
-
-        Args:
-            config (ParticlewiseGenerationConfig): Static settings and callbacks
-                for particlewise generation execution.
-            run_state (SamplerRunState): Mutable bookkeeping for the active
-                sampler run.
-
-        Returns:
-            None: This constructor does not return a value.
-        """
-
         self.config = config
         self.run_state = run_state
 
@@ -371,6 +343,10 @@ class ParticlewiseGenerationRunner:
         Returns:
             tuple[list[AcceptedProposal], int]: Accepted proposals for the
                 generation and the total number of attempts consumed.
+
+        Raises:
+            BaseException: Re-raises any exception raised while collecting
+                proposals after cancelling the outstanding tasks.
         """
 
         assert request.parallel_executor is not None
@@ -569,6 +545,10 @@ class ParticlewiseGenerationRunner:
 
         Returns:
             None: This helper does not return a value.
+
+        Raises:
+            UserWarning: Raised when a proposal slot exhausts all attempts
+                without producing an accepted particle.
         """
 
         with self.config.reporter.create_weight_progress() as progress:

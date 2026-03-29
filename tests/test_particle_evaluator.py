@@ -26,7 +26,9 @@ def test_particle_evaluator_distance():
 
 def test_particle_evaluator_distance_passes_kwargs():
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle, scale: {"p": particle["p"] * scale},
+        particles_to_params=lambda particle, scale: {
+            "p": particle["p"] * scale
+        },
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),

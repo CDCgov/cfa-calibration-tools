@@ -1,5 +1,5 @@
-from io import StringIO
 import time
+from io import StringIO
 
 from numpy.random import SeedSequence
 from rich.console import Console

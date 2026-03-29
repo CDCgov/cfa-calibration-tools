@@ -45,7 +45,7 @@ class ABCSampler:
         generation_particle_count (int): Number of particles to accept per generation for a complete population.
         tolerance_values (list[float]): List of tolerance values for each generation for evaluating acceptance criterion.
         priors (PriorDistribution | dict | Path): Prior distribution of the parameters being calibrated. Can be provided as a PriorDistribution object, a dictionary, or a path to a JSON file containing a valid priors schema.
-        particles_to_params (Callable[[Particle], dict]): Function to map particles to model parameters.
+        particles_to_params (Callable[..., dict]): Function to map particles to model parameters.
         outputs_to_distance (Callable[..., float]): Function to compute distance between model outputs and target data.
         target_data (Any): Observed data to compare against.
         model_runner (MRPModel): Model runner to simulate outputs given parameters.
@@ -92,7 +92,7 @@ class ABCSampler:
         generation_particle_count: int,
         tolerance_values: list[float],
         priors: PriorDistribution | dict | Path,
-        particles_to_params: Callable[[Particle], dict],
+        particles_to_params: Callable[..., dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: MRPModel,

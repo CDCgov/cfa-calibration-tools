@@ -20,42 +20,21 @@ class ParticleEvaluator:
     boundary.
 
     Args:
-        particles_to_params (Callable[[Particle], dict]): Function mapping a
+        particles_to_params (Callable[..., dict]): Function mapping a
             particle to model parameters.
         outputs_to_distance (Callable[..., float]): Function scoring simulated
             outputs against target data.
         target_data (Any): Observed data used for distance evaluation.
         model_runner (MRPModel): Model runner used to simulate outputs.
-
-    Returns:
-        None
     """
 
     def __init__(
         self,
-        particles_to_params: Callable[[Particle], dict],
+        particles_to_params: Callable[..., dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: MRPModel,
     ) -> None:
-        """Store the collaborators needed to score one proposed particle.
-
-        This constructor keeps the particle-evaluation boundary explicit by
-        grouping the user-supplied mapping function, scoring function, target
-        data, and model runner in one object.
-
-        Args:
-            particles_to_params (Callable[[Particle], dict]): Function mapping
-                a particle to model parameters.
-            outputs_to_distance (Callable[..., float]): Function scoring
-                simulated outputs against target data.
-            target_data (Any): Observed data used for distance evaluation.
-            model_runner (MRPModel): Model runner used to simulate outputs.
-
-        Returns:
-            None
-        """
-
         self.particles_to_params = particles_to_params
         self.outputs_to_distance = outputs_to_distance
         self.target_data = target_data

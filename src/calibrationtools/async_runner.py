@@ -7,7 +7,7 @@ normal scripts and already-running event loops.
 
 import asyncio
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 
 def run_coroutine_from_sync(coroutine_factory: Callable[[], Any]) -> Any:
@@ -39,9 +39,12 @@ def run_coroutine_from_sync(coroutine_factory: Callable[[], Any]) -> Any:
         except BaseException as exc:  # pragma: no cover - passthrough
             error["value"] = exc
 
+    def raise_worker_error(exc: BaseException) -> NoReturn:
+        raise exc
+
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
     thread.join()
     if "value" in error:
-        raise error["value"]
+        raise_worker_error(error["value"])
     return result["value"]

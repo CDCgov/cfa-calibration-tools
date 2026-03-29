@@ -20,12 +20,9 @@ class GeneratorSlot:
     This carrier keeps the slot identifier and spawned seed sequence together
     so proposal ordering remains explicit across serial and parallel execution.
 
-    Args:
+    Attributes:
         id (int): Stable proposal-slot identifier within the generation.
         seed_sequence (SeedSequence): Seed sequence used for the slot.
-
-    Returns:
-        None
     """
 
     id: int
@@ -39,14 +36,11 @@ class AcceptedProposal:
     This carrier keeps the accepted particle, or an exhausted-attempt marker,
     together with the slot identifier and attempt count used to produce it.
 
-    Args:
+    Attributes:
         slot_id (int): Proposal-slot identifier within the generation.
         particle (Particle | None): Accepted particle for the slot, or `None`
             when attempts were exhausted.
         attempts (int): Proposal attempts consumed for the slot.
-
-    Returns:
-        None
     """
 
     slot_id: int
@@ -61,15 +55,12 @@ class GenerationStats:
     This carrier provides a named summary object for generation-level metrics
     that are shared across the particlewise and batched execution paths.
 
-    Args:
+    Attributes:
         attempts (int): Total proposal attempts consumed by the generation.
         successes (int): Total accepted particles produced by the generation.
         processing_time (float): Seconds spent in the generation processing
             phase.
         total_time (float): Seconds elapsed since the full sampler run began.
-
-    Returns:
-        None
     """
 
     attempts: int
@@ -86,7 +77,7 @@ class BatchGenerationRequest:
     helper methods can depend on a single named object instead of long
     positional argument lists.
 
-    Args:
+    Attributes:
         generation (int): Zero-based generation index being executed.
         batchsize (int): Target batch size for proposal generation.
         warmup (bool): Whether warmup sizing should be used for adaptive
@@ -100,9 +91,6 @@ class BatchGenerationRequest:
             generation.
         particle_kwargs (dict[str, Any]): Keyword arguments forwarded into
             particle evaluation.
-
-    Returns:
-        None
     """
 
     generation: int

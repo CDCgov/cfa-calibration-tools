@@ -5,7 +5,6 @@ the execution runners can focus on sampling logic instead of Rich wiring.
 """
 
 from dataclasses import dataclass
-from typing import Iterator
 
 from rich.console import Console
 from rich.progress import (
@@ -27,12 +26,9 @@ class ProgressHandle:
     This carrier keeps the `Progress` instance and the active task id together
     so runners can update progress through a single object.
 
-    Args:
+    Attributes:
         progress (Progress): Active Rich progress instance.
         task_id (TaskID): Task identifier within that progress instance.
-
-    Returns:
-        None
     """
 
     progress: Progress
@@ -48,9 +44,6 @@ class SamplerReporter:
     Args:
         verbose (bool): Whether progress and summary output should be visible.
         console (Console | None): Optional console override used for tests.
-
-    Returns:
-        None
     """
 
     def __init__(
@@ -58,20 +51,6 @@ class SamplerReporter:
         verbose: bool,
         console: Console | None = None,
     ) -> None:
-        """Store the console used for progress and summary output.
-
-        This constructor uses a hidden console when `verbose` is false so the
-        sampler can suppress all Rich output without changing execution flow.
-
-        Args:
-            verbose (bool): Whether progress and summary output should be
-                visible.
-            console (Console | None): Optional console override used for tests.
-
-        Returns:
-            None: This constructor does not return a value.
-        """
-
         self.console = (
             console if console is not None else formatting.get_console(verbose)
         )

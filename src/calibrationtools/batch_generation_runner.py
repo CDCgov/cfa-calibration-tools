@@ -7,7 +7,6 @@ out of `ABCSampler`.
 
 import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
@@ -28,7 +27,7 @@ class BatchGenerationConfig:
     stable across batched generations so the runner constructor stays small
     and execution methods operate on named fields.
 
-    Args:
+    Attributes:
         generation_particle_count (int): Number of accepted particles required
             to complete a generation.
         tolerance_values (list[float]): Acceptance tolerance for each
@@ -45,9 +44,6 @@ class BatchGenerationConfig:
             Callback that stores the finalized population on the sampler.
         reporter (SamplerReporter): Reporter used for progress and summary
             output.
-
-    Returns:
-        None
     """
 
     generation_particle_count: int
@@ -68,13 +64,10 @@ class BatchGenerationState:
     helper methods can share batch-generation state without long parameter
     lists.
 
-    Args:
+    Attributes:
         proposed_population (ParticlePopulation): Population being filled for
             the active generation.
         attempts (int): Total proposal attempts consumed so far.
-
-    Returns:
-        None
     """
 
     proposed_population: ParticlePopulation
@@ -93,9 +86,6 @@ class BatchGenerationRunner:
             across batched generations.
         run_state (SamplerRunState): Mutable bookkeeping for the active sampler
             run.
-
-    Returns:
-        None
     """
 
     def __init__(
@@ -103,22 +93,6 @@ class BatchGenerationRunner:
         config: BatchGenerationConfig,
         run_state: SamplerRunState,
     ) -> None:
-        """Store the collaborators needed to execute batched generations.
-
-        This constructor keeps the runner lightweight by receiving a grouped
-        configuration object for stable dependencies and a separate run-state
-        object for per-run bookkeeping.
-
-        Args:
-            config (BatchGenerationConfig): Static settings and callbacks for
-                batched generation execution.
-            run_state (SamplerRunState): Mutable bookkeeping for the active
-                sampler run.
-
-        Returns:
-            None: This constructor does not return a value.
-        """
-
         self.config = config
         self.run_state = run_state
 
@@ -155,7 +129,9 @@ class BatchGenerationRunner:
             raise ValueError("batchsize must be positive")
         return batchsize, False
 
-    def run_generation(self, request: BatchGenerationRequest) -> GenerationStats:
+    def run_generation(
+        self, request: BatchGenerationRequest
+    ) -> GenerationStats:
         """Execute one batched generation and store its final population.
 
         This method coordinates adaptive proposal sizing, batch evaluation,
@@ -466,7 +442,10 @@ class BatchGenerationRunner:
 
         considered = 0
         for err, proposed_particle in zip(errs, proposed_particles):
-            if proposed_population.size >= self.config.generation_particle_count:
+            if (
+                proposed_population.size
+                >= self.config.generation_particle_count
+            ):
                 break
 
             considered += 1
