@@ -1,8 +1,25 @@
-from rich.console import Console
-from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+from io import StringIO
 
-def get_console() -> Console:
-    return Console(force_terminal=True)
+from rich.console import Console
+
+
+def get_console(verbose: bool = True) -> Console:
+    """Return the console used for sampler reporting.
+
+    This helper creates a visible Rich console for normal runs and a hidden
+    in-memory console when sampler output should be suppressed.
+
+    Args:
+        verbose (bool): Whether console output should be visible.
+
+    Returns:
+        Console: Rich console configured for the requested verbosity.
+    """
+
+    if verbose:
+        return Console(force_terminal=True)
+    return Console(file=StringIO(), force_terminal=False)
+
 
 def _format_time(seconds: float) -> str:
     """Format time duration in human-readable units.

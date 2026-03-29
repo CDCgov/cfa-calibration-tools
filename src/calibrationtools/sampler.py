@@ -1,24 +1,36 @@
 import copy
-import multiprocessing as mp
-import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
-from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Literal, Sequence
 
 import numpy as np
 from mrp import MRPModel
 from numpy.random import SeedSequence
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-from . import formatting
+from .batch_generation_runner import (
+    BatchGenerationConfig,
+    BatchGenerationRunner,
+)
 from .calibration_results import CalibrationResults
 from .particle import Particle
+from .particle_evaluator import ParticleEvaluator
 from .particle_population import ParticlePopulation
 from .particle_updater import _ParticleUpdater
+from .particlewise_generation_runner import (
+    ParticlewiseGenerationConfig,
+    ParticlewiseGenerationRequest,
+    ParticlewiseGenerationRunner,
+)
 from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
+from .sampler_reporting import SamplerReporter
+from .sampler_run_state import SamplerRunState
+from .sampler_types import (
+    AcceptedProposal,
+    BatchGenerationRequest,
+    GeneratorSlot,
+)
 from .variance_adapter import VarianceAdapter
 
 
@@ -40,15 +52,20 @@ class ABCSampler:
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
+        parallel_worker_count (int): Default number of workers to use for sampler parallel execution when `max_workers` is not supplied.
         seed (int | None): Random seed for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
-        drop_previous_population_data (bool): Whether to drop previous population data when storing the accepted particles between SMC steps.
+        keep_previous_population_data (bool): Whether to retain previous
+            population data in the per-run archive when storing accepted
+            particles between SMC steps.
         seed_parameter_name (str | None): The name of the seed parameter to include in the priors if `incl_seed_parameter` is True when loading priors from a dictionary or JSON file.
+
+    Raises:
+        ValueError: If `parallel_worker_count` is not positive.
 
     Methods:
         particle_population:
-            Getter and setter for the current particle population. Automatically archives
-            the previous population if `drop_previous_population_data` is False.
+            Getter and setter for the current particle population.
 
         run(**kwargs: Any):
             Executes the ABC-SMC algorithm. Raises an error if any keyword argument conflicts
@@ -82,22 +99,31 @@ class ABCSampler:
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
+        parallel_worker_count: int = 10,
         seed: int | None = None,
         verbose: bool = True,
-        drop_previous_population_data: bool = False,
+        keep_previous_population_data: bool = False,
         seed_parameter_name: str | None = "seed",
     ):
+        if parallel_worker_count <= 0:
+            raise ValueError("parallel_worker_count must be positive")
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
+        self.parallel_worker_count = parallel_worker_count
         self.tolerance_values = tolerance_values
         self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
         self.outputs_to_distance = outputs_to_distance
         self.target_data = target_data
         self.model_runner = model_runner
+        self._particle_evaluator = ParticleEvaluator(
+            particles_to_params=particles_to_params,
+            outputs_to_distance=outputs_to_distance,
+            target_data=target_data,
+            model_runner=model_runner,
+        )
         self.seed = seed
-        self.drop_previous_population_data = drop_previous_population_data
-        self.population_archive: dict[int, ParticlePopulation] = {}
+        self.keep_previous_population_data = keep_previous_population_data
         self.verbose = verbose
 
         if isinstance(priors, PriorDistribution):
@@ -116,53 +142,116 @@ class ABCSampler:
             self._priors = load_priors_from_json(priors)
 
         self.init_updater(perturbation_kernel)
-        self.step_successes = [0] * len(self.tolerance_values)
-        self.step_attempts = [0] * len(self.tolerance_values)
-        self.generator_history = {}
+        self._run_state = SamplerRunState(
+            generation_count=len(self.tolerance_values),
+            keep_previous_population_data=keep_previous_population_data,
+        )
+
+    @property
+    def step_successes(self) -> list[int]:
+        """Return accepted-particle counts for the active run.
+
+        This property exposes the generation-level success counts recorded in
+        the sampler run state.
+
+        Returns:
+            list[int]: Accepted-particle count for each generation in the
+                active run.
+        """
+
+        return self._run_state.step_successes
+
+    @property
+    def step_attempts(self) -> list[int]:
+        """Return proposal-attempt counts for the active run.
+
+        This property exposes the generation-level attempt counts recorded in
+        the sampler run state.
+
+        Returns:
+            list[int]: Proposal-attempt count for each generation in the active
+                run.
+        """
+
+        return self._run_state.step_attempts
+
+    @property
+    def generator_history(self) -> dict[int, list[GeneratorSlot]]:
+        """Return generator slots used for each completed generation.
+
+        This property exposes the deterministic generator slots recorded during
+        particlewise execution.
+
+        Returns:
+            dict[int, list[GeneratorSlot]]: Generator slots keyed by generation
+                index.
+        """
+
+        return self._run_state.generator_history
+
+    @property
+    def population_archive(self) -> dict[int, ParticlePopulation]:
+        """Return archived populations captured during the active run.
+
+        This property exposes the per-run archive of previous populations that
+        was recorded while the active run progressed across generations.
+
+        Returns:
+            dict[int, ParticlePopulation]: Archived populations keyed by their
+                archive step.
+        """
+
+        return self._run_state.population_archive
 
     @property
     def particle_population(self) -> ParticlePopulation:
+        """Return the current particle population.
+
+        This property exposes the sampler's active population without changing
+        any run bookkeeping.
+
+        Returns:
+            ParticlePopulation: Current particle population stored on the
+                updater.
+        """
+
         return self._updater.particle_population
 
     @particle_population.setter
-    def particle_population(self, population: ParticlePopulation):
-        """
-        Updates the particle population for the sampler.
+    def particle_population(self, population: ParticlePopulation) -> None:
+        """Set the current particle population without altering bookkeeping.
 
-        If `drop_previous_population_data` is set to False and there is existing
-        particle population data, the current particle population is archived
-        before updating to the new population.
+        This setter updates the population stored on the updater while leaving
+        archive and generation counters untouched.
 
         Args:
-            population (ParticlePopulation): The new particle population to set.
+            population (ParticlePopulation): Population to store as the current
+                sampler population.
 
-        Attributes:
-            drop_previous_population_data (bool): Determines whether to discard
-                previous population data or archive it.
-            _updater.particle_population (ParticlePopulation): The current particle
-                population managed by the updater.
-            population_archive (dict): A dictionary storing archived particle
-                populations, indexed by step.
-
-        Behavior:
-            - If `drop_previous_population_data` is False and there is existing
-              particle population data, the current population is archived with
-              a step index.
-            - Updates the `_updater.particle_population` with the new population.
-            - Weights of the new population are normalized and the perturbation
-              variance is adapted by the particle updater's setter method.
+        Returns:
+            None: This setter does not return a value.
         """
-        if (
-            not self.drop_previous_population_data
-            and self._updater.particle_population.size > 0
-        ):
-            step = (
-                max(self.population_archive.keys()) + 1
-                if self.population_archive
-                else 0
-            )
-            self.population_archive.update({step: self.particle_population})
+
         self._updater.particle_population = population
+
+    def _replace_particle_population(
+        self, population: ParticlePopulation
+    ) -> None:
+        """Archive the current population in run state, then store the new one.
+
+        This helper keeps archive bookkeeping explicit by recording the
+        outgoing population before updating the current population.
+
+        Args:
+            population (ParticlePopulation): New population to store on the
+                sampler.
+
+        Returns:
+            None: This helper does not return a value.
+        """
+
+        self._run_state.replace_population(self.particle_population)
+        self.particle_population = population
 
     @property
     def perturbation_kernel(self) -> PerturbationKernel:
@@ -238,76 +327,63 @@ class ABCSampler:
         )
 
     def particle_to_distance(self, particle: Particle, **kwargs: Any) -> float:
-        """
-        Computes the distance between the model output generated from the given particle and the target data using the user-supplied `particles_to_params` and `outputs_to_distance` functions.
+        """Compute the distance for one proposed particle.
+
+        This method keeps `ABCSampler` as the public entry point for particle
+        evaluation while delegating the actual model execution and scoring work
+        to the extracted `ParticleEvaluator`.
+
         Args:
             particle (Particle): The particle for which to compute the distance.
-            **kwargs (Any): Additional keyword arguments that can be passed to the `particles_to_params` function. These arguments are supplied from the `run()` method and can include any user-defined parameters needed for mapping particles to model parameters.
+            **kwargs (Any): Additional keyword arguments forwarded to
+                `particles_to_params`.
+
         Returns:
-            float: The computed distance between the model output generated from the given particle and the target data, as calculated by the `outputs_to_distance` function.
+            float: Distance between the simulated outputs and the target data.
         """
-        params = self.particles_to_params(particle, **kwargs)
-        outputs = self.model_runner.simulate(params)
-        err = self.outputs_to_distance(outputs, self.target_data)
-        return err
+        return self._particle_evaluator.distance(particle, **kwargs)
 
     def calculate_weight(self, particle: Particle) -> float:
-        """
-        Calculates the weight of a given particle based on its prior and perturbed probabilities using the particle updater's calculate_weight method.
+        """Calculate the importance weight for one accepted particle.
+
+        This method preserves the public sampler API while delegating the
+        actual weight calculation to the particle updater.
+
         Args:
             particle (Particle): The particle for which to calculate the weight.
+
         Returns:
-            float: The calculated weight of the particle, which is based on the prior probability density and the
+            float: Importance weight for the particle under the current
+                population and perturbation kernel.
         """
         return self._updater.calculate_weight(particle)
 
     def get_results_and_reset(
         self, perturbation_kernel: PerturbationKernel
     ) -> CalibrationResults:
-        """
-        Compiles the results of the calibration process into a CalibrationResults object and resets the sampler for potential future runs.
-        Args:
-            perturbation_kernel (PerturbationKernel): The originator perturbation kernel to reset to after the run.
-        Returns:
-            CalibrationResults: An object containing the results of the calibration process, including the final particle population
-            and the history of successes and attempts for each generation.
-        Raises:
-            UserWarning: If the number of successful particles in any generation is less than the specified generation
-        """
-        if any(
-            [
-                count < self.generation_particle_count
-                for count in self.step_successes
-            ]
-        ):
-            raise UserWarning(
-                "The number of successful particles in at least one generation is less than the specified generation_particle_count. This may indicate that the maximum particle proposal attempts are too low or the error tolerance values are too strict for the model and target data."
-            )
-        results = CalibrationResults(
-            copy.deepcopy(self._updater),
-            self.generator_history,
-            self.population_archive,
-            {
-                "generation_particle_count": [self.generation_particle_count]
-                * len(self.tolerance_values),
-                "successes": self.step_successes,
-                "attempts": self.step_attempts,
-            },
-            self.tolerance_values,
-        )
+        """Build calibration results and reset mutable sampler state.
 
-        # Reset particle sampler and successes
-        self.init_updater(perturbation_kernel)
-        self.step_successes = [0] * len(self.tolerance_values)
-        self.step_attempts = [0] * len(self.tolerance_values)
-        self.generator_history = {}
+        This method validates that each generation produced a full accepted
+        population, creates the immutable `CalibrationResults` snapshot, and
+        then resets the sampler so it can be reused for a later run.
+
+        Args:
+            perturbation_kernel (PerturbationKernel): Perturbation kernel to
+                restore on the sampler after result construction.
+
+        Returns:
+            CalibrationResults: Snapshot containing the final posterior,
+                generation history, archive data, and success statistics.
+        """
+        results = self._build_results()
+        self._reset_after_run(perturbation_kernel)
         return results
 
     def run_parallel(
         self, max_workers: int | None = None, **kwargs: Any
     ) -> CalibrationResults:
         """
-        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using a ProcessPoolExecutor.
+        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using async orchestration over a thread pool.
 
         This method performs the SMC algorithm to generate a population of particles
         that approximate the posterior distribution of the model parameters. The process
@@ -316,7 +392,7 @@ class ABCSampler:
         The execution is parallelized to improve performance.
 
         Args:
-            max_workers (int | None): The maximum number of worker processes to use when running in parallel. If None, it defaults to the number of CPU cores available.
+            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -348,6 +424,187 @@ class ABCSampler:
         """
         return self.run(execution="serial", **kwargs)
 
+    def _resolve_worker_count(self, max_workers: int | None) -> int:
+        """Resolve the worker count for a parallel sampler run.
+
+        This helper applies the sampler default when the caller does not supply
+        `max_workers` and validates that the resolved value is positive.
+
+        Args:
+            max_workers (int | None): Optional worker-count override supplied
+                by the caller.
+
+        Returns:
+            int: Positive worker count for the run.
+
+        Raises:
+            ValueError: Raised when the resolved worker count is not positive.
+        """
+        worker_count = (
+            max_workers
+            if max_workers is not None
+            else self.parallel_worker_count
+        )
+        if worker_count <= 0:
+            raise ValueError("max_workers must be positive")
+        return worker_count
+
+    def _build_reporter(self) -> SamplerReporter:
+        """Create the reporter used for one sampler run.
+
+        This helper centralizes reporter construction so the public run
+        methods can share the same output behavior and honor the sampler's
+        `verbose` flag consistently.
+
+        Returns:
+            SamplerReporter: Reporter configured for the current verbosity.
+        """
+
+        return SamplerReporter(verbose=self.verbose)
+
+    def _build_particlewise_generation_runner(
+        self,
+        reporter: SamplerReporter,
+    ) -> ParticlewiseGenerationRunner:
+        """Create the particlewise execution engine for the active run.
+
+        This helper collects the stable callbacks and configuration needed by
+        the extracted particlewise runner while keeping the public sampler
+        facade small.
+
+        Args:
+            reporter (SamplerReporter): Reporter used for progress and summary
+                output during the run.
+
+        Returns:
+            ParticlewiseGenerationRunner: Runner configured for the current
+                sampler state.
+        """
+
+        return ParticlewiseGenerationRunner(
+            config=ParticlewiseGenerationConfig(
+                generation_particle_count=self.generation_particle_count,
+                tolerance_values=self.tolerance_values,
+                seed_sequence=self._seed_sequence,
+                max_attempts_per_proposal=self.max_attempts_per_proposal,
+                sample_particle_from_priors=self.sample_particle_from_priors,
+                sample_and_perturb_particle=self.sample_and_perturb_particle,
+                particle_to_distance=self.particle_to_distance,
+                calculate_weight=self.calculate_weight,
+                replace_particle_population=self._replace_particle_population,
+                reporter=reporter,
+            ),
+            run_state=self._run_state,
+        )
+
+    def _build_batch_generation_runner(
+        self,
+        reporter: SamplerReporter,
+    ) -> BatchGenerationRunner:
+        """Create the batched execution engine for the active run.
+
+        This helper collects the stable callbacks and configuration needed by
+        the extracted batch runner while keeping the public sampler facade
+        focused on orchestration.
+
+        Args:
+            reporter (SamplerReporter): Reporter used for progress and summary
+                output during the run.
+
+        Returns:
+            BatchGenerationRunner: Runner configured for the current sampler
+                state.
+        """
+
+        return BatchGenerationRunner(
+            config=BatchGenerationConfig(
+                generation_particle_count=self.generation_particle_count,
+                tolerance_values=self.tolerance_values,
+                sample_particle_from_priors=self.sample_particle_from_priors,
+                sample_and_perturb_particle=self.sample_and_perturb_particle,
+                particle_to_distance=self.particle_to_distance,
+                calculate_weight=self.calculate_weight,
+                replace_particle_population=self._replace_particle_population,
+                reporter=reporter,
+            ),
+            run_state=self._run_state,
+        )
+
+    def _validate_run_kwargs(self, kwargs: dict[str, Any]) -> None:
+        """Validate keyword arguments forwarded into particle evaluation.
+
+        This helper protects sampler execution from accidental collisions
+        between run-time keyword arguments and existing class attributes.
+
+        Args:
+            kwargs (dict[str, Any]): Keyword arguments supplied to a run method.
+
+        Returns:
+            None: This helper does not return a value.
+
+        Raises:
+            ValueError: Raised when a run-time keyword collides with an
+                existing class attribute.
+        """
+        for key in kwargs:
+            if key in self.__class__.__dict__:
+                raise ValueError(
+                    f"Keyword argument '{key}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
+                )
+
+    def _build_results(self) -> CalibrationResults:
+        """Build the immutable results snapshot for the completed run.
+
+        This helper validates that every generation reached the target
+        population size and constructs the `CalibrationResults` object from the
+        sampler's current state.
+
+        Returns:
+            CalibrationResults: Snapshot containing the final posterior,
+                generation history, archive data, and success statistics.
+
+        Raises:
+            UserWarning: Raised when any generation finished with fewer accepted
+                particles than `generation_particle_count`.
+        """
+
+        if any(
+            count < self.generation_particle_count
+            for count in self.step_successes
+        ):
+            raise UserWarning(
+                "The number of successful particles in at least one generation is less than the specified generation_particle_count. This may indicate that the maximum particle proposal attempts are too low or the error tolerance values are too strict for the model and target data."
+            )
+        return CalibrationResults(
+            copy.deepcopy(self._updater),
+            self.generator_history,
+            self.population_archive,
+            self._run_state.build_success_counts(
+                self.generation_particle_count
+            ),
+            self.tolerance_values,
+        )
+
+    def _reset_after_run(
+        self,
+        perturbation_kernel: PerturbationKernel,
+    ) -> None:
+        """Reset mutable sampler state after a completed run.
+
+        This helper restores the original perturbation kernel and clears all
+        per-run bookkeeping so the sampler can be reused safely.
+
+        Args:
+            perturbation_kernel (PerturbationKernel): Perturbation kernel to
+                restore on the sampler.
+
+        Returns:
+            None: This helper does not return a value.
+        """
+
+        self.init_updater(perturbation_kernel)
+        self._run_state.reset()
+
     def run(
         self,
         execution: Literal["serial", "parallel"] = "parallel",
@@ -364,258 +621,90 @@ class ABCSampler:
 
         Args:
             execution (Literal['serial', 'parallel']): Determines whether to run the SMC sampling process in serial or parallel. Defaults to 'serial'.
-            max_workers (int | None): The maximum number of worker processes to use when running in parallel. If None, it defaults to the number of CPU cores available. This argument is ignored when execution is set to 'serial'.
+            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`. This argument is ignored when execution is set to 'serial'.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
                       attributes of the class.
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
-        Raises:
-            ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class
-            UserWarning: If the number of successful particles in any generation is less than the specified generation_particle_count
         """
-        for k in kwargs.keys():
-            if k in self.__class__.__dict__:
-                raise ValueError(
-                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
-                )
-
+        self._validate_run_kwargs(kwargs)
         originator_perturbation_kernel = copy.deepcopy(
             self.perturbation_kernel
         )
-
-        console = formatting.get_console()
+        reporter = self._build_reporter()
         overall_start_time = time.time()
-
-        if execution == "parallel":
-            if sys.platform.startswith("linux"):
-                import multiprocessing
-
-                multiprocessing.set_start_method("fork", force=True)
-            n_procs = (
-                min(max_workers, (max(mp.cpu_count(), 1)))
-                if max_workers
-                else (mp.cpu_count() or 1)
-            )
-        else:
-            n_procs = 1
-
-        for generation in range(len(self.tolerance_values)):
-            generation_start_time = time.time()
-
-            # Init the proposed population
-            proposed_population = ParticlePopulation()
-
-            # Generate the seed sequences used for each particle in the proposed population
-            _sequences = self._seed_sequence.spawn(
-                self.generation_particle_count
-            )
-            generator_list: list[dict[str, Any]] = [
-                {"id": i, "seed_sequence": v} for i, v in enumerate(_sequences)
-            ]
-
-            # Select sample method based on generation - from the priors if uninitiated, from the most recent population if available
-            if generation == 0:
-                sample_method = self.sample_particle_from_priors
-            else:
-                sample_method = self.sample_and_perturb_particle
-
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("•"),
-                TextColumn("acceptance: {task.fields[acceptance]}"),
-                TextColumn("•"),
-                TimeElapsedColumn(),
-                TextColumn("•"),
-                TextColumn("ETA: {task.fields[eta]}"),
-                console=console,
-                transient=True,
-            ) as progress:
-                running_progress_bar = progress.add_task(
-                    f"Generation {generation + 1} (tolerance {self.tolerance_values[generation]})...",
-                    total=self.generation_particle_count,
-                    acceptance="N/A",
-                    eta="calculating...",
-                )
-                accepted_list = []
-                total_attempts = 0
-                completed = 0
-                # For each particle generator id and seed sequence, create an accepted particle and map to the id.
-                # Serial execution
-                if n_procs == 1:
-                    for generator in generator_list:
-                        accepted_list.append(
-                            self.sample_particles_until_accepted(
-                                generator=generator,
-                                tolerance=self.tolerance_values[generation],
-                                sample_method=sample_method,
-                                **kwargs,
-                            )
-                        )
-                        total_attempts += accepted_list[-1][2]
-                        completed += 1
-                        elapsed = time.time() - generation_start_time
-                        eta = (
-                            elapsed
-                            * (self.generation_particle_count - completed)
-                            / (completed or 1)
-                            if elapsed > 0 and completed > 0
-                            else 0.0
-                        )
-                        acceptance_rate = (
-                            100.0 * completed / total_attempts
-                            if total_attempts > 0
-                            else 0.0
-                        )
-                        progress.update(
-                            running_progress_bar,
-                            completed=completed,
-                            acceptance=f"{acceptance_rate:.1f}%",
-                            eta=formatting._format_time(eta),
-                        )
-
-                # Parallel execution
-                else:
-                    if mp.current_process().name == "MainProcess":
-                        with ProcessPoolExecutor(
-                            max_workers=n_procs
-                        ) as executor:
-                            for completed_generator in executor.map(
-                                partial(
-                                    self.sample_particles_until_accepted,
-                                    tolerance=self.tolerance_values[
-                                        generation
-                                    ],
-                                    sample_method=sample_method,
-                                    **kwargs,
-                                ),
-                                generator_list,
-                            ):
-                                accepted_list.append(completed_generator)
-                                total_attempts += completed_generator[2]
-                                completed += 1
-                                elapsed = time.time() - generation_start_time
-                                eta = (
-                                    elapsed
-                                    * (
-                                        self.generation_particle_count
-                                        - completed
-                                    )
-                                    / (completed or 1)
-                                    if elapsed > 0 and completed > 0
-                                    else 0.0
-                                )
-                                acceptance_rate = (
-                                    100.0 * completed / total_attempts
-                                    if total_attempts > 0
-                                    else 0.0
-                                )
-                                progress.update(
-                                    running_progress_bar,
-                                    completed=completed,
-                                    acceptance=f"{acceptance_rate:.1f}%",
-                                    eta=formatting._format_time(eta),
-                                )
-
-                total_time = time.time() - overall_start_time
-                processing_time = time.time() - generation_start_time
-
-                # Store acceptance statistics
-                acceptance_rate = (
-                    100.0 * completed / total_attempts
-                    if total_attempts > 0
-                    else 0.0
-                )
-                console.print(
-                    f"[green]✓[/green] Generation {generation + 1} run complete! "
-                    f"Tolerance: {self.tolerance_values[generation]}, acceptance rate: {acceptance_rate:.1f}% of {total_attempts} attempts"
-                )
-
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("•"),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True,
-            ) as progress:
-                task_id = progress.add_task(
-                    "Calculating weights...",
-                    total=self.generation_particle_count,
-                )
-                # Collect the results from across the accepted particles
-                for id, accepted_particle, samples in sorted(
-                    accepted_list, key=lambda x: x[0]
-                ):
-                    if accepted_particle is not None:
-                        self.step_successes[generation] += 1
-                        if generation == 0:
-                            particle_weight = 1.0
-                        else:
-                            particle_weight = self.calculate_weight(
-                                accepted_particle
-                            )
-                        proposed_population.add_particle(
-                            accepted_particle, particle_weight
-                        )
-                        progress.update(task_id, advance=1)
-                    else:
-                        raise UserWarning(
-                            f"Particle proposal attempt {id} used {samples} samples and found no acceptable values."
-                        )
-                    self.step_attempts[generation] += samples
-
-                self.generator_history.update({generation: generator_list})
-                self.particle_population = proposed_population
-
-                weights_time = (
-                    time.time() - generation_start_time - processing_time
-                )
-                # Summary with checkmark
-                console.print(
-                    f"(Run: {formatting._format_time(processing_time)}, Weights calculation: {formatting._format_time(weights_time)}, total time: {formatting._format_time(total_time)})"
-                )
-
-        # Summary with checkmark
-        console.print(
-            f"[green]✓[/green] Calibration complete! "
-            f"(total time: {formatting._format_time(total_time)})"
+        n_workers = (
+            self._resolve_worker_count(max_workers)
+            if execution == "parallel"
+            else 1
         )
+        particlewise_runner = self._build_particlewise_generation_runner(
+            reporter=reporter
+        )
+        parallel_executor = (
+            ThreadPoolExecutor(max_workers=n_workers)
+            if execution == "parallel" and n_workers > 1
+            else None
+        )
+
+        try:
+            for generation in range(len(self.tolerance_values)):
+                generation_stats = particlewise_runner.run_generation(
+                    ParticlewiseGenerationRequest(
+                        generation=generation,
+                        n_workers=n_workers,
+                        parallel_executor=parallel_executor,
+                        overall_start_time=overall_start_time,
+                        generation_start_time=time.time(),
+                        particle_kwargs=dict(kwargs),
+                    )
+                )
+        finally:
+            if parallel_executor is not None:
+                parallel_executor.shutdown(wait=True)
+
+        reporter.print_run_summary(generation_stats.total_time)
         return self.get_results_and_reset(originator_perturbation_kernel)
 
     def sample_particles_until_accepted(
         self,
-        generator: dict[str, int | SeedSequence],
+        generator: GeneratorSlot,
         tolerance: float,
-        sample_method: Callable[[SeedSequence], Particle],
+        sample_method: Callable[[SeedSequence | None], Particle],
         max_attempts: int | None = None,
         **kwargs: Any,
-    ) -> tuple[int, Particle | None, int]:
-        """
-        Rejection sampling routine to return a single value
+    ) -> AcceptedProposal:
+        """Sample until one particle is accepted for a generator slot.
+
+        This compatibility wrapper preserves the sampler surface while routing
+        the actual rejection loop through the extracted particlewise runner.
 
         Args:
-            generator (dict[str, int | SeedSequence]): A dictionary containing the particle id and seed sequence generator for the random number generator spawn used in sampling.
-            tolerance (float): The tolerance value for accepting a particle based on the error returned from particle_to_distance().
-            sample_method (Callable[[SeedSequence], Particle]): The method used to sample particles, which can be either from the priors or by perturbing existing particles when called from the sampler SMC routine. Any method that accepts a seed sequence and returns a particle is valid.
-            max_attempts (int | None): The maximum number of attempts to sample and perturb a particle before aborting. If None, it defaults to the sampler's `max_attempts_per_proposal` attribute.
-            **kwargs (Any): Additional keyword arguments that can be passed to the `particles_to_params` function. These arguments are supplied from the `run()` method and can include any user-defined parameters needed for mapping particles to model parameters.
-        Returns:
-            tuple[int, Particle | None, int]: A tuple containing the particle id, the accepted particle (or None if no acceptable particle was found within the maximum attempts), and the number of samples taken to find an acceptable particle below the provided tolerance.
-        """
-        if not max_attempts:
-            max_attempts = self.max_attempts_per_proposal
+            generator (GeneratorSlot): Deterministic generator slot to
+                evaluate.
+            tolerance (float): Maximum accepted distance for the proposal.
+            sample_method (Callable[[SeedSequence | None], Particle]): Proposal
+                function used for the slot.
+            max_attempts (int | None): Optional override for the maximum number
+                of proposal attempts.
+            **kwargs (Any): Additional keyword arguments forwarded into
+                particle evaluation.
 
-        for i in range(max_attempts):
-            proposed_particle = sample_method(generator["seed_sequence"])
-            err = self.particle_to_distance(proposed_particle, **kwargs)
-            if err <= tolerance:
-                return (generator["id"], proposed_particle, i + 1)
-        return (generator["id"], None, max_attempts)
+        Returns:
+            AcceptedProposal: Accepted particle data for the slot, or a record
+                indicating that attempts were exhausted.
+        """
+        return self._build_particlewise_generation_runner(
+            reporter=self._build_reporter()
+        ).sample_particles_until_accepted(
+            generator=generator,
+            tolerance=tolerance,
+            sample_method=sample_method,
+            evaluation_kwargs=dict(kwargs),
+            max_attempts=max_attempts,
+        )
 
     def run_parallel_batches(
         self,
@@ -625,7 +714,7 @@ class ABCSampler:
         **kwargs: Any,
     ) -> CalibrationResults:
         """
-        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using a LocalParallelExecutor.
+        Executes the Sequential Monte Carlo (SMC) sampling process in parallel using async orchestration over a thread pool.
 
         This method performs the SMC algorithm to generate a population of particles
         that approximate the posterior distribution of the model parameters. The process
@@ -635,110 +724,50 @@ class ABCSampler:
 
         Args:
             chunksize (int): The approximate number of parameter sets to process in serial for each task when evaluating in parallel. Defaults to 1.
-            batchsize (int | None): The number of proposed particles to generate in each batch when evaluating in parallel. If None, it defaults to the generation_particle_count. This controls how many particles are proposed at once and submitted to the process pool.
-            max_workers (int | None): The maximum number of worker processes to use when running in parallel. If None, it defaults to the number of CPU cores available.
+            batchsize (int | None): The number of proposed particles to generate in each batch when evaluating in parallel. If None, it defaults to the generation_particle_count. This controls how many particles are proposed at once and submitted to the executor.
+            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
                         attributes of the class.
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
-        Raises:
-            ValueError: If any keyword argument in `kwargs` conflicts with existing attributes of the class
         """
-        for k in kwargs.keys():
-            if k in self.__class__.__dict__:
-                raise ValueError(
-                    f"Keyword argument '{k}' conflicts with existing attribute. Please choose a different name for the argument. Args cannot be set from `.run()`"
-                )
-
-        actual_workers = (
-            min(max_workers, (max(mp.cpu_count(), 1)))
-            if max_workers
-            else (mp.cpu_count() or 1)
+        self._validate_run_kwargs(kwargs)
+        actual_workers = self._resolve_worker_count(max_workers)
+        reporter = self._build_reporter()
+        batch_runner = self._build_batch_generation_runner(reporter=reporter)
+        resolved_batchsize, warmup = batch_runner.resolve_settings(
+            batchsize=batchsize, chunksize=chunksize
         )
-        if not batchsize:
-            batchsize = self.generation_particle_count
-            warmup = True
-        else:
-            warmup = False
-
         originator_perturbation_kernel = copy.deepcopy(
             self.perturbation_kernel
         )
+        overall_start_time = time.time()
+        executor = (
+            ThreadPoolExecutor(max_workers=actual_workers)
+            if actual_workers > 1
+            else None
+        )
 
-        if mp.current_process().name == "MainProcess":
-            with ProcessPoolExecutor(max_workers=actual_workers) as executor:
-                for generation in range(len(self.tolerance_values)):
-                    if self.verbose:
-                        print(
-                            f"Running generation {generation + 1} with tolerance {self.tolerance_values[generation]}..."
-                        )
+        try:
+            for generation in range(len(self.tolerance_values)):
+                generation_start_time = time.time()
+                generation_stats = batch_runner.run_generation(
+                    BatchGenerationRequest(
+                        generation=generation,
+                        batchsize=resolved_batchsize,
+                        warmup=warmup,
+                        chunksize=chunksize,
+                        executor=executor,
+                        overall_start_time=overall_start_time,
+                        generation_start_time=generation_start_time,
+                        particle_kwargs=dict(kwargs),
+                    )
+                )
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True)
 
-                    proposed_population = ParticlePopulation()
-
-                    # Rejection sampling algorithm
-                    attempts = 0
-                    while (
-                        proposed_population.size
-                        < self.generation_particle_count
-                    ):
-                        if proposed_population.size > 0:
-                            if warmup:
-                                batchsize = 10_000
-                            sample_size = int(
-                                min(
-                                    batchsize,
-                                    (
-                                        self.generation_particle_count
-                                        - proposed_population.size
-                                    )
-                                    * attempts
-                                    / proposed_population.size,
-                                )
-                            )
-                        else:
-                            sample_size = batchsize
-                        if generation == 0:
-                            proposed_particles = [
-                                self.sample_particle_from_priors()
-                                for _ in range(sample_size)
-                            ]
-                        else:
-                            proposed_particles = [
-                                self.sample_and_perturb_particle()
-                                for _ in range(sample_size)
-                            ]
-                        if self.verbose and attempts > 0:
-                            print(
-                                f"Attempt {attempts}... current population size is {proposed_population.size}. Acceptance rate is {proposed_population.size / attempts if attempts > 0 else 0:.4f}",
-                                end="\r",
-                            )
-                        errs = executor.map(
-                            partial(self.particle_to_distance, **kwargs),
-                            proposed_particles,
-                            chunksize=chunksize,
-                        )
-                        for err, proposed_particle in zip(
-                            errs, proposed_particles
-                        ):
-                            if (
-                                err < self.tolerance_values[generation]
-                                and proposed_population.size
-                                < self.generation_particle_count
-                            ):
-                                if generation == 0:
-                                    particle_weight = 1.0
-                                else:
-                                    particle_weight = self.calculate_weight(
-                                        proposed_particle
-                                    )
-                                proposed_population.add_particle(
-                                    proposed_particle, particle_weight
-                                )
-                        attempts += len(proposed_particles)
-                    self.step_successes[generation] = proposed_population.size
-                    self.step_attempts[generation] = attempts
-                    self.particle_population = proposed_population
-
+        reporter.print_run_summary(generation_stats.total_time)
         return self.get_results_and_reset(originator_perturbation_kernel)
