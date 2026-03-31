@@ -18,8 +18,10 @@ from .prior_distribution import (
 
 def load_schema() -> dict:
     """Load the JSON schema for validating priors from the package resources."""
-    with importlib.resources.open_text(
-        "calibrationtools.assets", "schema.json"
+    with (
+        importlib.resources.files("calibrationtools.assets")
+        .joinpath("schema.json")
+        .open("r", encoding="utf-8")
     ) as f:
         schema = json.load(f)
     return schema

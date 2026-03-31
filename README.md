@@ -26,6 +26,23 @@ uv run mrp run example_model.mrp.toml --input seed=42 --input max_gen=10
 
 You can run `uv tool install cfa-mrp` to omit the `uv run`.
 
+## Running a calibration
+
+The repository includes a complete calibration example for the bundled example model:
+
+```bash
+uv sync --all-packages --all-extras
+uv run python -m example_model.calibrate
+```
+
+This runs the ABC-SMC calibration workflow defined in [packages/example_model/src/example_model/calibrate.py](/home/as81/work/cfa-calibration-tools-wtk-mp/packages/example_model/src/example_model/calibrate.py) and prints the posterior summary and diagnostics.
+
+To compare serial and parallel execution for the same example, run:
+
+```bash
+uv run python -m example_model.benchmark
+```
+
 ## General Disclaimer
 
 This repository was created for use by CDC programs to collaborate on public health related projects in support of the [CDC mission](https://www.cdc.gov/about/organization/mission.htm). GitHub is not hosted by the CDC, but is a third party website used by CDC and its partners to share information and collaborate on software. CDC use of GitHub does not imply an endorsement of any one particular service, product, or enterprise.

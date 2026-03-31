@@ -1,5 +1,9 @@
 """Calibrate the example branching process."""
 
+import json
+import timeit
+from pathlib import Path
+
 import numpy as np
 from mrp import Environment
 from mrp.api import apply_dict_overrides
@@ -79,8 +83,8 @@ def outputs_to_distance(model_output, target_data):
 
 
 sampler = ABCSampler(
-    generation_particle_count=500,
-    tolerance_values=[5.0, 1.0],
+    generation_particle_count=100,
+    tolerance_values=[5.0, 2.0],
     priors=P,
     perturbation_kernel=K,
     variance_adapter=V,
@@ -91,24 +95,46 @@ sampler = ABCSampler(
     seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
-results = sampler.run(execution="serial", base_inputs=default_inputs)
-# Default printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
-print(results)
+benchmark_results = []
 
-# Example user print function
-print("Posterior estimates table example:")
-for par_name in P["priors"].keys():
-    print(
-        f"{par_name}: {results.point_estimates[par_name]:.2f}, 95% CI: {[f'{v:.2f}' for v in results.credible_intervals[par_name]]}"
+start = timeit.default_timer()
+results = sampler.run_serial(base_inputs=default_inputs)
+end = timeit.default_timer()
+print(f"Execution time: {end - start} seconds")
+benchmark_results.append(
+    {
+        "time": end - start,
+        "attempts": results.smc_step_attempts,
+        "max_workers": None,
+        "chunksize": None,
+    }
+)
+
+for max_workers in [8, 2, 1]:
+    start = timeit.default_timer()
+    results = sampler.run_parallel(
+        base_inputs=default_inputs,
+        max_workers=max_workers,
+    )
+    end = timeit.default_timer()
+    print(f"Execution time: {end - start} seconds")
+
+    benchmark_results.append(
+        {
+            "time": end - start,
+            "attempts": results.smc_step_attempts,
+            # "chunksize": chunksize,
+            "max_workers": max_workers,
+        }
     )
 
-diagnostics = results.get_diagnostics()
 
-print("\nAvailable diagnostics metrics:")
-print(diagnostics.keys())
+# Defualt printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
+for result in benchmark_results:
+    print(f"workers: {result['max_workers']}, time: {result['time']}")
 
-print("\nQuantiles for each parameter:")
-print(diagnostics["quantiles"])
+benchmark_dir = Path("./benchmarks")
+benchmark_dir.mkdir(exist_ok=True)
 
-print("\nCorrelation matrix:")
-print(diagnostics["correlation_matrix"])
+with open(benchmark_dir / "parallelization_check.json", "w") as fp:
+    json.dump(benchmark_results, fp)

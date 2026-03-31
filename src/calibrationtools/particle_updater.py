@@ -79,10 +79,14 @@ class _ParticleUpdater:
             self._particle_population.normalize_weights()
         self.adapt_variance()
 
-    def sample_particle(self) -> Particle:
+    def sample_particle(
+        self, seed_sequence: SeedSequence | None = None
+    ) -> Particle:
         """
         Samples a particle from the particle population based on their weights.
 
+        Args:
+            seed_sequence (SeedSequence | None): An optional seed sequence for random number generation. If None, the seed sequence from the class instance will be used.
         Returns:
             Particle: The sampled particle from the particle population.
 
@@ -93,14 +97,19 @@ class _ParticleUpdater:
             raise ValueError(
                 "Particle population is empty. Please add entries to the particle population before sampling."
             )
-        idx = spawn_rng(self.seed_sequence).choice(
+
+        if not seed_sequence:
+            seed_sequence = self.seed_sequence
+        idx = spawn_rng(seed_sequence).choice(
             self.particle_population.size,
             p=self.particle_population.weights,
         )
         return self.particle_population.particles[idx]
 
     def sample_and_perturb_particle(
-        self, max_attempts: int = np.iinfo(np.int32).max
+        self,
+        max_attempts: int = np.iinfo(np.int32).max,
+        seed_sequence: SeedSequence | None = None,
     ) -> Particle:
         """
         Samples a particle from the current population and applies a perturbation to it,
@@ -112,18 +121,23 @@ class _ParticleUpdater:
         Args:
             max_attempts (int): The maximum number of attempts to sample and perturb
                 a particle before aborting. Defaults to 10,000.
+            seed_sequence (SeedSequence | None): An optional seed sequence for random number generation. If None, the seed sequence from the class instance will be used.
 
         Returns:
-            Particle: A new particle object created from the perturbed particle.
+            Particle: A new particle object created from the perturbed particle
 
         Raises:
             RuntimeError: If the method fails to sample and perturb a particle
                 within the specified maximum number of attempts.
         """
+        if not seed_sequence:
+            seed_sequence = self.seed_sequence
         for _ in range(max_attempts):
-            current_particle = self.sample_particle()
+            current_particle = self.sample_particle(
+                seed_sequence=seed_sequence
+            )
             new_particle = self.perturbation_kernel.perturb(
-                current_particle, self.seed_sequence
+                current_particle, seed_sequence
             )
             if self.priors.probability_density(new_particle) > 0:
                 return Particle(new_particle)

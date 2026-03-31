@@ -5,6 +5,7 @@ from .particle_population import ParticlePopulation
 from .particle_population_metrics import ParticlePopulationMetrics
 from .particle_updater import _ParticleUpdater
 from .prior_distribution import nonseed_param_names
+from .sampler_types import GeneratorSlot
 
 
 class CalibrationResults:
@@ -13,6 +14,7 @@ class CalibrationResults:
 
      Args:
         _updater (_ParticleUpdater):The particle population updater availble from a fitted sampler object, which contains the final particle population and the perturbation kernel used for sampling particles in the final generation.
+        generator_history (dict[int, list[GeneratorSlot]]): A dictionary mapping generation indices to their corresponding lists of generator slots containing particle IDs and their associated seed sequences, representing the history of particle sampling and perturbation across generations when called with the appropriate particle updater.
         population_archive (dict[int, ParticlePopulation]): A dictionary mapping generation indices to their corresponding particle populations, representing the history of particle populations across generations if saved during the sampler run.
         success_counts (dict[str, list[int]]): A dictionary containing lists of particles per generation, success counts, and attempt counts for each generation, with keys "generation_particle_count", "successes" and "attempts".
         tolerance_values (list[float]): A list of tolerance values for each generation
@@ -30,6 +32,7 @@ class CalibrationResults:
     def __init__(
         self,
         _updater: _ParticleUpdater,
+        generator_history: dict[int, list[GeneratorSlot]],
         population_archive: dict[int, ParticlePopulation],
         success_counts: dict[str, list[int]],
         tolerance_values: list[float],
@@ -38,6 +41,7 @@ class CalibrationResults:
         self.posterior = ParticlePopulationMetrics(
             self._updater.particle_population
         )
+        self.generator_history = generator_history
         self.population_archive = population_archive
         self.generation_particle_count = success_counts[
             "generation_particle_count"
