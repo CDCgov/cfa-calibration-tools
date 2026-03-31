@@ -40,6 +40,24 @@ class ParticleEvaluator:
         self.target_data = target_data
         self.model_runner = model_runner
 
+    def simulate(self, particle: Particle, **kwargs: Any) -> Any:
+        """Run the model for a particle and return the simulated outputs.
+
+        This method translates a particle into model parameters and runs the
+        model to produce simulated outputs.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            **kwargs (Any): Additional keyword arguments forwarded to
+                `particles_to_params`.
+
+        Returns:
+            Any: Simulated outputs produced by the model.
+        """
+
+        params = self.particles_to_params(particle, **kwargs)
+        return self.model_runner.simulate(params)
+
     def distance(self, particle: Particle, **kwargs: Any) -> float:
         """Return the distance between simulated outputs and target data.
 
@@ -55,6 +73,5 @@ class ParticleEvaluator:
             float: Distance between the simulated outputs and the target data.
         """
 
-        params = self.particles_to_params(particle, **kwargs)
-        outputs = self.model_runner.simulate(params)
+        outputs = self.simulate(particle, **kwargs)
         return self.outputs_to_distance(outputs, self.target_data)

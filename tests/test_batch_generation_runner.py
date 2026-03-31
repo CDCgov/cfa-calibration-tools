@@ -5,13 +5,13 @@ from rich.console import Console
 
 from calibrationtools.batch_generation_runner import (
     BatchGenerationConfig,
+    BatchGenerationRequest,
     BatchGenerationRunner,
 )
 from calibrationtools.particle import Particle
 from calibrationtools.particle_population import ParticlePopulation
 from calibrationtools.sampler_reporting import SamplerReporter
 from calibrationtools.sampler_run_state import SamplerRunState
-from calibrationtools.sampler_types import BatchGenerationRequest
 
 
 def test_batch_generation_runner_accepts_equal_tolerance():

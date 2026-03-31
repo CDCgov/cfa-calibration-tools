@@ -7,6 +7,7 @@ out of `ABCSampler`.
 
 import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
@@ -16,7 +17,7 @@ from .particle import Particle
 from .particle_population import ParticlePopulation
 from .sampler_reporting import ProgressHandle, SamplerReporter
 from .sampler_run_state import SamplerRunState
-from .sampler_types import BatchGenerationRequest, GenerationStats
+from .sampler_types import GenerationStats
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,40 @@ class BatchGenerationConfig:
     calculate_weight: Callable[[Particle], float]
     replace_particle_population: Callable[[ParticlePopulation], None]
     reporter: SamplerReporter
+
+
+@dataclass(frozen=True, slots=True)
+class BatchGenerationRequest:
+    """Describe one batched generation execution.
+
+    This carrier groups the runtime inputs for the batched generation path so
+    helper methods can depend on a single named object instead of long
+    positional argument lists.
+
+    Attributes:
+        generation (int): Zero-based generation index being executed.
+        batchsize (int): Target batch size for proposal generation.
+        warmup (bool): Whether warmup sizing should be used for adaptive
+            proposal estimation.
+        chunksize (int): Number of particles evaluated per chunk.
+        executor (ThreadPoolExecutor | None): Executor used for concurrent
+            chunk evaluation when available.
+        overall_start_time (float): Timestamp recorded at the start of the full
+            sampler run.
+        generation_start_time (float): Timestamp recorded at the start of the
+            generation.
+        particle_kwargs (dict[str, Any]): Keyword arguments forwarded into
+            particle evaluation.
+    """
+
+    generation: int
+    batchsize: int
+    warmup: bool
+    chunksize: int
+    executor: ThreadPoolExecutor | None
+    overall_start_time: float
+    generation_start_time: float
+    particle_kwargs: dict[str, Any]
 
 
 @dataclass(slots=True)

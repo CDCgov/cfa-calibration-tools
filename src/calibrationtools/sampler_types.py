@@ -4,9 +4,7 @@ This module replaces positional tuples and ad hoc dictionaries with small data
 objects so sampler control flow reads in terms of named responsibilities.
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
 
 from numpy.random import SeedSequence
 
@@ -67,37 +65,3 @@ class GenerationStats:
     successes: int
     processing_time: float
     total_time: float
-
-
-@dataclass(frozen=True, slots=True)
-class BatchGenerationRequest:
-    """Describe one batched generation execution.
-
-    This carrier groups the runtime inputs for the batched generation path so
-    helper methods can depend on a single named object instead of long
-    positional argument lists.
-
-    Attributes:
-        generation (int): Zero-based generation index being executed.
-        batchsize (int): Target batch size for proposal generation.
-        warmup (bool): Whether warmup sizing should be used for adaptive
-            proposal estimation.
-        chunksize (int): Number of particles evaluated per chunk.
-        executor (ThreadPoolExecutor | None): Executor used for concurrent
-            chunk evaluation when available.
-        overall_start_time (float): Timestamp recorded at the start of the full
-            sampler run.
-        generation_start_time (float): Timestamp recorded at the start of the
-            generation.
-        particle_kwargs (dict[str, Any]): Keyword arguments forwarded into
-            particle evaluation.
-    """
-
-    generation: int
-    batchsize: int
-    warmup: bool
-    chunksize: int
-    executor: ThreadPoolExecutor | None
-    overall_start_time: float
-    generation_start_time: float
-    particle_kwargs: dict[str, Any]

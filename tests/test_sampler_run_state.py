@@ -10,10 +10,10 @@ def test_sampler_run_state_archives_previous_population_when_enabled(
         generation_count=2,
         keep_previous_population_data=True,
     )
-    state.replace_population(ParticlePopulation())
+    state.archive_population(ParticlePopulation())
     assert state.population_archive == {}
 
-    state.replace_population(particle_population)
+    state.archive_population(particle_population)
 
     assert state.population_archive == {0: particle_population}
 
@@ -26,7 +26,7 @@ def test_sampler_run_state_does_not_archive_previous_population_when_disabled(
         keep_previous_population_data=False,
     )
 
-    state.replace_population(particle_population)
+    state.archive_population(particle_population)
 
     assert state.population_archive == {}
 
@@ -42,7 +42,7 @@ def test_sampler_run_state_reset_clears_bookkeeping(
 
     state.record_generation_history(0, generator_slots)
     state.record_attempts(generation=0, attempts=4, successes=1)
-    state.replace_population(particle_population)
+    state.archive_population(particle_population)
 
     state.reset()
 

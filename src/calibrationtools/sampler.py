@@ -10,6 +10,7 @@ from numpy.random import SeedSequence
 
 from .batch_generation_runner import (
     BatchGenerationConfig,
+    BatchGenerationRequest,
     BatchGenerationRunner,
 )
 from .calibration_results import CalibrationResults
@@ -26,11 +27,7 @@ from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
 from .sampler_reporting import SamplerReporter
 from .sampler_run_state import SamplerRunState
-from .sampler_types import (
-    AcceptedProposal,
-    BatchGenerationRequest,
-    GeneratorSlot,
-)
+from .sampler_types import GeneratorSlot
 from .variance_adapter import VarianceAdapter
 
 
@@ -250,7 +247,7 @@ class ABCSampler:
             None: This helper does not return a value.
         """
 
-        self._run_state.replace_population(self.particle_population)
+        self._run_state.archive_population(self.particle_population)
         self.particle_population = population
 
     @property
@@ -667,44 +664,6 @@ class ABCSampler:
 
         reporter.print_run_summary(generation_stats.total_time)
         return self.get_results_and_reset(originator_perturbation_kernel)
-
-    def sample_particles_until_accepted(
-        self,
-        generator: GeneratorSlot,
-        tolerance: float,
-        sample_method: Callable[[SeedSequence | None], Particle],
-        max_attempts: int | None = None,
-        **kwargs: Any,
-    ) -> AcceptedProposal:
-        """Sample until one particle is accepted for a generator slot.
-
-        This compatibility wrapper preserves the sampler surface while routing
-        the actual rejection loop through the extracted particlewise runner.
-
-        Args:
-            generator (GeneratorSlot): Deterministic generator slot to
-                evaluate.
-            tolerance (float): Maximum accepted distance for the proposal.
-            sample_method (Callable[[SeedSequence | None], Particle]): Proposal
-                function used for the slot.
-            max_attempts (int | None): Optional override for the maximum number
-                of proposal attempts.
-            **kwargs (Any): Additional keyword arguments forwarded into
-                particle evaluation.
-
-        Returns:
-            AcceptedProposal: Accepted particle data for the slot, or a record
-                indicating that attempts were exhausted.
-        """
-        return self._build_particlewise_generation_runner(
-            reporter=self._build_reporter()
-        ).sample_particles_until_accepted(
-            generator=generator,
-            tolerance=tolerance,
-            sample_method=sample_method,
-            evaluation_kwargs=dict(kwargs),
-            max_attempts=max_attempts,
-        )
 
     def run_parallel_batches(
         self,

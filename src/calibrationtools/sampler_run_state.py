@@ -86,7 +86,7 @@ class SamplerRunState:
         self.step_attempts[generation] = attempts
         self.step_successes[generation] = successes
 
-    def replace_population(
+    def archive_population(
         self,
         previous_population: ParticlePopulation,
     ) -> None:
