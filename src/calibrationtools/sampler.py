@@ -49,12 +49,14 @@ class ABCSampler:
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
+        max_proposals_per_batch (int): Maximum number of particles to propose in a single batch when running in parallel with batched proposals with automatic batch sizes.
         parallel_worker_count (int): Default number of workers to use for sampler parallel execution when `max_workers` is not supplied.
-        seed (int | None): Random seed for reproducibility.
+        entropy (int | None): Entropy to initialize the seed sequence for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
         keep_previous_population_data (bool): Whether to retain previous
             population data in the per-run archive when storing accepted
             particles between SMC steps.
+        results_inherit_entropy_only (bool): Whether to initialize the seed sequence for sampling posterior particles in the results with only the sampler entropy or whether to spawn a new seed sequence from the sampler.
         seed_parameter_name (str | None): The name of the seed parameter to include in the priors if `incl_seed_parameter` is True when loading priors from a dictionary or JSON file.
 
     Raises:
@@ -96,16 +98,19 @@ class ABCSampler:
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
+        max_proposals_per_batch: int = 10_000,
         parallel_worker_count: int = 10,
-        seed: int | None = None,
+        entropy: int | None = None,
         verbose: bool = True,
         keep_previous_population_data: bool = False,
+        results_inherit_entropy_only: bool = True,
         seed_parameter_name: str | None = "seed",
     ):
         if parallel_worker_count <= 0:
             raise ValueError("parallel_worker_count must be positive")
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
+        self.max_proposals_per_batch = max_proposals_per_batch
         self.parallel_worker_count = parallel_worker_count
         self.tolerance_values = tolerance_values
         self._variance_adapter = variance_adapter
@@ -119,8 +124,9 @@ class ABCSampler:
             target_data=target_data,
             model_runner=model_runner,
         )
-        self.seed = seed
+        self.entropy = entropy
         self.keep_previous_population_data = keep_previous_population_data
+        self.results_inherit_entropy_only = results_inherit_entropy_only
         self.verbose = verbose
 
         if isinstance(priors, PriorDistribution):
@@ -138,7 +144,8 @@ class ABCSampler:
 
             self._priors = load_priors_from_json(priors)
 
-        self.init_updater(perturbation_kernel)
+        self._init_random()
+        self.set_updater(perturbation_kernel)
         self._run_state = SamplerRunState(
             generation_count=len(self.tolerance_values),
             keep_previous_population_data=keep_previous_population_data,
@@ -254,41 +261,43 @@ class ABCSampler:
     def perturbation_kernel(self) -> PerturbationKernel:
         return self._updater.perturbation_kernel
 
-    def init_updater(self, perturbation_kernel: PerturbationKernel):
+    def _init_random(self):
         """
-        Initializes the particle updater with the current perturbation kernel, priors, variance adapter, seed sequence, and an empty particle population.
+        Initializes the random seed sequence for the sampler based on the sampler entropy.
         """
-        self._seed_sequence = SeedSequence(self.seed)
+        self._seed_sequence = SeedSequence(self.entropy)
+
+    def set_updater(self, perturbation_kernel: PerturbationKernel):
+        """
+        Initializes the particle updater with the current perturbation kernel, priors, variance adapter, and an empty particle population.
+        """
         self._updater = _ParticleUpdater(
             perturbation_kernel,
             self._priors,
             self._variance_adapter,
-            self._seed_sequence,
             ParticlePopulation(),
         )
 
     def sample_priors(
-        self, n: int = 1, seed_sequence: SeedSequence | None = None
+        self, n: int, seed_sequence: SeedSequence
     ) -> Sequence[dict[str, Any]]:
         """
         Return a sequence of states sampled from the prior distribution
         Args:
             n (int): The number of samples to draw from the prior distribution. Defaults to 1.
-            seed_sequence (SeedSequence | None): An optional SeedSequence to use for sampling. If None, the sampler's internal seed sequence will be used.
+            seed_sequence (SeedSequence): A seed sequence for random number generation.
         Returns:
             Sequence[dict[str, Any]]: A sequence of states sampled from the prior distribution, where each state is represented as a dictionary of parameter values.
         """
-        if not seed_sequence:
-            seed_sequence = self._seed_sequence
         return self._priors.sample(n, seed_sequence)
 
     def sample_particle_from_priors(
-        self, seed_sequence: SeedSequence | None = None
+        self, seed_sequence: SeedSequence
     ) -> Particle:
         """
         Return a single particle sampled from the prior distribution
         Args:
-            seed_sequence (SeedSequence | None): An optional SeedSequence to use for sampling. If None, the sampler's internal seed sequence will be used.
+            seed_sequence (SeedSequence): A seed sequence for random number generation.
         Returns:
             Particle: A single particle sampled from the prior distribution, represented as a Particle object.
         """
@@ -296,25 +305,23 @@ class ABCSampler:
             self.sample_priors(n=1, seed_sequence=seed_sequence)[0]
         )
 
-    def sample_particle(
-        self, seed_sequence: SeedSequence | None = None
-    ) -> Particle:
+    def sample_particle(self, seed_sequence: SeedSequence) -> Particle:
         """
         Return a single particle sampled from the current particle population based on their weights.
         Args:
-            seed_sequence (SeedSequence | None): An optional SeedSequence to use for sampling. If None, the sampler's internal seed sequence will be used.
+            seed_sequence (SeedSequence): A seed sequence for random number generation.
         Returns:
             Particle: A single particle sampled from the current particle population, represented as a Particle object.
         """
         return self._updater.sample_particle(seed_sequence)
 
     def sample_and_perturb_particle(
-        self, seed_sequence: SeedSequence | None = None
+        self, seed_sequence: SeedSequence
     ) -> Particle:
         """
         Return a single particle sampled from the current population and perturbed based on the perturbation kernel, ensuring that the perturbed particle satisfies the prior probability density constraints. If a perturbed particle fails to meet the prior constraints, a new particle is sampled with replacement and perturbed until a valid particle is obtained or the maximum number of attempts is reached.
         Args:
-            seed_sequence (SeedSequence | None): An optional SeedSequence to use for sampling. If None, the sampler's internal seed sequence will be used.
+            seed_sequence (SeedSequence): A seed sequence for random number generation.
         Returns:
             Particle: A single particle sampled from the current population and perturbed based on the perturbation kernel.
         """
@@ -517,6 +524,8 @@ class ABCSampler:
             config=BatchGenerationConfig(
                 generation_particle_count=self.generation_particle_count,
                 tolerance_values=self.tolerance_values,
+                seed_sequence=self._seed_sequence,
+                max_proposals_per_batch=self.max_proposals_per_batch,
                 sample_particle_from_priors=self.sample_particle_from_priors,
                 sample_and_perturb_particle=self.sample_and_perturb_particle,
                 particle_to_distance=self.particle_to_distance,
@@ -572,6 +581,13 @@ class ABCSampler:
             raise UserWarning(
                 "The number of successful particles in at least one generation is less than the specified generation_particle_count. This may indicate that the maximum particle proposal attempts are too low or the error tolerance values are too strict for the model and target data."
             )
+
+        if self.results_inherit_entropy_only:
+            # Initialize the seed sequence for sampling posterior particles in the results with the same entropy as the sampler for reproducibility across runs
+            result_seed_sequence = SeedSequence(self.entropy)
+        else:
+            # Initialize the seed sequence for sampling posterior particles in the results by spawining from the sampler's seed sequence to ensure different entropy
+            result_seed_sequence = self._seed_sequence.spawn(1)[0]
         return CalibrationResults(
             copy.deepcopy(self._updater),
             self.generator_history,
@@ -580,6 +596,7 @@ class ABCSampler:
                 self.generation_particle_count
             ),
             self.tolerance_values,
+            result_seed_sequence,
         )
 
     def _reset_after_run(
@@ -599,7 +616,8 @@ class ABCSampler:
             None: This helper does not return a value.
         """
 
-        self.init_updater(perturbation_kernel)
+        self._init_random()
+        self.set_updater(perturbation_kernel)
         self._run_state.reset()
 
     def run(

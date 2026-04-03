@@ -92,7 +92,7 @@ sampler = ABCSampler(
     outputs_to_distance=outputs_to_distance,
     target_data=5,
     model_runner=model,
-    seed=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
+    entropy=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
 )
 
 benchmark_results = []

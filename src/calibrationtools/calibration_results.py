@@ -1,5 +1,7 @@
 from typing import Any
 
+from numpy.random import SeedSequence
+
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_population_metrics import ParticlePopulationMetrics
@@ -18,6 +20,7 @@ class CalibrationResults:
         population_archive (dict[int, ParticlePopulation]): A dictionary mapping generation indices to their corresponding particle populations, representing the history of particle populations across generations if saved during the sampler run.
         success_counts (dict[str, list[int]]): A dictionary containing lists of particles per generation, success counts, and attempt counts for each generation, with keys "generation_particle_count", "successes" and "attempts".
         tolerance_values (list[float]): A list of tolerance values for each generation
+        seed_sequence (SeedSequence): The seed sequence used for sampling particles in the final generation, which can be used for reproducibility when sampling posterior particles from the results.
     Methods:
         fitted_params() -> list[str]: Returns a list of parameter names that were fitted during the calibration process, excluding any seed parameters.
         posterior_particles() -> ParticlePopulation: Returns the particle population representing the posterior distribution after the final generation of the calibration process.
@@ -36,6 +39,7 @@ class CalibrationResults:
         population_archive: dict[int, ParticlePopulation],
         success_counts: dict[str, list[int]],
         tolerance_values: list[float],
+        seed_sequence: SeedSequence,
     ):
         self._updater = _updater
         self.posterior = ParticlePopulationMetrics(
@@ -50,6 +54,7 @@ class CalibrationResults:
         self.smc_step_attempts = success_counts["attempts"]
         self.tolerance_values = tolerance_values
         self.priors = _updater.priors
+        self.seed_sequence = seed_sequence
 
         self.aggregate_acceptance_rate = (
             sum(self.smc_step_successes) / sum(self.smc_step_attempts)
@@ -142,10 +147,14 @@ class CalibrationResults:
         """
         if perturb:
             return [
-                self._updater.sample_and_perturb_particle() for _ in range(n)
+                self._updater.sample_and_perturb_particle(self.seed_sequence)
+                for _ in range(n)
             ]
         else:
-            return [self._updater.sample_particle() for _ in range(n)]
+            return [
+                self._updater.sample_particle(self.seed_sequence)
+                for _ in range(n)
+            ]
 
     def get_diagnostics(self) -> dict[str, Any]:
         """

@@ -1,6 +1,7 @@
 import copy
 
 import pytest
+from numpy.random import SeedSequence
 
 from calibrationtools.calibration_results import CalibrationResults
 from calibrationtools.particle_population import ParticlePopulation
@@ -11,15 +12,12 @@ from calibrationtools.particle_updater import _ParticleUpdater
 
 
 @pytest.fixture()
-def updater(
-    K, P, Vnorm, particle_population, seed_sequence
-) -> _ParticleUpdater:
+def updater(K, P, Vnorm, particle_population) -> _ParticleUpdater:
     return _ParticleUpdater(
         perturbation_kernel=K,
         priors=P,
         variance_adapter=Vnorm,
         particle_population=particle_population,
-        seed_sequence=seed_sequence,
     )
 
 
@@ -34,6 +32,7 @@ def test_init_calibration_results(updater):
             "attempts": [6, 12],
         },
         tolerance_values=[0.1, 0.05],
+        seed_sequence=SeedSequence(12345),
     )
     assert results.fitted_params == ["p"]
     assert isinstance(results.posterior_particles, ParticlePopulation)
@@ -60,6 +59,7 @@ def test_calibration_results_validation(updater):
                 "attempts": [6],
             },
             tolerance_values=[0.1, 0.05],
+            seed_sequence=SeedSequence(12345),
         )
 
     # Incorrect particle count for successes
@@ -74,6 +74,7 @@ def test_calibration_results_validation(updater):
                 "attempts": [6, 12],
             },
             tolerance_values=[0.1, 0.05],
+            seed_sequence=SeedSequence(12345),
         )
 
     # Incorrect number of successes in final step
@@ -88,6 +89,7 @@ def test_calibration_results_validation(updater):
                 "attempts": [6, 12],
             },
             tolerance_values=[0.1, 0.05],
+            seed_sequence=SeedSequence(12345),
         )
 
     # Incorrect total weight in particle population
@@ -105,6 +107,7 @@ def test_calibration_results_validation(updater):
                 "attempts": [6, 12],
             },
             tolerance_values=[0.1, 0.05],
+            seed_sequence=SeedSequence(12345),
         )
 
 
@@ -119,6 +122,7 @@ def test_sample_posterior_particles(updater):
             "attempts": [6, 12],
         },
         tolerance_values=[0.1, 0.05],
+        seed_sequence=SeedSequence(12345),
     )
     samples = results.sample_posterior_particles(n=2, perturb=False)
     assert len(samples) == 2
@@ -147,6 +151,7 @@ def test_sample_posterior_repeatable(updater):
             "attempts": [6, 12],
         },
         tolerance_values=[0.1, 0.05],
+        seed_sequence=SeedSequence(12345),
     )
     samples1 = results.sample_posterior_particles(n=5, perturb=True)
 
@@ -160,6 +165,7 @@ def test_sample_posterior_repeatable(updater):
             "attempts": [6, 12],
         },
         tolerance_values=[0.1, 0.05],
+        seed_sequence=SeedSequence(12345),
     )
     samples2 = results2.sample_posterior_particles(n=5, perturb=True)
 
@@ -177,6 +183,7 @@ def test_get_diagnostics(updater):
             "attempts": [6, 12],
         },
         tolerance_values=[0.1, 0.05],
+        seed_sequence=SeedSequence(12345),
     )
 
     diagnostics = results.get_diagnostics()

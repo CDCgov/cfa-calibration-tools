@@ -3,6 +3,7 @@ import time
 from copy import deepcopy
 
 import pytest
+from numpy.random import SeedSequence
 
 import calibrationtools.sampler as sampler_module
 from calibrationtools.calibration_results import CalibrationResults
@@ -62,7 +63,7 @@ def sampler(K, P, Vnorm) -> ABCSampler:
         outputs_to_distance=outputs_to_distance,
         target_data=0.75,
         model_runner=DummyModelRunner(),
-        seed=123,
+        entropy=123,
     )
 
 
@@ -78,7 +79,7 @@ def sampler_with_archive(K, P, Vnorm) -> ABCSampler:
         outputs_to_distance=outputs_to_distance,
         target_data=0.75,
         model_runner=DummyModelRunner(),
-        seed=123,
+        entropy=123,
         keep_previous_population_data=True,
     )
 
@@ -144,7 +145,7 @@ def test_sampler_run_does_not_archive_previous_population_by_default(
 
 
 def test_sampler_run_repeatable(sampler):
-    # Sampler produces same results when seed is set
+    # Sampler produces same results when entropy is set
     results1 = sampler.run_serial()
     results2 = sampler.run_serial()
 
@@ -190,27 +191,28 @@ def test_sampler_run_resets_internal_run_state(sampler_with_archive):
     assert len(results2.population_archive) == expected_archive_size
 
 
-def test_sample_from_priors(sampler):
+def test_sample_from_priors(sampler, seed_sequence):
     # Test that sampling from priors works before any population is set
-    states = sampler.sample_priors(5)
+    states = sampler.sample_priors(5, seed_sequence)
     assert len(states) == 5
 
     # Assert that priors continue to sample from seed sequence for new variants
-    pop_small = sampler.sample_priors(2)
+    pop_small = sampler.sample_priors(2, seed_sequence)
     assert len(pop_small) == 2
     assert all(p not in states for p in pop_small)
 
 
-def test_sample_from_priors_repeatable(sampler):
-    # Sampler reproduces same samples from priors when seed is set
+def test_sample_from_priors_repeatable(sampler, seed_sequence):
+    # Sampler reproduces same samples from priors when entropy is set
     def get_sampler():
         return deepcopy(sampler)
 
     sampler1 = get_sampler()
     sampler2 = get_sampler()
+    new_sequence = SeedSequence(seed_sequence.entropy)
 
-    states1 = sampler1.sample_priors(5)
-    states2 = sampler2.sample_priors(5)
+    states1 = sampler1.sample_priors(5, seed_sequence)
+    states2 = sampler2.sample_priors(5, new_sequence)
 
     assert states1 == states2
 
@@ -257,7 +259,7 @@ def test_sampler_run_parallel_with_unpickleable_runner(K, P, Vnorm):
         outputs_to_distance=outputs_to_distance,
         target_data=0.75,
         model_runner=UnpickleableModelRunner(),
-        seed=123,
+        entropy=123,
     )
 
     results = sampler.run_parallel(max_workers=2)
@@ -293,7 +295,7 @@ def test_sampler_run_parallel_batches_with_unpickleable_runner(K, P, Vnorm):
         outputs_to_distance=outputs_to_distance,
         target_data=0.75,
         model_runner=UnpickleableModelRunner(),
-        seed=123,
+        entropy=123,
     )
 
     results = sampler.run_parallel_batches(
@@ -329,7 +331,7 @@ def test_sampler_parallel_worker_count_default_is_configured(
         target_data=0.75,
         model_runner=DummyModelRunner(),
         parallel_worker_count=3,
-        seed=123,
+        entropy=123,
     )
 
     sampler.run_parallel()
@@ -350,7 +352,7 @@ def test_sampler_parallel_worker_failure_does_not_leak_future_errors(
         outputs_to_distance=outputs_to_distance,
         target_data=0.75,
         model_runner=NonThreadSafeModelRunner(),
-        seed=123,
+        entropy=123,
         verbose=False,
     )
 
@@ -374,7 +376,7 @@ def test_sampler_verbose_false_suppresses_output(K, P, Vnorm, capfd):
         outputs_to_distance=outputs_to_distance,
         target_data=0.75,
         model_runner=DummyModelRunner(),
-        seed=123,
+        entropy=123,
         verbose=False,
     )
 
@@ -382,3 +384,44 @@ def test_sampler_verbose_false_suppresses_output(K, P, Vnorm, capfd):
 
     captured = capfd.readouterr()
     assert captured.out == ""
+
+
+def test_results_inherit_entropy(K, P, Vnorm, seed_sequence):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5, 0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        entropy=seed_sequence.entropy,
+    )
+
+    results = sampler.run_serial()
+
+    assert results.seed_sequence.entropy == seed_sequence.entropy
+    assert results.seed_sequence.spawn_key == sampler._seed_sequence.spawn_key
+
+
+def test_results_dont_inherit_entropy(K, P, Vnorm, seed_sequence):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5, 0.1],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        entropy=seed_sequence.entropy,
+        results_inherit_entropy_only=False,
+    )
+
+    results = sampler.run_serial()
+
+    assert results.seed_sequence.entropy == seed_sequence.entropy
+    assert results.seed_sequence.spawn_key != sampler._seed_sequence.spawn_key

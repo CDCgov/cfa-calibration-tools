@@ -1,6 +1,7 @@
 import time
 from io import StringIO
 
+from numpy.random import SeedSequence
 from rich.console import Console
 
 from calibrationtools.batch_generation_runner import (
@@ -23,6 +24,8 @@ def test_batch_generation_runner_accepts_equal_tolerance():
         config=BatchGenerationConfig(
             generation_particle_count=1,
             tolerance_values=[0.5],
+            seed_sequence=SeedSequence(123),
+            max_proposals_per_batch=10_000,
             sample_particle_from_priors=lambda _: Particle({"p": 0.25}),
             sample_and_perturb_particle=lambda _: Particle({"p": 0.25}),
             particle_to_distance=lambda particle, **_: abs(
@@ -58,6 +61,8 @@ def test_batch_generation_runner_run_generation_records_state():
         config=BatchGenerationConfig(
             generation_particle_count=1,
             tolerance_values=[0.5],
+            seed_sequence=SeedSequence(123),
+            max_proposals_per_batch=10_000,
             sample_particle_from_priors=lambda _: Particle({"p": 0.25}),
             sample_and_perturb_particle=lambda _: Particle({"p": 0.8}),
             particle_to_distance=lambda particle, **_: abs(

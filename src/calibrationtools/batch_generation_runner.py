@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
 
+from numpy.random import SeedSequence
+
 from .async_runner import run_coroutine_from_sync
 from .particle import Particle
 from .particle_population import ParticlePopulation
@@ -33,6 +35,10 @@ class BatchGenerationConfig:
             to complete a generation.
         tolerance_values (list[float]): Acceptance tolerance for each
             generation.
+        seed_sequence (SeedSequence): A seed sequence for random number generation.
+        max_proposals_per_batch (int): Maximum number of particles to propose
+            for acceptance in one batch. This is a soft limit that may be
+            exceeded if the user specifies a larger batch size.
         sample_particle_from_priors (Callable[[Any], Particle]): Proposal
             function for the initial generation.
         sample_and_perturb_particle (Callable[[Any], Particle]): Proposal
@@ -49,6 +55,8 @@ class BatchGenerationConfig:
 
     generation_particle_count: int
     tolerance_values: list[float]
+    seed_sequence: SeedSequence
+    max_proposals_per_batch: int
     sample_particle_from_priors: Callable[[Any], Particle]
     sample_and_perturb_particle: Callable[[Any], Particle]
     particle_to_distance: Callable[..., float]
@@ -262,7 +270,7 @@ class BatchGenerationRunner:
         """
 
         effective_batchsize = (
-            10_000
+            self.config.max_proposals_per_batch
             if warmup and state.proposed_population.size > 0
             else batchsize
         )
@@ -302,7 +310,10 @@ class BatchGenerationRunner:
             if generation == 0
             else self.config.sample_and_perturb_particle
         )
-        return [sample_method(None) for _ in range(sample_size)]
+        return [
+            sample_method(self.config.seed_sequence)
+            for _ in range(sample_size)
+        ]
 
     def _evaluate_particle_chunk(
         self,
