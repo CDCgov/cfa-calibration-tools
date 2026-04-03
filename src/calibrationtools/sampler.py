@@ -769,11 +769,7 @@ class ABCSampler:
             self.perturbation_kernel
         )
         overall_start_time = time.time()
-        executor = (
-            ThreadPoolExecutor(max_workers=actual_workers)
-            if actual_workers > 1
-            else None
-        )
+        executor = self._build_executor(max_workers=actual_workers)
 
         try:
             for generation in range(len(self.tolerance_values)):
