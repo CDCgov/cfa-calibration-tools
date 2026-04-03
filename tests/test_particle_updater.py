@@ -4,10 +4,8 @@ from calibrationtools import ParticlePopulation, _ParticleUpdater
 
 
 @pytest.fixture
-def particle_updater(
-    seed_sequence, K, P, V, particle_population
-) -> _ParticleUpdater:
-    updater = _ParticleUpdater(K, P, V, seed_sequence, particle_population)
+def particle_updater(K, P, V, particle_population) -> _ParticleUpdater:
+    updater = _ParticleUpdater(K, P, V, particle_population)
     return updater
 
 
@@ -34,15 +32,19 @@ def test_set_particle_population_normalizes_weights(
     )
 
 
-def test_sample_particle(particle_updater, particle_population):
+def test_sample_particle(particle_updater, particle_population, seed_sequence):
     assert particle_updater.particle_population == particle_population
-    sampled_particle = particle_updater.sample_particle()
+    sampled_particle = particle_updater.sample_particle(seed_sequence)
     assert sampled_particle in particle_population.particles
 
 
-def test_sample_and_perturb_particle(particle_updater, particle_population):
+def test_sample_and_perturb_particle(
+    particle_updater, particle_population, seed_sequence
+):
     assert particle_updater.particle_population == particle_population
-    perturbed_particle = particle_updater.sample_and_perturb_particle()
+    perturbed_particle = particle_updater.sample_and_perturb_particle(
+        seed_sequence
+    )
     assert (
         perturbed_particle not in particle_population.particles
     )  # Perturbed particle should not be the same as any in the population
@@ -54,11 +56,11 @@ def test_sample_and_perturb_particle(particle_updater, particle_population):
 
 
 def test_sample_and_perturb_particle_max_attempts(
-    particle_updater, particle_population
+    particle_updater, particle_population, seed_sequence
 ):
     # Create a perturbation kernel that always produces invalid particles
     class InvalidPerturbationKernel:
-        def perturb(self, current_particle, seed_sequence):
+        def perturb(self, _current_particle, _seed_sequence):
             return {
                 "p": -1.0,
                 "seed": 0,
@@ -68,7 +70,9 @@ def test_sample_and_perturb_particle_max_attempts(
     particle_updater.particle_population = particle_population
 
     with pytest.raises(RuntimeError):
-        particle_updater.sample_and_perturb_particle(max_attempts=5)
+        particle_updater.sample_and_perturb_particle(
+            seed_sequence, max_attempts=5
+        )
 
 
 def test_calculate_weight(

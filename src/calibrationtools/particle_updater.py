@@ -20,7 +20,6 @@ class _ParticleUpdater:
         perturbation_kernel (PerturbationKernel): The kernel used to perturb particles.
         priors (PriorDistribution): The prior distribution of particle states. This remains fixed regardless of population changes.
         variance_adapter (VarianceAdapter): The adapter used to adjust the variance of the perturbation kernel according to population particle state variance.
-        seed_sequence (SeedSequence): A seed sequence for random number generation.
         particle_population (ParticlePopulation | None): The current population of particles.
 
     Methods:
@@ -45,13 +44,11 @@ class _ParticleUpdater:
         perturbation_kernel: PerturbationKernel,
         priors: PriorDistribution,
         variance_adapter: VarianceAdapter,
-        seed_sequence: SeedSequence,
         particle_population: ParticlePopulation | None = None,
     ):
         self.perturbation_kernel = perturbation_kernel
         self.priors = priors
         self.variance_adapter = variance_adapter
-        self.seed_sequence = seed_sequence
         self._particle_population = (
             particle_population
             if particle_population
@@ -79,10 +76,12 @@ class _ParticleUpdater:
             self._particle_population.normalize_weights()
         self.adapt_variance()
 
-    def sample_particle(self) -> Particle:
+    def sample_particle(self, seed_sequence: SeedSequence) -> Particle:
         """
         Samples a particle from the particle population based on their weights.
 
+        Args:
+            seed_sequence (SeedSequence): A seed sequence for random number generation.
         Returns:
             Particle: The sampled particle from the particle population.
 
@@ -93,14 +92,17 @@ class _ParticleUpdater:
             raise ValueError(
                 "Particle population is empty. Please add entries to the particle population before sampling."
             )
-        idx = spawn_rng(self.seed_sequence).choice(
+
+        idx = spawn_rng(seed_sequence).choice(
             self.particle_population.size,
             p=self.particle_population.weights,
         )
         return self.particle_population.particles[idx]
 
     def sample_and_perturb_particle(
-        self, max_attempts: int = np.iinfo(np.int32).max
+        self,
+        seed_sequence: SeedSequence,
+        max_attempts: int = np.iinfo(np.int32).max,
     ) -> Particle:
         """
         Samples a particle from the current population and applies a perturbation to it,
@@ -110,20 +112,23 @@ class _ParticleUpdater:
         maximum number of attempts is reached.
 
         Args:
+            seed_sequence (SeedSequence): A seed sequence for random number generation.
             max_attempts (int): The maximum number of attempts to sample and perturb
                 a particle before aborting. Defaults to 10,000.
 
         Returns:
-            Particle: A new particle object created from the perturbed particle.
+            Particle: A new particle object created from the perturbed particle
 
         Raises:
             RuntimeError: If the method fails to sample and perturb a particle
                 within the specified maximum number of attempts.
         """
         for _ in range(max_attempts):
-            current_particle = self.sample_particle()
+            current_particle = self.sample_particle(
+                seed_sequence=seed_sequence
+            )
             new_particle = self.perturbation_kernel.perturb(
-                current_particle, self.seed_sequence
+                current_particle, seed_sequence
             )
             if self.priors.probability_density(new_particle) > 0:
                 return Particle(new_particle)

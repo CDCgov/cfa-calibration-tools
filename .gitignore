@@ -1,4 +1,5 @@
 # Data
+benchmarks/
 *.csv
 *.tsv
 *.parquet

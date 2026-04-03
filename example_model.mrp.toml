@@ -6,7 +6,8 @@ version = "0.0.1"
 
 [runtime]
 env = "uv"
-command = "example_model"
+command = "python"
+args = ["-m", "example_model"]
 
 [output]
 spec = "filesystem"
