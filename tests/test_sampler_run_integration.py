@@ -93,7 +93,7 @@ def example_model_sampler() -> ABCSampler:
         outputs_to_distance=outputs_to_distance,
         target_data=5,
         model_runner=model,
-        entropy=0x60636577C7AD93BBE463F30A6241FDE4,  # This value is the intial entropy for the `sampler.seed_sequence`
+        entropy=0x60636577C7AD93BBE463F30A6241FDE4,
     )
     return sampler
 
