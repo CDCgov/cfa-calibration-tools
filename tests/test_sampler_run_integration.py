@@ -1,11 +1,11 @@
 """Run each calibration method for the example branching process."""
 
 import numpy as np
+import pytest
+from example_model import Binom_BP_Model
 from mrp import Environment
 from mrp.api import apply_dict_overrides
-import pytest
 
-from calibrationtools.particle_population import ParticlePopulation
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
     MultivariateNormalKernel,
@@ -13,7 +13,7 @@ from calibrationtools.perturbation_kernel import (
 )
 from calibrationtools.sampler import ABCSampler
 from calibrationtools.variance_adapter import AdaptMultivariateNormalVariance
-from example_model import Binom_BP_Model
+
 
 @pytest.fixture()
 def example_model_defaults() -> dict:
@@ -24,6 +24,7 @@ def example_model_defaults() -> dict:
         "p": 0.5,
         "max_infect": 500,
     }
+
 
 @pytest.fixture()
 def example_model_sampler() -> ABCSampler:
@@ -71,7 +72,6 @@ def example_model_sampler() -> ABCSampler:
 
     V = AdaptMultivariateNormalVariance()
 
-
     ##===================================#
     ## Run ABC-SMC
     ##===================================#
@@ -80,10 +80,8 @@ def example_model_sampler() -> ABCSampler:
         model_params = apply_dict_overrides(base_inputs, particle)
         return model_params
 
-
     def outputs_to_distance(model_output, target_data):
         return abs(np.sum(model_output) - target_data)
-
 
     sampler = ABCSampler(
         generation_particle_count=15,
@@ -100,12 +98,26 @@ def example_model_sampler() -> ABCSampler:
     return sampler
 
 
-def test_sampler_run_integration(example_model_sampler, example_model_defaults):
-    results_serial = example_model_sampler.run(execution="serial", base_inputs=example_model_defaults)
-    results_parallel = example_model_sampler.run(execution="parallel",base_inputs=example_model_defaults)
+def test_sampler_run_integration(
+    example_model_sampler, example_model_defaults
+):
+    results_serial = example_model_sampler.run(
+        execution="serial", base_inputs=example_model_defaults
+    )
+    results_parallel = example_model_sampler.run(
+        execution="parallel", base_inputs=example_model_defaults
+    )
 
-    assert results_serial.posterior_particles.ess == results_parallel.posterior_particles.ess
+    assert (
+        results_serial.posterior_particles.ess
+        == results_parallel.posterior_particles.ess
+    )
 
-def test_sampler_run_parallel_batches_integration(example_model_sampler, example_model_defaults):
-    results_parallel_batches = example_model_sampler.run_parallel_batches(base_inputs=example_model_defaults)
+
+def test_sampler_run_parallel_batches_integration(
+    example_model_sampler, example_model_defaults
+):
+    results_parallel_batches = example_model_sampler.run_parallel_batches(
+        base_inputs=example_model_defaults
+    )
     assert results_parallel_batches.posterior_particles.ess > 0
