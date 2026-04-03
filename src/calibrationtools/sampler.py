@@ -28,6 +28,7 @@ from .prior_distribution import PriorDistribution
 from .sampler_reporting import SamplerReporter
 from .sampler_run_state import SamplerRunState
 from .sampler_types import GeneratorSlot
+from .throttle_manager import CallingThrottle, CallingThrottleManager
 from .variance_adapter import VarianceAdapter
 
 
@@ -58,6 +59,8 @@ class ABCSampler:
             particles between SMC steps.
         results_inherit_entropy_only (bool): Whether to initialize the seed sequence for sampling posterior particles in the results with only the sampler entropy or whether to spawn a new seed sequence from the sampler.
         seed_parameter_name (str | None): The name of the seed parameter to include in the priors if `incl_seed_parameter` is True when loading priors from a dictionary or JSON file.
+        call_rate_limit_per_second (float | None): Optional limit on the rate of calls to the particle evaluation function in calls per second. If None, no throttling is applied. Defaults to None.
+
 
     Raises:
         ValueError: If `parallel_worker_count` is not positive.
@@ -105,6 +108,7 @@ class ABCSampler:
         keep_previous_population_data: bool = False,
         results_inherit_entropy_only: bool = True,
         seed_parameter_name: str | None = "seed",
+        call_rate_limit_per_second: float | None = None,
     ):
         if parallel_worker_count <= 0:
             raise ValueError("parallel_worker_count must be positive")
@@ -127,6 +131,7 @@ class ABCSampler:
         self.entropy = entropy
         self.keep_previous_population_data = keep_previous_population_data
         self.results_inherit_entropy_only = results_inherit_entropy_only
+        self.call_rate_limit_per_second = call_rate_limit_per_second
         self.verbose = verbose
 
         if isinstance(priors, PriorDistribution):
@@ -599,6 +604,53 @@ class ABCSampler:
             result_seed_sequence,
         )
 
+    def _build_executor(
+        self, max_workers: int = 1
+    ) -> ThreadPoolExecutor | None:
+        """Build the executor for parallel execution with optional throttling.
+
+        This helper constructs a ThreadPoolExecutor for parallel execution when
+        `max_workers` is greater than 1 and applies a calling throttle to limit
+        the rate of calls to the particle evaluation function when
+        `call_rate_limit_per_second` is provided in the sampler.
+
+        Args:
+            max_workers (int): The maximum number of worker threads to use for parallel execution. Defaults to 1.
+
+        Returns:
+            ThreadPoolExecutor | None: A ThreadPoolExecutor configured for the specified number of workers and throttling, or None if `max_workers` is 1.
+        """
+        if max_workers > 1:
+            if self.call_rate_limit_per_second is not None:
+                assert self.call_rate_limit_per_second > 0, (
+                    "call_rate_limit_per_second must be positive if specified"
+                )
+                with CallingThrottleManager() as manager:
+                    throttle = manager.calling_throttle(
+                        nb_call_times_limit=max_workers,
+                        expired_time=(
+                            max_workers / self.call_rate_limit_per_second
+                        ),
+                    )
+
+                    def set_global_throttle(throttle: CallingThrottle):
+                        global calling_throttle
+                        calling_throttle = throttle
+
+                    initializer = set_global_throttle(throttle)
+                    initargs = (throttle,)
+            else:
+                initializer = None
+                initargs = ()
+
+            return ThreadPoolExecutor(
+                max_workers=max_workers,
+                initializer=initializer,
+                initargs=initargs,
+            )
+        else:
+            return None
+
     def _reset_after_run(
         self,
         perturbation_kernel: PerturbationKernel,
@@ -658,11 +710,7 @@ class ABCSampler:
         particlewise_runner = self._build_particlewise_generation_runner(
             reporter=reporter
         )
-        parallel_executor = (
-            ThreadPoolExecutor(max_workers=n_workers)
-            if execution == "parallel" and n_workers > 1
-            else None
-        )
+        parallel_executor = self._build_executor(max_workers=n_workers)
 
         try:
             for generation in range(len(self.tolerance_values)):
