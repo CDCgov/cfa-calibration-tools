@@ -6,6 +6,8 @@ reporting, and population finalization out of `ABCSampler`.
 """
 
 import asyncio
+import os
+import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -589,6 +591,9 @@ class ParticlewiseGenerationRunner:
             attempts=generation_stats.attempts,
             successes=generation_stats.successes,
         )
+        os.makedirs(".cache", exist_ok=True)
+        with open(f".cache/population_{request.generation}.pkl", "wb") as f:
+            pickle.dump(state, f)
         self.config.replace_particle_population(state.proposed_population)
         weights_time = (
             time.time()
