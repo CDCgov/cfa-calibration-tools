@@ -38,6 +38,7 @@ class CalibrationResults:
         generator_history: dict[int, list[GeneratorSlot]],
         population_archive: dict[int, ParticlePopulation],
         success_counts: dict[str, list[int]],
+        distance_history: dict[int, list[dict[str, int | float]]],
         tolerance_values: list[float],
         seed_sequence: SeedSequence,
     ):
@@ -52,6 +53,7 @@ class CalibrationResults:
         ]
         self.smc_step_successes = success_counts["successes"]
         self.smc_step_attempts = success_counts["attempts"]
+        self.distance_history = distance_history
         self.tolerance_values = tolerance_values
         self.priors = _updater.priors
         self.seed_sequence = seed_sequence
@@ -155,6 +157,18 @@ class CalibrationResults:
                 self._updater.sample_particle(self.seed_sequence)
                 for _ in range(n)
             ]
+
+    def flatten_distance_history(self) -> dict[int, list[float]]:
+        """
+        Flattens the distance history to a dictionary mapping generation indices to lists of distances.
+
+        Returns:
+            dict[int, list[float]]: A dictionary where keys are generation indices and values are lists of distances for that generation.
+        """
+        return {
+            gen_idx: [entry["distance"] for entry in entries]
+            for gen_idx, entries in self.distance_history.items()
+        }
 
     def get_diagnostics(self) -> dict[str, Any]:
         """

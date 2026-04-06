@@ -558,6 +558,27 @@ class ABCSampler:
                     f"Keyword argument '{key}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
                 )
 
+    def _build_executor(
+        self, max_workers: int = 1
+    ) -> ThreadPoolExecutor | None:
+        """Build the executor for parallel execution with optional throttling.
+
+        This helper constructs a ThreadPoolExecutor for parallel execution when
+        `max_workers` is greater than 1
+
+        Args:
+            max_workers (int): The maximum number of worker threads to use for parallel execution. Defaults to 1.
+
+        Returns:
+            ThreadPoolExecutor | None: A ThreadPoolExecutor configured for the specified number of workers, or None if `max_workers` is 1.
+        """
+        if max_workers > 1:
+            return ThreadPoolExecutor(
+                max_workers=max_workers,
+            )
+        else:
+            return None
+
     def _build_results(self) -> CalibrationResults:
         """Build the immutable results snapshot for the completed run.
 
@@ -595,6 +616,7 @@ class ABCSampler:
             self._run_state.build_success_counts(
                 self.generation_particle_count
             ),
+            self._run_state.distance_history,
             self.tolerance_values,
             result_seed_sequence,
         )
@@ -658,11 +680,7 @@ class ABCSampler:
         particlewise_runner = self._build_particlewise_generation_runner(
             reporter=reporter
         )
-        parallel_executor = (
-            ThreadPoolExecutor(max_workers=n_workers)
-            if execution == "parallel" and n_workers > 1
-            else None
-        )
+        parallel_executor = self._build_executor(max_workers=n_workers)
 
         try:
             for generation in range(len(self.tolerance_values)):
@@ -721,11 +739,7 @@ class ABCSampler:
             self.perturbation_kernel
         )
         overall_start_time = time.time()
-        executor = (
-            ThreadPoolExecutor(max_workers=actual_workers)
-            if actual_workers > 1
-            else None
-        )
+        executor = self._build_executor(max_workers=actual_workers)
 
         try:
             for generation in range(len(self.tolerance_values)):

@@ -31,6 +31,7 @@ def test_init_calibration_results(updater):
             "successes": [3, 3],
             "attempts": [6, 12],
         },
+        distance_history={},
         tolerance_values=[0.1, 0.05],
         seed_sequence=SeedSequence(12345),
     )
@@ -58,6 +59,7 @@ def test_calibration_results_validation(updater):
                 "successes": [3],
                 "attempts": [6],
             },
+            distance_history={},
             tolerance_values=[0.1, 0.05],
             seed_sequence=SeedSequence(12345),
         )
@@ -73,6 +75,7 @@ def test_calibration_results_validation(updater):
                 "successes": [3, 10],
                 "attempts": [6, 12],
             },
+            distance_history={},
             tolerance_values=[0.1, 0.05],
             seed_sequence=SeedSequence(12345),
         )
@@ -88,6 +91,7 @@ def test_calibration_results_validation(updater):
                 "successes": [3, 2],
                 "attempts": [6, 12],
             },
+            distance_history={},
             tolerance_values=[0.1, 0.05],
             seed_sequence=SeedSequence(12345),
         )
@@ -106,6 +110,7 @@ def test_calibration_results_validation(updater):
                 "successes": [3, 3],
                 "attempts": [6, 12],
             },
+            distance_history={},
             tolerance_values=[0.1, 0.05],
             seed_sequence=SeedSequence(12345),
         )
@@ -121,6 +126,7 @@ def test_sample_posterior_particles(updater):
             "successes": [3, 3],
             "attempts": [6, 12],
         },
+        distance_history={},
         tolerance_values=[0.1, 0.05],
         seed_sequence=SeedSequence(12345),
     )
@@ -150,6 +156,7 @@ def test_sample_posterior_repeatable(updater):
             "successes": [3, 3],
             "attempts": [6, 12],
         },
+        distance_history={},
         tolerance_values=[0.1, 0.05],
         seed_sequence=SeedSequence(12345),
     )
@@ -164,6 +171,7 @@ def test_sample_posterior_repeatable(updater):
             "successes": [3, 3],
             "attempts": [6, 12],
         },
+        distance_history={},
         tolerance_values=[0.1, 0.05],
         seed_sequence=SeedSequence(12345),
     )
@@ -182,6 +190,7 @@ def test_get_diagnostics(updater):
             "successes": [3, 3],
             "attempts": [6, 12],
         },
+        distance_history={},
         tolerance_values=[0.1, 0.05],
         seed_sequence=SeedSequence(12345),
     )

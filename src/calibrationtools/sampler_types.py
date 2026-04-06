@@ -38,11 +38,14 @@ class AcceptedProposal:
         slot_id (int): Proposal-slot identifier within the generation.
         particle (Particle | None): Accepted particle for the slot, or `None`
             when attempts were exhausted.
+        distance (float | None): Distance of the accepted particle, or `None`
+            when attempts were exhausted.
         attempts (int): Proposal attempts consumed for the slot.
     """
 
     slot_id: int
     particle: Particle | None
+    distance: float | None
     attempts: int
 
 
