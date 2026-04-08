@@ -557,8 +557,9 @@ class ParticlewiseGenerationRunner:
                 without producing an accepted particle.
         """
 
-        with self.config.reporter.create_weight_progress() as progress:
-            handle = self.config.reporter.start_weight_task(
+        with self.config.reporter.create_task_progress() as progress:
+            handle = self.config.reporter.start_task(
+                description="Calculating weights... ",
                 progress=progress,
                 total=self.config.generation_particle_count,
             )

@@ -136,7 +136,7 @@ class SamplerReporter:
             eta=formatting._format_time(eta_seconds),
         )
 
-    def create_weight_progress(self) -> Progress:
+    def create_task_progress(self) -> Progress:
         """Create the progress layout used during weight calculation.
 
         This helper centralizes the simplified Rich progress display used for
@@ -156,8 +156,9 @@ class SamplerReporter:
             transient=True,
         )
 
-    def start_weight_task(
+    def start_task(
         self,
+        description: str,
         progress: Progress,
         total: int,
     ) -> ProgressHandle:
@@ -167,6 +168,7 @@ class SamplerReporter:
         calculation and returns a handle for later updates.
 
         Args:
+            description (str): String argument to place at the head of the prgoress bar describing the tasks being executed
             progress (Progress): Active Rich progress instance.
             total (int): Total number of accepted particles to process.
 
@@ -174,7 +176,7 @@ class SamplerReporter:
             ProgressHandle: Handle referencing the created progress task.
         """
 
-        task_id = progress.add_task("Calculating weights...", total=total)
+        task_id = progress.add_task(description=description, total=total)
         return ProgressHandle(progress=progress, task_id=task_id)
 
     def advance(self, handle: ProgressHandle, steps: int = 1) -> None:
