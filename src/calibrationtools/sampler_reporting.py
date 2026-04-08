@@ -263,7 +263,9 @@ class SamplerReporter:
             f"total time: {formatting._format_time(total_time)})"
         )
 
-    def print_run_summary(self, total_time: float) -> None:
+    def print_run_summary(
+        self, total_time: float, process_name: str = "Calibration"
+    ) -> None:
         """Print the summary for the completed sampler run.
 
         This helper keeps the final run-completion message in one place so the
@@ -271,12 +273,12 @@ class SamplerReporter:
 
         Args:
             total_time (float): Seconds elapsed for the full sampler run.
-
+            process_name (str): Optional string to use describing a process being tracked. Defaults to 'Calibration'
         Returns:
             None: This helper does not return a value.
         """
 
         self.console.print(
-            f"[green]✓[/green] Calibration complete! "
+            f"[green]✓[/green] {process_name} complete! "
             f"(total time: {formatting._format_time(total_time)})"
         )
