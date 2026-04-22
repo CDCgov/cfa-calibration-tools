@@ -6,6 +6,7 @@ from numpy.random import default_rng
 
 class Binom_BP_Model(MRPModel):
     def run(self):
+        print("Running Binomial Branching Process Model...")
         results = self.simulate(self.input)
         self.write_csv(
             "output.csv",

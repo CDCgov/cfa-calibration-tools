@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from importlib import import_module
+from pathlib import Path
 from typing import Any
+
+_WORKSPACE_PACKAGE = (
+    Path(__file__).resolve().parents[2]
+    / "packages"
+    / "example_model"
+    / "src"
+    / "example_model"
+)
+if _WORKSPACE_PACKAGE.is_dir():
+    __path__.append(str(_WORKSPACE_PACKAGE))
 
 _EXPORTS = {
     "Binom_BP_Model": (".example_model", "Binom_BP_Model"),

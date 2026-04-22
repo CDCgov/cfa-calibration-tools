@@ -1,5 +1,7 @@
 # Data
 benchmarks/
+input/
+output/
 *.csv
 *.tsv
 *.parquet

@@ -46,9 +46,51 @@ uv run mrp run example_model.mrp.toml
 ```
 
 ## Running the calibration
-To run the calibration example for this model, run
+To run the calibration example in local Python mode, run
 
 ```bash
 uv sync --all-packages
 uv run python -m example_model.calibrate
 ```
+
+This is the fast path. It evaluates each simulation directly with
+`Binom_BP_Model.simulate(...)` inside the current Python process, without
+going through `mrp`.
+
+To run the same calibration with the Docker-backed MRP config, first build
+the image:
+
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+```
+
+To build the same image and publish it to the Azure Container Registry used by
+CloudOps:
+
+```bash
+uv run --group cloudops python packages/example_model/create_runner.py --push-latest
+```
+
+To check selected CloudOps resources, provide any combination of `--image`,
+`--pool`, and `--job`. If you provide a pool without a job, the script will
+list jobs currently attached to that pool:
+
+```bash
+uv run --group cloudops python packages/example_model/check_runner.py --image cfa-calibration-tools-example-model:latest --pool your-pool-name
+```
+
+Then run:
+
+```bash
+uv sync --all-packages
+uv run python -m example_model.calibrate --docker
+```
+
+The Docker-backed config resolves the container UID/GID from the current host
+user so the bind-mounted `./output` directory remains writable. If an older
+run left behind an `output/` directory with different ownership, remove it
+before retrying.
+
+In Docker mode, calibration uses `mrp` under the covers for each simulation
+using `example_model.mrp.docker.toml`. You can also point at an explicit
+MRP config file with `--mrp-config path/to/config.toml`.

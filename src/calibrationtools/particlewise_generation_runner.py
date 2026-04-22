@@ -16,6 +16,7 @@ from numpy.random import SeedSequence
 
 from .async_runner import run_coroutine_from_sync
 from .particle import Particle
+from .particle_evaluator import build_evaluation_context_kwargs
 from .particle_population import ParticlePopulation
 from .sampler_reporting import ProgressHandle, SamplerReporter
 from .sampler_run_state import SamplerRunState
@@ -179,6 +180,7 @@ class ParticlewiseGenerationRunner:
         sample_method: Callable[[SeedSequence | None], Particle],
         evaluation_kwargs: dict[str, Any],
         max_attempts: int | None = None,
+        generation: int = 0,
     ) -> AcceptedProposal:
         """Propose particles until one is accepted or attempts are exhausted.
 
@@ -195,6 +197,9 @@ class ParticlewiseGenerationRunner:
                 particle evaluation.
             max_attempts (int | None): Override for the maximum number of
                 proposal attempts allowed for the slot.
+            generation (int): Zero-based generation index used for evaluation
+                context metadata. Defaults to 0 to preserve the previous public
+                call shape for direct callers.
 
         Returns:
             AcceptedProposal: Accepted particle data for the slot, or a record
@@ -207,9 +212,15 @@ class ParticlewiseGenerationRunner:
 
         for attempt in range(max_attempts):
             proposed_particle = sample_method(generator.seed_sequence)
+            particle_kwargs = build_evaluation_context_kwargs(
+                generation=generation,
+                proposal_index=generator.id,
+                attempt_index=attempt,
+                base_kwargs=evaluation_kwargs,
+            )
             err = self.config.particle_to_distance(
                 proposed_particle,
-                **evaluation_kwargs,
+                **particle_kwargs,
             )
             if err <= tolerance:
                 return AcceptedProposal(
@@ -308,6 +319,7 @@ class ParticlewiseGenerationRunner:
                 tolerance=self.config.tolerance_values[request.generation],
                 sample_method=state.sample_method,
                 evaluation_kwargs=request.particle_kwargs,
+                generation=request.generation,
             )
             accepted_list.append(accepted_proposal)
             total_attempts += accepted_proposal.attempts
@@ -360,6 +372,7 @@ class ParticlewiseGenerationRunner:
             tolerance=self.config.tolerance_values[request.generation],
             sample_method=state.sample_method,
             evaluation_kwargs=request.particle_kwargs,
+            generation=request.generation,
         )
         tasks = [
             loop.run_in_executor(request.parallel_executor, worker, generator)

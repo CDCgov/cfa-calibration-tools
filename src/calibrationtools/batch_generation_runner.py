@@ -16,6 +16,7 @@ from numpy.random import SeedSequence
 
 from .async_runner import run_coroutine_from_sync
 from .particle import Particle
+from .particle_evaluator import build_evaluation_context_kwargs
 from .particle_population import ParticlePopulation
 from .sampler_reporting import ProgressHandle, SamplerReporter
 from .sampler_run_state import SamplerRunState
@@ -111,10 +112,14 @@ class BatchGenerationState:
         proposed_population (ParticlePopulation): Population being filled for
             the active generation.
         attempts (int): Total proposal attempts consumed so far.
+        submitted (int): Total proposals assigned stable submission indices so
+            progress reporting and evaluation context remain consistent across
+            chunks.
     """
 
     proposed_population: ParticlePopulation
     attempts: int = 0
+    submitted: int = 0
 
 
 class BatchGenerationRunner:
@@ -317,6 +322,8 @@ class BatchGenerationRunner:
 
     def _evaluate_particle_chunk(
         self,
+        generation: int,
+        proposal_offset: int,
         proposed_particles: list[Particle],
         particle_kwargs: dict[str, Any],
     ) -> list[float]:
@@ -326,6 +333,9 @@ class BatchGenerationRunner:
         threaded batch-processing paths.
 
         Args:
+            generation (int): Zero-based generation index being evaluated.
+            proposal_offset (int): Stable proposal index for the first particle
+                in the chunk.
             proposed_particles (list[Particle]): Proposed particles to score.
             particle_kwargs (dict[str, Any]): Additional keyword arguments
                 forwarded into particle evaluation.
@@ -334,13 +344,21 @@ class BatchGenerationRunner:
             list[float]: Distances computed for the proposed particles.
         """
 
-        return [
-            self.config.particle_to_distance(
-                proposed_particle,
-                **particle_kwargs,
+        errs: list[float] = []
+        for index, proposed_particle in enumerate(proposed_particles):
+            evaluation_kwargs = build_evaluation_context_kwargs(
+                generation=generation,
+                proposal_index=proposal_offset + index,
+                attempt_index=0,
+                base_kwargs=particle_kwargs,
             )
-            for proposed_particle in proposed_particles
-        ]
+            errs.append(
+                self.config.particle_to_distance(
+                    proposed_particle,
+                    **evaluation_kwargs,
+                )
+            )
+        return errs
 
     async def _process_particle_batch_async(
         self,
@@ -372,15 +390,23 @@ class BatchGenerationRunner:
         loop = asyncio.get_running_loop()
         worker = partial(
             self._evaluate_particle_chunk,
+            request.generation,
             particle_kwargs=request.particle_kwargs,
         )
+        proposal_offset = state.submitted
+        state.submitted += len(proposed_particles)
         particle_chunks = [
             proposed_particles[index : index + request.chunksize]
             for index in range(0, len(proposed_particles), request.chunksize)
         ]
         tasks = []
-        for chunk in particle_chunks:
-            task = loop.run_in_executor(request.executor, worker, chunk)
+        for index, chunk in enumerate(particle_chunks):
+            task = loop.run_in_executor(
+                request.executor,
+                worker,
+                proposal_offset + index * request.chunksize,
+                chunk,
+            )
             tasks.append((task, chunk))
 
         attempts = 0
@@ -434,9 +460,13 @@ class BatchGenerationRunner:
             or len(proposed_particles) <= request.chunksize
         ):
             attempts = 0
+            proposal_offset = state.submitted
+            state.submitted += len(proposed_particles)
             for index in range(0, len(proposed_particles), request.chunksize):
                 chunk = proposed_particles[index : index + request.chunksize]
                 errs = self._evaluate_particle_chunk(
+                    request.generation,
+                    proposal_offset + index,
                     proposed_particles=chunk,
                     particle_kwargs=request.particle_kwargs,
                 )

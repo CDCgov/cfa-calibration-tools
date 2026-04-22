@@ -1,0 +1,13 @@
+input = "/app/defaults.json"
+
+[model]
+spec = "example_model"
+version = "0.0.1"
+
+[runtime]
+spec = "process"
+command = "example_model"
+
+[output]
+spec = "filesystem"
+dir = "./output"
