@@ -58,6 +58,7 @@ uv run --group cloudops python -m example_model.calibrate --cloud
 Useful flags:
 
 - `--max-concurrent-simulations 25`
+- `--auto-size`
 - `--print-task-progress`
 - `--print-task-durations`
 - `--artifacts-dir ./artifacts`
@@ -66,6 +67,7 @@ Example:
 
 ```bash
 uv run --group cloudops python -m example_model.calibrate --cloud \
+  --auto-size \
   --max-concurrent-simulations 25 \
   --print-task-progress \
   --print-task-durations \
@@ -201,8 +203,8 @@ The cloud code supports these shorthand values for `vm_size`:
 | `large` | `Standard_D16s_v3` | 16 | 64 GiB |
 | `xlarge` | `Standard_D32s_v3` | 32 | 128 GiB |
 
-You can also set a raw Azure SKU directly. Any `vm_size` value outside the
-five shorthands is passed through unchanged.
+For normal cloud runs, you can also set a raw Azure SKU directly. Any `vm_size`
+value outside the five shorthands is passed through unchanged.
 
 Example:
 
@@ -210,6 +212,39 @@ Example:
 [runtime.cloud]
 vm_size = "Standard_D48s_v3"
 ```
+
+## Auto-Size
+
+Cloud calibration supports `--auto-size` as a RAM-based guardrail. The flag is
+valid only with `--cloud`. Before the cloud runner is constructed, the CLI runs
+one local example-model simulation in a fresh Python subprocess, measures the
+child process peak RSS, and derives `task_slots_per_node` for the configured
+`vm_size`.
+
+The formula is:
+
+```text
+usable_vm_ram = vm_ram_bytes * 0.85
+task_slots_per_node = floor(usable_vm_ram / measured_task_peak_rss_bytes)
+```
+
+Precedence:
+
+- `--auto-size` overrides `[runtime.cloud].task_slots_per_node` for that run
+  without editing the TOML file.
+- If `--max-concurrent-simulations` is passed explicitly, it remains the total
+  desired cloud capacity; auto-size changes only `task_slots_per_node`.
+- If `--max-concurrent-simulations` is omitted, auto-size also sets total
+  concurrency to the computed `task_slots_per_node`, preserving the default
+  one-node cloud run shape.
+
+Auto-size supports the five VM shorthands above and their documented Dsv3 SKUs
+(`Standard_D2s_v3` through `Standard_D32s_v3`). Unknown raw SKUs fail fast with
+a clear error because the first implementation uses the static RAM table in
+this repo rather than Azure SKU discovery. If the measured task does not fit
+within the 85% usable RAM budget for one node, the command fails before cloud
+provisioning and asks you to choose a larger `vm_size` or disable
+`--auto-size`.
 
 ## What A Cloud Run Creates
 
@@ -256,7 +291,9 @@ generations.
   finish, and it best-effort cancels surplus in-flight tasks once a generation
   has enough accepted particles
 - The cloud runner prints a startup summary with the created pool config and
-  the number of reusable Batch jobs for the run
+  the number of reusable Batch jobs for the run; when `--auto-size` is enabled,
+  the summary also includes measured peak RSS, VM RAM, reserve percentage,
+  chosen task slots, and effective concurrency
 - The cloud runner routes new tasks to the least-busy shared Batch job rather
   than assigning strictly by particle-number modulo
 - The cloud executor uploads the per-particle input JSON to the input container
@@ -275,6 +312,9 @@ generations.
 - `--max-concurrent-simulations` now drives the total desired task capacity for
   the fixed-size Batch pool in cloud mode. The dedicated node count is derived
   from that value and `task_slots_per_node`.
+- `--auto-size` is a memory-only sizing helper. It does not account for CPU,
+  IO, BlobFuse overhead, or model inputs that use more memory than the single
+  local probe run.
 - The async cloud controller admits up to
   `--max-concurrent-simulations + dispatch_buffer` queued runs while only
   `--max-concurrent-simulations` submissions execute at once.

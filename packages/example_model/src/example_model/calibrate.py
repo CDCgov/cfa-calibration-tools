@@ -7,6 +7,11 @@ from pathlib import Path
 import numpy as np
 from mrp.api import apply_dict_overrides
 
+from calibrationtools.cloud.auto_size import (
+    CloudSizing,
+    resolve_cloud_auto_size,
+    run_local_memory_probe,
+)
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
     MultivariateNormalKernel,
@@ -22,6 +27,7 @@ from example_model import (
     ExampleModelMRPRunner,
 )
 from example_model.cloud_runner import resolve_cloud_build_context
+from example_model.cloud_utils import load_cloud_runtime_settings
 
 DEFAULT_INPUTS = {
     "seed": 123,
@@ -87,6 +93,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--auto-size",
+        action="store_true",
+        help=(
+            "Cloud mode only. Run one local probe simulation before Azure "
+            "provisioning and set task slots from measured RAM usage."
+        ),
+    )
+    parser.add_argument(
         "--print-task-durations",
         action="store_true",
         help="When running in cloud mode, print per-task timing information.",
@@ -147,8 +161,44 @@ def resolve_max_concurrent_simulations(args: argparse.Namespace) -> int:
     return value
 
 
-def resolve_model_runner(args: argparse.Namespace):
+def resolve_cloud_sizing(args: argparse.Namespace) -> CloudSizing:
+    max_concurrent_simulations = resolve_max_concurrent_simulations(args)
+    if not args.auto_size or not args.cloud:
+        return resolve_cloud_auto_size(
+            auto_size=args.auto_size,
+            cloud=args.cloud,
+            max_concurrent_simulations=max_concurrent_simulations,
+            max_concurrent_simulations_explicit=(
+                args.max_concurrent_simulations is not None
+            ),
+        )
+
+    settings = load_cloud_runtime_settings(DEFAULT_CLOUD_MRP_CONFIG_PATH)
+    return resolve_cloud_auto_size(
+        auto_size=args.auto_size,
+        cloud=args.cloud,
+        max_concurrent_simulations=max_concurrent_simulations,
+        max_concurrent_simulations_explicit=(
+            args.max_concurrent_simulations is not None
+        ),
+        vm_size=settings.vm_size,
+        measure_task_peak_rss_bytes=(
+            lambda: run_local_memory_probe(
+                "example_model.cloud_auto_size",
+                DEFAULT_INPUTS,
+            )
+        ),
+    )
+
+
+def resolve_model_runner(
+    args: argparse.Namespace,
+    *,
+    cloud_sizing: CloudSizing | None = None,
+):
     if args.cloud:
+        if cloud_sizing is None:
+            cloud_sizing = resolve_cloud_sizing(args)
         repo_root, dockerfile = resolve_cloud_build_context(
             repo_root=args.repo_root,
             dockerfile=args.dockerfile,
@@ -156,12 +206,14 @@ def resolve_model_runner(args: argparse.Namespace):
         return ExampleModelCloudRunner(
             DEFAULT_CLOUD_MRP_CONFIG_PATH,
             generation_count=len(TOLERANCE_VALUES),
-            max_concurrent_simulations=resolve_max_concurrent_simulations(
-                args
-            ),
+            max_concurrent_simulations=cloud_sizing.max_concurrent_simulations,
             repo_root=repo_root,
             dockerfile=dockerfile,
             print_task_durations=args.print_task_durations,
+            task_slots_per_node_override=(
+                cloud_sizing.task_slots_per_node_override
+            ),
+            auto_size_summary=cloud_sizing.summary,
         )
     if args.mrp_config is not None:
         return ExampleModelMRPRunner(args.mrp_config)
@@ -232,6 +284,7 @@ def run_calibration(
 
 def main():
     args = parse_args()
+    cloud_sizing = resolve_cloud_sizing(args)
 
     artifacts_dir = args.artifacts_dir
     temp_artifacts_dir: tempfile.TemporaryDirectory | None = None
@@ -253,9 +306,12 @@ def main():
 
     try:
         run_calibration(
-            model_runner=resolve_model_runner(args),
-            max_concurrent_simulations=resolve_max_concurrent_simulations(
-                args
+            model_runner=resolve_model_runner(
+                args,
+                cloud_sizing=cloud_sizing,
+            ),
+            max_concurrent_simulations=(
+                cloud_sizing.max_concurrent_simulations
             ),
             print_task_progress=args.print_task_progress,
             artifacts_dir=artifacts_dir,

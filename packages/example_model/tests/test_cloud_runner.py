@@ -265,6 +265,35 @@ def test_cloud_runner_initializes_resources_and_uses_mrp(
     assert runner.session.job_name_for_run("gen-2_particle-2").endswith("-j2")
 
 
+def test_cloud_runner_startup_summary_includes_auto_size(capsys):
+    from calibrationtools.cloud.runner import CloudMRPRunner
+
+    runner = object.__new__(CloudMRPRunner)
+    runner.settings = _cloud_settings(vm_size="large", task_slots_per_node=5)
+    runner.max_concurrent_simulations = 5
+    runner.generation_count = 2
+    runner.auto_size_summary = SimpleNamespace(
+        measured_task_peak_rss_bytes=10 * 1024**3,
+        vm_memory_bytes=64 * 1024**3,
+        reserve=0.15,
+        task_slots_per_node=5,
+    )
+
+    runner._print_session_startup_summary(
+        pool_name=POOL_NAME,
+        job_names={"1": [JOB_1], "2": [JOB_1]},
+        remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
+    )
+
+    captured = capsys.readouterr()
+    assert "[cloud-run] auto-size" in captured.err
+    assert "measured_peak_rss=10737418240 bytes" in captured.err
+    assert "vm_ram=68719476736 bytes" in captured.err
+    assert "reserve=15%" in captured.err
+    assert "task_slots=5" in captured.err
+    assert "max_concurrent_simulations=5" in captured.err
+
+
 def test_cloud_session_accepts_attempt_suffixed_run_ids():
     session = CloudSession(
         keyvault="cfa-predict",
@@ -2862,9 +2891,46 @@ def test_example_model_cloud_runner_delegates_to_shared_factory(monkeypatch):
     assert callable(captured["kwargs"]["read_output_dir"])
     assert captured["kwargs"]["output_filename"] == "output.csv"
     assert captured["kwargs"]["print_task_durations"] is True
+    assert captured["kwargs"]["auto_size_summary"] is None
     assert captured["kwargs"]["backend"].create_cloud_client is (
         cloud_runner.create_cloud_client
     )
+
+
+def test_example_model_cloud_runner_wraps_settings_for_auto_size(monkeypatch):
+    import example_model.cloud_runner as cloud_runner
+
+    captured: dict[str, Any] = {}
+    sentinel = object()
+    summary = SimpleNamespace(task_slots_per_node=3)
+
+    def fake_create_cloud_mrp_runner(config_path, **kwargs):
+        captured["config_path"] = config_path
+        captured["kwargs"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr(
+        cloud_runner,
+        "_create_cloud_mrp_runner",
+        fake_create_cloud_mrp_runner,
+    )
+
+    runner = cloud_runner.ExampleModelCloudRunner(
+        "example_model.mrp.cloud.toml",
+        generation_count=2,
+        max_concurrent_simulations=7,
+        repo_root=REPO_ROOT,
+        dockerfile=REPO_ROOT / "packages" / "example_model" / "Dockerfile",
+        task_slots_per_node_override=3,
+        auto_size_summary=summary,
+    )
+
+    assert runner is sentinel
+    assert captured["kwargs"]["auto_size_summary"] is summary
+    settings = captured["kwargs"]["settings_loader"](
+        "example_model.mrp.cloud.toml"
+    )
+    assert settings.task_slots_per_node == 3
 
 
 def test_example_model_cloud_runner_uses_default_build_context(monkeypatch):

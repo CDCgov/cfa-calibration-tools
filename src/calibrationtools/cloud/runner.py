@@ -100,6 +100,7 @@ def create_cloud_mrp_runner(
     backend: CloudRunnerBackend | None = None,
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
     mrp_run_func: Callable[..., Any] = mrp_run,
+    auto_size_summary: Any | None = None,
 ) -> "CloudMRPRunner":
     resolved_repo_root, resolved_dockerfile = resolve_cloud_build_context(
         default_repo_root=default_repo_root,
@@ -121,6 +122,7 @@ def create_cloud_mrp_runner(
         backend=backend,
         poll_interval_seconds=poll_interval_seconds,
         mrp_run_func=mrp_run_func,
+        auto_size_summary=auto_size_summary,
     )
 
 
@@ -188,6 +190,7 @@ class CloudMRPRunner:
         progress_refresh_interval_seconds: float | None = None,
         controller_start_timeout_seconds: float | None = 10.0,
         mrp_run_func: Callable[..., Any] = mrp_run,
+        auto_size_summary: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path)
         self.repo_root = Path(repo_root)
@@ -277,6 +280,7 @@ class CloudMRPRunner:
             controller_start_timeout_seconds
         )
         self._mrp_run = mrp_run_func
+        self.auto_size_summary = auto_size_summary
 
         self.settings = self._load_cloud_runtime_settings(self.config_path)
         if self.settings.jobs_per_session < 1:
@@ -893,6 +897,20 @@ class CloudMRPRunner:
             file=sys.stderr,
             flush=True,
         )
+        if self.auto_size_summary is not None:
+            summary = self.auto_size_summary
+            print(
+                (
+                    "[cloud-run] auto-size "
+                    f"measured_peak_rss={summary.measured_task_peak_rss_bytes} bytes, "
+                    f"vm_ram={summary.vm_memory_bytes} bytes, "
+                    f"reserve={summary.reserve:.0%}, "
+                    f"task_slots={summary.task_slots_per_node}, "
+                    f"max_concurrent_simulations={self.max_concurrent_simulations}"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
         print(
             (
                 f"[cloud-run] created {unique_job_count} reusable job(s) for "

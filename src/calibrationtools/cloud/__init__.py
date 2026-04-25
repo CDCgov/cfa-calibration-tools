@@ -1,4 +1,11 @@
 from .artifacts import resolve_filesystem_output_dir
+from .auto_size import (
+    AutoSizeSummary,
+    CloudSizing,
+    resolve_cloud_auto_size,
+    run_local_memory_probe,
+    run_memory_probe_child_main,
+)
 from .backend import (
     DEFAULT_CLOUD_EXECUTOR_BACKEND,
     DEFAULT_CLOUD_RUNNER_BACKEND,
@@ -81,6 +88,7 @@ __all__ = [
     "CloudRunnerBackend",
     "CloudRuntimeSettings",
     "CloudSession",
+    "CloudSizing",
     "CleanupListing",
     "CleanupPlan",
     "CleanupResult",
@@ -98,6 +106,7 @@ __all__ = [
     "DEFAULT_TASK_SLOTS_PER_NODE",
     "DEFAULT_TASK_TIMEOUT_MINUTES",
     "DEFAULT_VM_SIZE",
+    "AutoSizeSummary",
     "add_batch_task_with_short_id",
     "build_local_image",
     "build_parser",
@@ -129,9 +138,12 @@ __all__ = [
     "parse_particle_from_run_id",
     "read_run_json",
     "resolve_cloud_build_context",
+    "resolve_cloud_auto_size",
     "require_tool",
     "resolve_filesystem_output_dir",
     "run_command",
+    "run_local_memory_probe",
+    "run_memory_probe_child_main",
     "sanitize_name",
     "suppress_cloudops_info_output",
     "upload_local_image",

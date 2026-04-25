@@ -1,0 +1,155 @@
+import subprocess
+
+import pytest
+
+from calibrationtools.cloud.auto_size import (
+    resolve_cloud_auto_size,
+    run_local_memory_probe,
+)
+
+
+def test_run_local_memory_probe_returns_child_peak_rss(monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, *, input, capture_output, text, check):
+        captured["cmd"] = cmd
+        captured["input"] = input
+        captured["capture_output"] = capture_output
+        captured["text"] = text
+        captured["check"] = check
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='{"peak_rss_bytes": 123456}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "calibrationtools.cloud.auto_size.subprocess.run",
+        fake_run,
+    )
+
+    assert (
+        run_local_memory_probe(
+            "example_model.cloud_auto_size",
+            {"seed": 1},
+            run_id="probe-1",
+        )
+        == 123456
+    )
+    assert captured["cmd"][-3:] == [
+        "-m",
+        "example_model.cloud_auto_size",
+        "--child",
+    ]
+    assert '"run_id": "probe-1"' in captured["input"]
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+    assert captured["check"] is False
+
+
+def test_run_local_memory_probe_raises_with_child_stderr(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            2,
+            stdout="",
+            stderr="probe exploded",
+        )
+
+    monkeypatch.setattr(
+        "calibrationtools.cloud.auto_size.subprocess.run",
+        fake_run,
+    )
+
+    with pytest.raises(RuntimeError, match="probe exploded"):
+        run_local_memory_probe("example_model.cloud_auto_size", {"seed": 1})
+
+
+def test_run_local_memory_probe_rejects_malformed_child_output(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='{"not_peak_rss_bytes": 1}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "calibrationtools.cloud.auto_size.subprocess.run",
+        fake_run,
+    )
+
+    with pytest.raises(RuntimeError, match="peak_rss_bytes"):
+        run_local_memory_probe("example_model.cloud_auto_size", {"seed": 1})
+
+
+def test_resolve_cloud_auto_size_rejects_auto_size_without_cloud():
+    with pytest.raises(ValueError, match="--auto-size requires --cloud"):
+        resolve_cloud_auto_size(
+            auto_size=True,
+            cloud=False,
+            max_concurrent_simulations=50,
+            max_concurrent_simulations_explicit=False,
+            vm_size="large",
+            measure_task_peak_rss_bytes=lambda: 1,
+        )
+
+
+def test_resolve_cloud_auto_size_keeps_defaults_without_auto_size():
+    sizing = resolve_cloud_auto_size(
+        auto_size=False,
+        cloud=True,
+        max_concurrent_simulations=50,
+        max_concurrent_simulations_explicit=False,
+    )
+
+    assert sizing.max_concurrent_simulations == 50
+    assert sizing.task_slots_per_node_override is None
+    assert sizing.summary is None
+
+
+def test_resolve_cloud_auto_size_sets_default_concurrency():
+    sizing = resolve_cloud_auto_size(
+        auto_size=True,
+        cloud=True,
+        max_concurrent_simulations=50,
+        max_concurrent_simulations_explicit=False,
+        vm_size="large",
+        measure_task_peak_rss_bytes=lambda: 10 * 1024**3,
+    )
+
+    assert sizing.max_concurrent_simulations == 5
+    assert sizing.task_slots_per_node_override == 5
+    assert sizing.summary is not None
+    assert sizing.summary.measured_task_peak_rss_bytes == 10 * 1024**3
+    assert sizing.summary.task_slots_per_node == 5
+
+
+def test_resolve_cloud_auto_size_preserves_explicit_concurrency():
+    sizing = resolve_cloud_auto_size(
+        auto_size=True,
+        cloud=True,
+        max_concurrent_simulations=17,
+        max_concurrent_simulations_explicit=True,
+        vm_size="large",
+        measure_task_peak_rss_bytes=lambda: 10 * 1024**3,
+    )
+
+    assert sizing.max_concurrent_simulations == 17
+    assert sizing.task_slots_per_node_override == 5
+
+
+def test_resolve_cloud_auto_size_unknown_vm_size_fails_before_probe():
+    def fail_if_probe_runs():
+        raise AssertionError("probe should not run")
+
+    with pytest.raises(ValueError, match="unknown vm_size"):
+        resolve_cloud_auto_size(
+            auto_size=True,
+            cloud=True,
+            max_concurrent_simulations=50,
+            max_concurrent_simulations_explicit=False,
+            vm_size="unknown-sku",
+            measure_task_peak_rss_bytes=fail_if_probe_runs,
+        )

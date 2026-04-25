@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from mrp import run as mrp_run
 
-from calibrationtools.cloud.config import DEFAULT_POLL_INTERVAL_SECONDS
+from calibrationtools.cloud.config import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    CloudRuntimeSettings,
+)
 from calibrationtools.cloud.runner import (
     create_cloud_mrp_runner as _create_cloud_mrp_runner,
 )
@@ -104,8 +109,22 @@ def ExampleModelCloudRunner(
     repo_root: str | Path | None = None,
     dockerfile: str | Path | None = None,
     print_task_durations: bool = False,
+    task_slots_per_node_override: int | None = None,
+    auto_size_summary: Any | None = None,
 ):
     """Run the example model through the shared cloud-backed MRP path."""
+
+    settings_loader: Callable[[str | Path], CloudRuntimeSettings]
+    if task_slots_per_node_override is None:
+        settings_loader = load_cloud_runtime_settings
+    else:
+
+        def settings_loader(config_path: str | Path) -> CloudRuntimeSettings:
+            settings = load_cloud_runtime_settings(config_path)
+            return replace(
+                settings,
+                task_slots_per_node=task_slots_per_node_override,
+            )
 
     return _create_cloud_mrp_runner(
         config_path,
@@ -120,10 +139,11 @@ def ExampleModelCloudRunner(
             "Looked at {dockerfile}; pass --repo-root and --dockerfile "
             "when running from an installed wheel."
         ),
-        settings_loader=load_cloud_runtime_settings,
+        settings_loader=settings_loader,
         read_output_dir=_READ_POPULATION_FROM_OUTPUT_DIR,
         output_filename="output.csv",
         print_task_durations=print_task_durations,
+        auto_size_summary=auto_size_summary,
         backend=_current_cloud_runner_backend(),
         poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         mrp_run_func=mrp_run,
