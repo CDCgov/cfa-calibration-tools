@@ -12,8 +12,8 @@ obs_times = np.arange(0.0, max_time, dt).tolist()
 model_inputs = {
     "seed": 123,
     "max_time": max_time,
-    "a": 7.378391620177265,
-    "b": -5.693294411834113,
+    "a": 1,
+    "b": 1,
     "x0": 1.0,
     "y0": 0.5,
     "obs_times": obs_times,
@@ -36,10 +36,10 @@ plt.plot(
 )
 plt.xlabel("Time")
 plt.ylabel("Population")
-# plt.xlim(0, 15)
-# plt.xticks([0, 5, 10, 15])
-# plt.ylim(0, 4)
-# plt.yticks([0, 1, 2, 3, 4])
+plt.xlim(0, 15)
+plt.xticks([0, 5, 10, 15])
+plt.ylim(0, 4)
+plt.yticks([0, 1, 2, 3, 4])
 plt.title(
     "Deterministic Lotka-Volterra model \n compare to Fig. 1(a) in Toni et al. 2009"
 )
