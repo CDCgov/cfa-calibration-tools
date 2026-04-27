@@ -55,8 +55,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # builder-stage CA bundle forward. The extra CDC trust anchor is only
 # required while fetching/installing build dependencies above.
 
-# Run as a non-root user so container RCE cannot escalate inside the
-# Azure Batch task (blob mounts, imds, etc.).
+# Default to a non-root runtime user for local container execution. Azure Batch
+# tasks currently override this to root in the task container options because
+# BlobFuse mounts are not reliably writable by the image user.
 RUN groupadd --system --gid 1000 app \
     && useradd --system --uid 1000 --gid app --create-home --home-dir /home/app app \
     && mkdir -p /work /app \

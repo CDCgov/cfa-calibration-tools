@@ -1,12 +1,115 @@
+import tomllib
 from pathlib import Path
 
 import example_model.mrp_runner as mrp_runner
 import numpy as np
 import pytest
+from example_model.example_model import run_inline
 from example_model.mrp_runner import ExampleModelMRPRunner
+from mrp import run as mrp_run
 from mrp.runtime import RunResult
 
 from calibrationtools.mrp_csv_runner import CSVOutputMRPRunner
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+INLINE_MODEL_CALLABLE = "example_model.example_model:run_inline"
+INLINE_CLOUD_CALLABLE = "example_model.cloud_mrp_executor:execute_cloud_run"
+
+
+def _load_root_config(filename: str) -> dict:
+    with (REPO_ROOT / filename).open("rb") as f:
+        return tomllib.load(f)
+
+
+@pytest.mark.parametrize(
+    ("filename", "callable_path"),
+    [
+        ("example_model.mrp.toml", INLINE_MODEL_CALLABLE),
+        ("example_model.mrp.task.toml", INLINE_MODEL_CALLABLE),
+        ("example_model.mrp.cloud.toml", INLINE_CLOUD_CALLABLE),
+    ],
+)
+def test_non_docker_mrp_configs_use_inline_runtime(
+    filename: str, callable_path: str
+):
+    config = _load_root_config(filename)
+
+    assert config["runtime"]["spec"] == "inline"
+    assert config["runtime"]["callable"] == callable_path
+    assert "command" not in config["runtime"]
+    assert "args" not in config["runtime"]
+    assert "env" not in config["runtime"]
+
+
+def test_docker_mrp_config_remains_process_backed():
+    config = _load_root_config("example_model.mrp.docker.toml")
+
+    assert config["runtime"].get("spec", "process") != "inline"
+    assert config["runtime"]["command"] == "sh"
+    assert "docker run" in " ".join(config["runtime"]["args"])
+    assert "callable" not in config["runtime"]
+
+
+def test_run_inline_writes_csv_to_stdout(capsys):
+    run_inline(
+        {
+            "input": {
+                "seed": 123,
+                "max_gen": 3,
+                "n": 3,
+                "p": 0.5,
+                "max_infect": 500,
+            },
+            "output": {"spec": "stdout"},
+        }
+    )
+
+    captured = capsys.readouterr()
+    assert "Running Binomial Branching Process Model..." in captured.out
+    assert "generation,population" in captured.out
+    assert "0,1" in captured.out
+
+
+def test_root_mrp_config_runs_inline_and_emits_csv():
+    result = mrp_run(
+        REPO_ROOT / "example_model.mrp.toml",
+        {
+            "input": {
+                "seed": 123,
+                "max_gen": 3,
+                "n": 3,
+                "p": 0.5,
+                "max_infect": 500,
+            },
+            "output": {"spec": "stdout"},
+        },
+    )
+
+    assert result.ok, result.stderr.decode()
+    output = result.stdout.decode()
+    assert "generation,population" in output
+    assert "0,1" in output
+
+
+@pytest.mark.parametrize(
+    ("filename", "callable_path"),
+    [
+        ("example_model.mrp.toml", INLINE_MODEL_CALLABLE),
+        ("example_model.mrp.cloud.toml", INLINE_CLOUD_CALLABLE),
+    ],
+)
+def test_bundled_non_docker_config_text_uses_inline_runtime(
+    filename: str, callable_path: str, tmp_path: Path
+):
+    text = mrp_runner._bundled_config_text(
+        filename,
+        defaults_path=tmp_path / "defaults.json",
+    )
+
+    assert 'spec = "inline"' in text
+    assert f'callable = "{callable_path}"' in text
+    assert "command = " not in text
+    assert "args = [" not in text
 
 
 def test_example_model_mrp_runner_is_shared_csv_runner():

@@ -301,8 +301,8 @@ def _build_container_run_options(
     from cfa.cloudops import batch_helpers
 
     # Azure BlobFuse mounts on Batch nodes are not reliably writable from the
-    # image's default non-root user. Force root for cloud tasks so the model
-    # can write output.csv and task logs back to the mounted containers.
+    # image's default non-root user. Keep this root override explicit so the
+    # task can write output.csv and logs back to the mounted containers.
     parts = [
         f"--name={job_name}_{task_number}",
         "--rm",

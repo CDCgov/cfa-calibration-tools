@@ -44,6 +44,8 @@ Additionally, as described in the repo-level README, the model can be run as spe
 uv sync --all-packages
 uv run mrp run example_model.mrp.toml
 ```
+That config uses the MRP inline runtime, so it calls the example model in the
+current Python process instead of spawning `python -m example_model`.
 
 ## Running the calibration
 To run the calibration example in local Python mode, run

@@ -676,6 +676,8 @@ def test_add_batch_task_with_short_id_uses_relative_mount_paths(monkeypatch):
     run_options = first_task.container_settings.container_run_options
     assert "--name=job-rel-mounts_1" in run_options
     assert "--rm" in run_options
+    # Batch tasks intentionally override the image's non-root default user so
+    # BlobFuse-mounted output and log directories are writable.
     assert "--user 0:0" in run_options
     assert "source=" in run_options
     assert "target=/cloud-input" in run_options

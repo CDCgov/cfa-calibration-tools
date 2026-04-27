@@ -2,6 +2,11 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
+from example_model import (
+    DEFAULT_CLOUD_MRP_CONFIG_PATH,
+    Binom_BP_Model,
+    ExampleModelMRPRunner,
+)
 from example_model.calibrate import (
     DEFAULT_CLOUD_MAX_CONCURRENT_SIMULATIONS,
     DEFAULT_MAX_CONCURRENT_SIMULATIONS,
@@ -14,12 +19,6 @@ from example_model.calibrate import (
     run_calibration,
 )
 from example_model.mrp_runner import DEFAULT_DOCKER_MRP_CONFIG_PATH
-
-from example_model import (
-    DEFAULT_CLOUD_MRP_CONFIG_PATH,
-    Binom_BP_Model,
-    ExampleModelMRPRunner,
-)
 
 
 def test_parse_args_accepts_auto_size_for_cloud(monkeypatch):

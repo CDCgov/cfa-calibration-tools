@@ -5,12 +5,8 @@ spec = "example_model"
 version = "0.0.1"
 
 [runtime]
-spec = "process"
-command = "python"
-args = [
-  "-m",
-  "example_model.cloud_mrp_executor",
-]
+spec = "inline"
+callable = "example_model.cloud_mrp_executor:execute_cloud_run"
 
 [runtime.cloud]
 keyvault = "cfa-predict"
