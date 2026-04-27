@@ -26,19 +26,6 @@ class Deterministic_LV_Model(MRPModel):
         return (a * x - x * y, b * x * y - y)
 
     @staticmethod
-    def lotka_volterra_jacobian(
-        _t: float, state: np.ndarray, a: float, b: float
-    ) -> np.ndarray:
-        x, y = state
-        return np.array(
-            [
-                [a - y, -x],
-                [b * y, b * x - 1.0],
-            ],
-            dtype=float,
-        )
-
-    @staticmethod
     def simulate(model_inputs: dict[str, Any]) -> dict[str, list[float]]:
         """
         Deterministic Lotka-Volterra model.
@@ -65,12 +52,7 @@ class Deterministic_LV_Model(MRPModel):
                 obs_times (list[float]): Time points at which to record population sizes
                 obs_noise_mu (float): Mean of Gaussian noise added to population sizes
                 obs_noise_sigma (float): Standard deviation of Gaussian noise added to population sizes
-                solver_method (str, optional): scipy solve_ivp method. If not provided, uses "LSODA" when a > 0 and b < 0, else "RK45".
-                rtol (float, optional): Relative solver tolerance, default 1e-6
-                atol (float, optional): Absolute solver tolerance, default 1e-9
-                max_step (float, optional): Maximum internal solver step size
                 stop_x_threshold (float, optional): Terminal event threshold for x runaway. Disabled if omitted.
-                stop_y_threshold (float, optional): Terminal event threshold for y extinction. Disabled if omitted.
 
         Returns:
             dict[str, list[float]]: Dictionary containing noisy prey and predator populations at observation time points.
@@ -99,6 +81,7 @@ class Deterministic_LV_Model(MRPModel):
         a = float(model_inputs["a"])
         b = float(model_inputs["b"])
         max_time = float(model_inputs["max_time"])
+        stop_x_threshold = model_inputs.get("stop_x_threshold")
 
         #        print(f"Running simulation with parameters: a={a}, b={b}, seed={seed}")
 
@@ -108,11 +91,6 @@ class Deterministic_LV_Model(MRPModel):
                 "LSODA" if (a > 0.0 and b < 0.0) else "RK45",
             )
         )
-        rtol = float(model_inputs.get("rtol", 1e-6))
-        atol = float(model_inputs.get("atol", 1e-9))
-        max_step = model_inputs.get("max_step")
-        stop_x_threshold = model_inputs.get("stop_x_threshold")
-        stop_y_threshold = model_inputs.get("stop_y_threshold")
 
         if obs_times.ndim != 1 or obs_times.size == 0:
             raise ValueError("obs_times must be a non-empty 1D array of times")
@@ -128,33 +106,13 @@ class Deterministic_LV_Model(MRPModel):
             stop_x_value = float(stop_x_threshold)
 
             def stop_x_event(
-                _t: float,
-                state: np.ndarray,
-                _a: float,
-                _b: float,
-                threshold: float = stop_x_value,
+                _t: float, state: np.ndarray, _a: float, _b: float
             ) -> float:
-                return state[0] - threshold
+                return state[0] - stop_x_value
 
             stop_x_event.terminal = True  # type: ignore[attr-defined]
             stop_x_event.direction = 1.0  # type: ignore[attr-defined]
             event_functions.append(stop_x_event)
-
-        if stop_y_threshold is not None:
-            stop_y_value = float(stop_y_threshold)
-
-            def stop_y_event(
-                _t: float,
-                state: np.ndarray,
-                _a: float,
-                _b: float,
-                threshold: float = stop_y_value,
-            ) -> float:
-                return state[1] - threshold
-
-            stop_y_event.terminal = True  # type: ignore[attr-defined]
-            stop_y_event.direction = -1.0  # type: ignore[attr-defined]
-            event_functions.append(stop_y_event)
 
         solution = solve_ivp(
             fun=Deterministic_LV_Model.lotka_volterra_rhs,
@@ -163,12 +121,6 @@ class Deterministic_LV_Model(MRPModel):
             t_eval=obs_times,
             args=(a, b),
             method=solver_method,
-            jac=Deterministic_LV_Model.lotka_volterra_jacobian
-            if solver_method in {"Radau", "BDF", "LSODA"}
-            else None,
-            rtol=rtol,
-            atol=atol,
-            max_step=float(max_step) if max_step is not None else np.inf,
             events=event_functions if event_functions else None,
         )
 
@@ -180,6 +132,8 @@ class Deterministic_LV_Model(MRPModel):
         if solved_count == 0:
             raise RuntimeError("ODE solve produced no states.")
 
+        # The ODE solver may terminate early due to extreme values of x
+        # If so, we need to fill in values for the missing time points.
         if solved_count < requested_count:
             x_values = np.empty(requested_count, dtype=float)
             y_values = np.empty(requested_count, dtype=float)

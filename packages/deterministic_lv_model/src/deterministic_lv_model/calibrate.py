@@ -19,7 +19,7 @@ from deterministic_lv_model import Deterministic_LV_Model
 env = Environment(
     {
         "input": {
-            "seed": 321,
+            "seed": 123,
             "max_time": 15,
             "a": 1.0,
             "b": 1.0,
@@ -33,7 +33,7 @@ env = Environment(
     }
 )
 default_inputs = {
-    "seed": 321,
+    "seed": 123,
     "max_time": 15,
     "a": 1.0,
     "b": 1.0,
