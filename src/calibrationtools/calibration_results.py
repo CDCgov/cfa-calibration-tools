@@ -19,6 +19,7 @@ class CalibrationResults:
         generator_history (dict[int, list[GeneratorSlot]]): A dictionary mapping generation indices to their corresponding lists of generator slots containing particle IDs and their associated seed sequences, representing the history of particle sampling and perturbation across generations when called with the appropriate particle updater.
         population_archive (dict[int, ParticlePopulation]): A dictionary mapping generation indices to their corresponding particle populations, representing the history of particle populations across generations if saved during the sampler run.
         success_counts (dict[str, list[int]]): A dictionary containing lists of particles per generation, success counts, and attempt counts for each generation, with keys "generation_particle_count", "successes" and "attempts".
+        distance_history (dict[int, list[dict[str, int | float]]]): A dictionary mapping each generation index to a list of distance measure entries that contain at least "slot_id" and "distance" keys.
         tolerance_values (list[float]): A list of tolerance values for each generation
         seed_sequence (SeedSequence): The seed sequence used for sampling particles in the final generation, which can be used for reproducibility when sampling posterior particles from the results.
     Methods:

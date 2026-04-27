@@ -135,6 +135,22 @@ def test_abc_sampler_run(K, sampler_with_archive: ABCSampler):
     assert isinstance(reset_perturbation_kernels[1], SeedKernel)
     assert isinstance(posterior_perturbation_kernels[1], SeedKernel)
 
+    # Test that error distributions are below tolerance for each step
+    for gen, error_list in results.distance_history.items():
+        assert (
+            len(error_list) == sampler_with_archive.generation_particle_count
+        )
+        assert all(
+            [
+                err["distance"] < sampler_with_archive.tolerance_values[gen]
+                for err in error_list
+            ]
+        )
+
+    assert len(results.distance_history) == len(
+        sampler_with_archive.tolerance_values
+    )
+
 
 def test_sampler_run_does_not_archive_previous_population_by_default(
     sampler: ABCSampler,

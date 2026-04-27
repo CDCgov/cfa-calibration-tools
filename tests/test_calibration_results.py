@@ -216,3 +216,36 @@ def test_get_diagnostics(updater):
         + 0.3 * (0.5 - avg) ** 2
         + 0.5 * (0.9 - avg) ** 2
     )
+
+
+def test_flatten_distance_history(updater):
+    results = CalibrationResults(
+        _updater=updater,
+        generator_history={},
+        population_archive={},
+        success_counts={
+            "generation_particle_count": [3, 3],
+            "successes": [3, 3],
+            "attempts": [6, 12],
+        },
+        distance_history={
+            0: [
+                {"distance": 1.0, "slot_id": 0},
+                {"distance": 1.1, "slot_id": 1},
+                {"distance": 1.2, "slot_id": 2},
+            ],
+            1: [
+                {"distance": 2.0, "slot_id": 0},
+                {"distance": 2.1, "slot_id": 1},
+                {"distance": 2.2, "slot_id": 2},
+            ],
+        },
+        tolerance_values=[0.1, 0.05],
+        seed_sequence=SeedSequence(12345),
+    )
+    errs = results.flatten_distance_history()
+    assert 0 in errs.keys()
+    assert errs[0] == [1.0, 1.1, 1.2]
+    assert 1 in errs.keys()
+    assert errs[1] == [2.0, 2.1, 2.2]
+    assert len(errs) == 2
