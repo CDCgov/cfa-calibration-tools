@@ -7,6 +7,7 @@ from .artifacts import (
 )
 from .batch import (
     add_batch_task_with_short_id,
+    build_pool_autoscale_formula,
     cancel_batch_task,
     create_pool_with_blob_mounts,
     wait_for_pool_ready,
@@ -20,6 +21,8 @@ from .config import (
     DEFAULT_LOGS_MOUNT_PATH,
     DEFAULT_OUTPUT_MOUNT_PATH,
     DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_POOL_AUTO_SCALE_EVALUATION_INTERVAL_MINUTES,
+    DEFAULT_POOL_MAX_NODES,
     DEFAULT_POOL_READY_TIMEOUT_MINUTES,
     DEFAULT_TASK_SLOTS_PER_NODE,
     DEFAULT_TASK_TIMEOUT_MINUTES,
@@ -64,6 +67,8 @@ __all__ = [
     "DEFAULT_LOGS_MOUNT_PATH",
     "DEFAULT_OUTPUT_MOUNT_PATH",
     "DEFAULT_POLL_INTERVAL_SECONDS",
+    "DEFAULT_POOL_AUTO_SCALE_EVALUATION_INTERVAL_MINUTES",
+    "DEFAULT_POOL_MAX_NODES",
     "DEFAULT_POOL_READY_TIMEOUT_MINUTES",
     "DEFAULT_TASK_SLOTS_PER_NODE",
     "DEFAULT_TASK_TIMEOUT_MINUTES",
@@ -72,6 +77,7 @@ __all__ = [
     "CloudSession",
     "add_batch_task_with_short_id",
     "build_local_image",
+    "build_pool_autoscale_formula",
     "cancel_batch_task",
     "create_cloud_client",
     "create_pool_with_blob_mounts",

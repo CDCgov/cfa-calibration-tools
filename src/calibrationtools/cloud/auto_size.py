@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .config import DEFAULT_POOL_MAX_NODES
 from .sizing import (
     DEFAULT_MEMORY_RESERVE_FRACTION,
     compute_task_slots_per_node,
     resolve_vm_memory_bytes,
+    resolve_vm_task_slots_per_node_limit,
 )
 
 ProbeSimulation = Callable[[dict[str, Any], str, Path], None]
@@ -26,6 +28,8 @@ class AutoSizeSummary:
     vm_memory_bytes: int
     measured_task_peak_rss_bytes: int
     reserve: float
+    memory_task_slots_per_node: int
+    max_task_slots_per_node: int
     task_slots_per_node: int
 
 
@@ -66,8 +70,7 @@ def run_local_memory_probe(
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(
-            "auto-size probe did not return valid JSON: "
-            f"{completed.stdout!r}"
+            f"auto-size probe did not return valid JSON: {completed.stdout!r}"
         ) from exc
 
     peak_rss_bytes = payload.get("peak_rss_bytes")
@@ -86,12 +89,15 @@ def resolve_cloud_auto_size(
     max_concurrent_simulations: int,
     max_concurrent_simulations_explicit: bool,
     vm_size: str | None = None,
+    pool_max_nodes: int = DEFAULT_POOL_MAX_NODES,
     measure_task_peak_rss_bytes: Callable[[], int] | None = None,
     reserve: float = DEFAULT_MEMORY_RESERVE_FRACTION,
 ) -> CloudSizing:
     """Resolve cloud concurrency and task slots for optional auto-size."""
     if auto_size and not cloud:
         raise ValueError("--auto-size requires --cloud")
+    if pool_max_nodes < 1:
+        raise ValueError("pool_max_nodes must be at least 1")
 
     if not auto_size:
         return CloudSizing(
@@ -107,13 +113,22 @@ def resolve_cloud_auto_size(
 
     vm_memory_bytes = resolve_vm_memory_bytes(vm_size)
     measured_task_peak_rss_bytes = measure_task_peak_rss_bytes()
-    task_slots_per_node = compute_task_slots_per_node(
+    memory_task_slots_per_node = compute_task_slots_per_node(
         measured_task_peak_rss_bytes=measured_task_peak_rss_bytes,
         vm_memory_bytes=vm_memory_bytes,
         reserve=reserve,
     )
+    max_task_slots_per_node = resolve_vm_task_slots_per_node_limit(vm_size)
+    # Keep the shared helper's capped path exercised here too, so future
+    # callers get the same validation and clamping behavior.
+    task_slots_per_node = compute_task_slots_per_node(
+        measured_task_peak_rss_bytes=measured_task_peak_rss_bytes,
+        vm_memory_bytes=vm_memory_bytes,
+        max_task_slots_per_node=max_task_slots_per_node,
+        reserve=reserve,
+    )
     if not max_concurrent_simulations_explicit:
-        max_concurrent_simulations = task_slots_per_node
+        max_concurrent_simulations = task_slots_per_node * pool_max_nodes
 
     return CloudSizing(
         max_concurrent_simulations=max_concurrent_simulations,
@@ -123,6 +138,8 @@ def resolve_cloud_auto_size(
             vm_memory_bytes=vm_memory_bytes,
             measured_task_peak_rss_bytes=measured_task_peak_rss_bytes,
             reserve=reserve,
+            memory_task_slots_per_node=memory_task_slots_per_node,
+            max_task_slots_per_node=max_task_slots_per_node,
             task_slots_per_node=task_slots_per_node,
         ),
     )

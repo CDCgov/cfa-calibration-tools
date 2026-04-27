@@ -104,6 +104,7 @@ def _bundled_config_text(
             "task_slots_per_node = 50\n"
             "task_timeout_minutes = 60\n"
             "pool_ready_timeout_minutes = 20\n"
+            "pool_auto_scale_evaluation_interval_minutes = 5\n"
             "dispatch_buffer = 1000\n"
             "print_task_durations = false\n\n"
             "[output]\n"

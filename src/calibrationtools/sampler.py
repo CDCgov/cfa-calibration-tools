@@ -227,6 +227,15 @@ class ABCSampler:
     def particle_to_distance(self, particle: Particle, **kwargs: Any) -> float:
         return self._particle_evaluator.distance(particle, **kwargs)
 
+    async def particle_to_distance_async(
+        self,
+        particle: Particle,
+        **kwargs: Any,
+    ) -> float:
+        return await self._particle_evaluator.distance_async(
+            particle, **kwargs
+        )
+
     def calculate_weight(self, particle: Particle) -> float:
         return self._updater.calculate_weight(particle)
 
@@ -302,6 +311,11 @@ class ABCSampler:
                 sample_particle_from_priors=self.sample_particle_from_priors,
                 sample_and_perturb_particle=self.sample_and_perturb_particle,
                 particle_to_distance=self.particle_to_distance,
+                particle_to_distance_async=(
+                    self.particle_to_distance_async
+                    if self._uses_native_async_collection()
+                    else None
+                ),
                 calculate_weight=self.calculate_weight,
                 replace_particle_population=self._replace_particle_population,
                 reporter=reporter,
@@ -335,6 +349,12 @@ class ABCSampler:
                 raise ValueError(
                     f"Keyword argument '{key}' conflicts with existing attribute. Please choose a different name for the argument. ABCSampler attributes cannot be set from `.run()`"
                 )
+
+    def _uses_native_async_collection(self) -> bool:
+        return bool(
+            getattr(self.model_runner, "prefer_simulate_async", False)
+            and callable(getattr(self.model_runner, "simulate_async", None))
+        )
 
     def _build_results(self) -> CalibrationResults:
         if any(
@@ -386,12 +406,17 @@ class ABCSampler:
             if execution == "parallel"
             else 1
         )
+        use_native_async = (
+            execution == "parallel" and self._uses_native_async_collection()
+        )
         particlewise_runner = self._build_particlewise_generation_runner(
             reporter=reporter
         )
         parallel_executor = (
             ThreadPoolExecutor(max_workers=n_workers)
-            if execution == "parallel" and n_workers > 1
+            if execution == "parallel"
+            and n_workers > 1
+            and not use_native_async
             else None
         )
 

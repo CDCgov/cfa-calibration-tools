@@ -1,6 +1,7 @@
 """Calibrate the example branching process."""
 
 import argparse
+import sys
 import tempfile
 from pathlib import Path
 
@@ -182,12 +183,55 @@ def resolve_cloud_sizing(args: argparse.Namespace) -> CloudSizing:
             args.max_concurrent_simulations is not None
         ),
         vm_size=settings.vm_size,
+        pool_max_nodes=settings.pool_max_nodes,
         measure_task_peak_rss_bytes=(
             lambda: run_local_memory_probe(
                 "example_model.cloud_auto_size",
                 DEFAULT_INPUTS,
             )
         ),
+    )
+
+
+def _format_bytes(size: int) -> str:
+    if size >= 1024**3:
+        return f"{size / 1024**3:.1f} GiB"
+    if size >= 1024**2:
+        return f"{size / 1024**2:.1f} MiB"
+    return f"{size} bytes"
+
+
+def print_cloud_auto_size_summary(sizing: CloudSizing) -> None:
+    summary = sizing.summary
+    if summary is None:
+        return
+
+    cap_note = ""
+    if summary.task_slots_per_node < summary.memory_task_slots_per_node:
+        cap_note = (
+            f", capped_from_ram_slots={summary.memory_task_slots_per_node}"
+        )
+
+    print(
+        (
+            "[cloud-run] auto-size simulation RAM "
+            f"measured_peak_rss="
+            f"{summary.measured_task_peak_rss_bytes} bytes "
+            f"({_format_bytes(summary.measured_task_peak_rss_bytes)}), "
+            f"vm_size={summary.vm_size}, "
+            f"vm_ram={summary.vm_memory_bytes} bytes "
+            f"({_format_bytes(summary.vm_memory_bytes)}), "
+            f"reserve={summary.reserve:.0%}, "
+            f"batch_slot_limit={summary.max_task_slots_per_node}, "
+            f"task_slots_per_node={summary.task_slots_per_node}"
+            f"{cap_note}, "
+            f"max_concurrent_simulations_per_node="
+            f"{summary.task_slots_per_node}, "
+            f"max_concurrent_simulations_total="
+            f"{sizing.max_concurrent_simulations}"
+        ),
+        file=sys.stderr,
+        flush=True,
     )
 
 
@@ -285,6 +329,7 @@ def run_calibration(
 def main():
     args = parse_args()
     cloud_sizing = resolve_cloud_sizing(args)
+    print_cloud_auto_size_summary(cloud_sizing)
 
     artifacts_dir = args.artifacts_dir
     temp_artifacts_dir: tempfile.TemporaryDirectory | None = None
@@ -310,9 +355,7 @@ def main():
                 args,
                 cloud_sizing=cloud_sizing,
             ),
-            max_concurrent_simulations=(
-                cloud_sizing.max_concurrent_simulations
-            ),
+            max_concurrent_simulations=cloud_sizing.max_concurrent_simulations,
             print_task_progress=args.print_task_progress,
             artifacts_dir=artifacts_dir,
         )

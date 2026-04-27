@@ -119,11 +119,46 @@ def test_resolve_cloud_auto_size_sets_default_concurrency():
         measure_task_peak_rss_bytes=lambda: 10 * 1024**3,
     )
 
-    assert sizing.max_concurrent_simulations == 5
+    assert sizing.max_concurrent_simulations == 25
     assert sizing.task_slots_per_node_override == 5
     assert sizing.summary is not None
     assert sizing.summary.measured_task_peak_rss_bytes == 10 * 1024**3
+    assert sizing.summary.memory_task_slots_per_node == 5
+    assert sizing.summary.max_task_slots_per_node == 64
     assert sizing.summary.task_slots_per_node == 5
+
+
+def test_resolve_cloud_auto_size_scales_default_concurrency_by_pool_max_nodes():
+    sizing = resolve_cloud_auto_size(
+        auto_size=True,
+        cloud=True,
+        max_concurrent_simulations=50,
+        max_concurrent_simulations_explicit=False,
+        vm_size="large",
+        pool_max_nodes=3,
+        measure_task_peak_rss_bytes=lambda: 10 * 1024**3,
+    )
+
+    assert sizing.max_concurrent_simulations == 15
+    assert sizing.task_slots_per_node_override == 5
+
+
+def test_resolve_cloud_auto_size_caps_default_concurrency_to_batch_limit():
+    sizing = resolve_cloud_auto_size(
+        auto_size=True,
+        cloud=True,
+        max_concurrent_simulations=50,
+        max_concurrent_simulations_explicit=False,
+        vm_size="large",
+        measure_task_peak_rss_bytes=lambda: 100 * 1024**2,
+    )
+
+    assert sizing.max_concurrent_simulations == 320
+    assert sizing.task_slots_per_node_override == 64
+    assert sizing.summary is not None
+    assert sizing.summary.memory_task_slots_per_node == 557
+    assert sizing.summary.max_task_slots_per_node == 64
+    assert sizing.summary.task_slots_per_node == 64
 
 
 def test_resolve_cloud_auto_size_preserves_explicit_concurrency():

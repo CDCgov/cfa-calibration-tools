@@ -7,6 +7,7 @@ from example_model.calibrate import (
     DEFAULT_MAX_CONCURRENT_SIMULATIONS,
     main,
     parse_args,
+    print_cloud_auto_size_summary,
     resolve_cloud_sizing,
     resolve_max_concurrent_simulations,
     resolve_model_runner,
@@ -200,7 +201,7 @@ def test_resolve_cloud_sizing_auto_size_sets_default_concurrency(monkeypatch):
 
     monkeypatch.setattr(
         "example_model.calibrate.load_cloud_runtime_settings",
-        lambda config_path: Namespace(vm_size="large"),
+        lambda config_path: Namespace(vm_size="large", pool_max_nodes=5),
     )
 
     captured = {}
@@ -217,12 +218,68 @@ def test_resolve_cloud_sizing_auto_size_sets_default_concurrency(monkeypatch):
 
     sizing = resolve_cloud_sizing(args)
 
-    assert sizing.max_concurrent_simulations == 5
+    assert sizing.max_concurrent_simulations == 25
     assert sizing.task_slots_per_node_override == 5
     assert sizing.summary is not None
     assert sizing.summary.measured_task_peak_rss_bytes == 10 * 1024**3
+    assert sizing.summary.memory_task_slots_per_node == 5
+    assert sizing.summary.max_task_slots_per_node == 64
     assert sizing.summary.task_slots_per_node == 5
     assert captured["probe_module"] == "example_model.cloud_auto_size"
+
+
+def test_resolve_cloud_sizing_auto_size_caps_default_concurrency(monkeypatch):
+    args = Namespace(
+        cloud=True,
+        auto_size=True,
+        max_concurrent_simulations=None,
+    )
+
+    monkeypatch.setattr(
+        "example_model.calibrate.load_cloud_runtime_settings",
+        lambda config_path: Namespace(vm_size="large", pool_max_nodes=5),
+    )
+    monkeypatch.setattr(
+        "example_model.calibrate.run_local_memory_probe",
+        lambda probe_module, base_inputs: 100 * 1024**2,
+    )
+
+    sizing = resolve_cloud_sizing(args)
+
+    assert sizing.max_concurrent_simulations == 320
+    assert sizing.task_slots_per_node_override == 64
+    assert sizing.summary is not None
+    assert sizing.summary.memory_task_slots_per_node == 557
+    assert sizing.summary.max_task_slots_per_node == 64
+    assert sizing.summary.task_slots_per_node == 64
+
+
+def test_print_cloud_auto_size_summary_includes_ram_sizing(capsys):
+    print_cloud_auto_size_summary(
+        Namespace(
+            max_concurrent_simulations=320,
+            summary=Namespace(
+                vm_size="large",
+                vm_memory_bytes=64 * 1024**3,
+                measured_task_peak_rss_bytes=100 * 1024**2,
+                reserve=0.15,
+                memory_task_slots_per_node=557,
+                max_task_slots_per_node=64,
+                task_slots_per_node=64,
+            ),
+        )
+    )
+
+    captured = capsys.readouterr()
+
+    assert "[cloud-run] auto-size simulation RAM" in captured.err
+    assert "measured_peak_rss=104857600 bytes (100.0 MiB)" in captured.err
+    assert "vm_ram=68719476736 bytes (64.0 GiB)" in captured.err
+    assert "batch_slot_limit=64" in captured.err
+    assert "task_slots_per_node=64" in captured.err
+    assert "capped_from_ram_slots=557" in captured.err
+    assert "max_concurrent_simulations_per_node=64" in captured.err
+    assert "max_concurrent_simulations_total=320" in captured.err
 
 
 def test_resolve_cloud_sizing_auto_size_preserves_explicit_concurrency(
@@ -236,7 +293,7 @@ def test_resolve_cloud_sizing_auto_size_preserves_explicit_concurrency(
 
     monkeypatch.setattr(
         "example_model.calibrate.load_cloud_runtime_settings",
-        lambda config_path: Namespace(vm_size="large"),
+        lambda config_path: Namespace(vm_size="large", pool_max_nodes=5),
     )
     monkeypatch.setattr(
         "example_model.calibrate.run_local_memory_probe",
@@ -304,7 +361,7 @@ def test_main_auto_size_failure_happens_before_cloud_runner(monkeypatch):
     )
     monkeypatch.setattr(
         "example_model.calibrate.load_cloud_runtime_settings",
-        lambda config_path: Namespace(vm_size="large"),
+        lambda config_path: Namespace(vm_size="large", pool_max_nodes=5),
     )
 
     def fail_probe(probe_module, base_inputs):
@@ -323,6 +380,40 @@ def test_main_auto_size_failure_happens_before_cloud_runner(monkeypatch):
         main()
 
     assert constructed is False
+
+
+def test_main_auto_size_passes_resolved_concurrency_to_sampler(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["calibrate", "--cloud", "--auto-size"],
+    )
+    monkeypatch.setattr(
+        "example_model.calibrate.load_cloud_runtime_settings",
+        lambda config_path: Namespace(vm_size="large", pool_max_nodes=5),
+    )
+    monkeypatch.setattr(
+        "example_model.calibrate.run_local_memory_probe",
+        lambda probe_module, base_inputs: 100 * 1024**2,
+    )
+    monkeypatch.setattr(
+        "example_model.calibrate.resolve_model_runner",
+        lambda args, *, cloud_sizing: "runner",
+    )
+
+    def fake_run_calibration(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "example_model.calibrate.run_calibration",
+        fake_run_calibration,
+    )
+
+    main()
+
+    assert captured["model_runner"] == "runner"
+    assert captured["max_concurrent_simulations"] == 320
 
 
 def test_run_calibration_passes_task_progress_to_sampler(monkeypatch):
