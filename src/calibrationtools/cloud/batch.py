@@ -82,6 +82,34 @@ def _enum_value(value: Any) -> Any:
     return value
 
 
+def build_pool_autoscale_formula(
+    *,
+    max_dedicated_nodes: int,
+    task_slots_per_node: int,
+) -> str:
+    if max_dedicated_nodes < 1:
+        raise ValueError("max_dedicated_nodes must be at least 1")
+    if task_slots_per_node < 1:
+        raise ValueError("task_slots_per_node must be at least 1")
+
+    return "\n".join(
+        [
+            f"maxNodes = {max_dedicated_nodes};",
+            f"taskSlotsPerNode = {task_slots_per_node};",
+            "samplePercent = $PendingTasks.GetSamplePercent("
+            "TimeInterval_Minute * 5);",
+            "pendingTasks = samplePercent < 70 ? "
+            "max(0, $PendingTasks.GetSample(1)) : "
+            "max($PendingTasks.GetSample(1), "
+            "avg($PendingTasks.GetSample(TimeInterval_Minute * 5)));",
+            "targetVMs = ceil(pendingTasks / taskSlotsPerNode);",
+            "$TargetDedicatedNodes = min(maxNodes, max(0, targetVMs));",
+            "$TargetLowPriorityNodes = 0;",
+            "$NodeDeallocationOption = taskcompletion;",
+        ]
+    )
+
+
 def cancel_batch_task(
     *, batch_client: Any, job_name: str, task_id: str
 ) -> None:
@@ -130,6 +158,7 @@ def add_batch_task_with_short_id(
     mount_pairs: list[dict[str, str]] | None = None,
     container_image_name: str | None = None,
     save_logs_path: str | None = None,
+    logs_folder: str | None = None,
     task_id_base: str = "task",
     task_id_max_override: int | None = None,
 ) -> str:
@@ -208,7 +237,8 @@ def add_batch_task_with_short_id(
         job_name=job_name,
         task_id=task_id,
         save_logs_rel_path=save_logs_rel_path,
-        logs_folder=getattr(client, "logs_folder", "stdout_stderr"),
+        logs_folder=logs_folder
+        or getattr(client, "logs_folder", "stdout_stderr"),
     )
     task_constraints = batch_models.TaskConstraints(
         max_wall_clock_time=(
@@ -271,8 +301,8 @@ def _build_container_run_options(
     from cfa.cloudops import batch_helpers
 
     # Azure BlobFuse mounts on Batch nodes are not reliably writable from the
-    # image's default non-root user. Force root for cloud tasks so the model
-    # can write output.csv and task logs back to the mounted containers.
+    # image's default non-root user. Keep this root override explicit so the
+    # task can write output.csv and logs back to the mounted containers.
     parts = [
         f"--name={job_name}_{task_number}",
         "--rm",
@@ -302,12 +332,18 @@ def create_pool_with_blob_mounts(
     vm_size: str,
     target_dedicated_nodes: int,
     task_slots_per_node: int = 1,
+    auto_scale_evaluation_interval_minutes: int = 5,
     availability_zones: str = "regional",
     cache_blobfuse: bool = True,
 ) -> None:
     from azure.mgmt.batch import models
     from cfa.cloudops import defaults as d
     from cfa.cloudops.batch_helpers import get_vm_size
+
+    if auto_scale_evaluation_interval_minutes < 5:
+        raise ValueError(
+            "auto_scale_evaluation_interval_minutes must be at least 5"
+        )
 
     cred = client.cred
     if not cred.azure_resource_group_name:
@@ -355,9 +391,14 @@ def create_pool_with_blob_mounts(
         vm_size=vm_size,
     )
     pool_config.scale_settings = models.ScaleSettings(
-        fixed_scale=models.FixedScaleSettings(
-            target_dedicated_nodes=target_dedicated_nodes,
-            target_low_priority_nodes=0,
+        auto_scale=models.AutoScaleSettings(
+            formula=build_pool_autoscale_formula(
+                max_dedicated_nodes=target_dedicated_nodes,
+                task_slots_per_node=task_slots_per_node,
+            ),
+            evaluation_interval=datetime.timedelta(
+                minutes=auto_scale_evaluation_interval_minutes
+            ),
         )
     )
     pool_config.task_slots_per_node = task_slots_per_node

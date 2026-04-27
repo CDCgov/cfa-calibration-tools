@@ -44,6 +44,8 @@ Additionally, as described in the repo-level README, the model can be run as spe
 uv sync --all-packages
 uv run mrp run example_model.mrp.toml
 ```
+That config uses the MRP inline runtime, so it calls the example model in the
+current Python process instead of spawning `python -m example_model`.
 
 ## Running the calibration
 To run the calibration example in local Python mode, run
@@ -64,20 +66,10 @@ the image:
 docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
 ```
 
-To build the same image and publish it to the Azure Container Registry used by
-CloudOps:
-
-```bash
-uv run --group cloudops python packages/example_model/create_runner.py --push-latest
-```
-
-To check selected CloudOps resources, provide any combination of `--image`,
-`--pool`, and `--job`. If you provide a pool without a job, the script will
-list jobs currently attached to that pool:
-
-```bash
-uv run --group cloudops python packages/example_model/check_runner.py --image cfa-calibration-tools-example-model:latest --pool your-pool-name
-```
+For cloud-backed calibration, use the workflow in the repo-level
+`CLOUD_README.md`. Cloud mode builds the Docker image, uploads it to Azure
+Container Registry, and creates the Batch resources as part of the calibration
+startup path.
 
 Then run:
 

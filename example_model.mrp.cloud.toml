@@ -5,12 +5,8 @@ spec = "example_model"
 version = "0.0.1"
 
 [runtime]
-spec = "process"
-command = "python"
-args = [
-  "-m",
-  "example_model.cloud_mrp_executor",
-]
+spec = "inline"
+callable = "example_model.cloud_mrp_executor:execute_cloud_run"
 
 [runtime.cloud]
 keyvault = "cfa-predict"
@@ -28,8 +24,10 @@ logs_mount_path = "/cloud-logs"
 vm_size = "large"
 jobs_per_session = 1
 task_slots_per_node = 50
+pool_max_nodes = 5
 task_timeout_minutes = 60
 pool_ready_timeout_minutes = 20
+pool_auto_scale_evaluation_interval_minutes = 5
 dispatch_buffer = 1000
 print_task_durations = false
 

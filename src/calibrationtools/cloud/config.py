@@ -17,8 +17,10 @@ DEFAULT_JOBS_PER_SESSION = 1
 # release.
 DEFAULT_JOBS_PER_GENERATION = DEFAULT_JOBS_PER_SESSION
 DEFAULT_TASK_SLOTS_PER_NODE = 1
+DEFAULT_POOL_MAX_NODES = 5
 DEFAULT_TASK_TIMEOUT_MINUTES = 60
 DEFAULT_POOL_READY_TIMEOUT_MINUTES = 20
+DEFAULT_POOL_AUTO_SCALE_EVALUATION_INTERVAL_MINUTES = 5
 DEFAULT_DISPATCH_BUFFER = 0
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 
@@ -75,10 +77,22 @@ class CloudRuntimeSettings:
     vm_size: str = DEFAULT_VM_SIZE
     jobs_per_session: int = DEFAULT_JOBS_PER_SESSION
     task_slots_per_node: int = DEFAULT_TASK_SLOTS_PER_NODE
+    pool_max_nodes: int = DEFAULT_POOL_MAX_NODES
     task_timeout_minutes: int | None = DEFAULT_TASK_TIMEOUT_MINUTES
     pool_ready_timeout_minutes: int | None = DEFAULT_POOL_READY_TIMEOUT_MINUTES
+    pool_auto_scale_evaluation_interval_minutes: int = (
+        DEFAULT_POOL_AUTO_SCALE_EVALUATION_INTERVAL_MINUTES
+    )
     dispatch_buffer: int = DEFAULT_DISPATCH_BUFFER
     print_task_durations: bool = False
+
+    def __post_init__(self) -> None:
+        if self.pool_max_nodes < 1:
+            raise ValueError("pool_max_nodes must be at least 1")
+        if self.pool_auto_scale_evaluation_interval_minutes < 5:
+            raise ValueError(
+                "pool_auto_scale_evaluation_interval_minutes must be at least 5"
+            )
 
     @property
     def jobs_per_generation(self) -> int:
@@ -171,6 +185,9 @@ def load_cloud_runtime_settings(
         task_slots_per_node=int(
             cloud.get("task_slots_per_node", defaults.task_slots_per_node)
         ),
+        pool_max_nodes=int(
+            cloud.get("pool_max_nodes", defaults.pool_max_nodes)
+        ),
         task_timeout_minutes=cloud.get(
             "task_timeout_minutes",
             defaults.task_timeout_minutes,
@@ -178,6 +195,12 @@ def load_cloud_runtime_settings(
         pool_ready_timeout_minutes=cloud.get(
             "pool_ready_timeout_minutes",
             defaults.pool_ready_timeout_minutes,
+        ),
+        pool_auto_scale_evaluation_interval_minutes=int(
+            cloud.get(
+                "pool_auto_scale_evaluation_interval_minutes",
+                defaults.pool_auto_scale_evaluation_interval_minutes,
+            )
         ),
         dispatch_buffer=int(
             cloud.get("dispatch_buffer", defaults.dispatch_buffer)

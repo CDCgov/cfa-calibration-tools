@@ -30,6 +30,7 @@ from calibrationtools.cloud import (
     parse_particle_from_run_id,
     suppress_cloudops_info_output,
 )
+from calibrationtools.cloud import runner as cloud_runner_module
 
 LONG_TASK_NAME_SUFFIX = (
     "gen-123456789_particle-123456789_" + "extra_suffix_that_needs_truncation"
@@ -232,10 +233,12 @@ def test_cloud_runner_initializes_resources_and_uses_mrp(
     captured = capsys.readouterr()
     assert f"[cloud-run] created pool {POOL_NAME}" in captured.err
     assert "vm_size=large" in captured.err
-    assert "target_nodes=2" in captured.err
-    assert "task_slots=2" in captured.err
-    assert "capacity=4" in captured.err
-    assert "scaling=fixed" in captured.err
+    assert "max_nodes=5" in captured.err
+    assert "task_slots_per_node=2" in captured.err
+    assert "max_task_capacity=10" in captured.err
+    assert (
+        "scaling=auto(max_nodes=5, min_nodes=0, interval=5m)" in captured.err
+    )
     assert "created 2 reusable job(s) for 2 generation(s)" in captured.err
 
     input_path = tmp_path / "input.json"
@@ -260,9 +263,39 @@ def test_cloud_runner_initializes_resources_and_uses_mrp(
     assert len(job_calls) == 2
     assert len(pool_create_calls) == 1
     assert len(pool_wait_calls) == 1
-    assert pool_create_calls[0]["target_dedicated_nodes"] == 2
+    assert pool_create_calls[0]["target_dedicated_nodes"] == 5
     assert pool_create_calls[0]["task_slots_per_node"] == 2
+    assert pool_create_calls[0]["auto_scale_evaluation_interval_minutes"] == 5
     assert runner.session.job_name_for_run("gen-2_particle-2").endswith("-j2")
+
+
+def test_cloud_runner_startup_summary_includes_auto_size(capsys):
+    from calibrationtools.cloud.runner import CloudMRPRunner
+
+    runner = object.__new__(CloudMRPRunner)
+    runner.settings = _cloud_settings(vm_size="large", task_slots_per_node=5)
+    runner.max_concurrent_simulations = 5
+    runner.generation_count = 2
+    runner.auto_size_summary = SimpleNamespace(
+        measured_task_peak_rss_bytes=10 * 1024**3,
+        vm_memory_bytes=64 * 1024**3,
+        reserve=0.15,
+        task_slots_per_node=5,
+    )
+
+    runner._print_session_startup_summary(
+        pool_name=POOL_NAME,
+        job_names={"1": [JOB_1], "2": [JOB_1]},
+        remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
+    )
+
+    captured = capsys.readouterr()
+    assert "[cloud-run] auto-size" in captured.err
+    assert "measured_peak_rss=10737418240 bytes" in captured.err
+    assert "vm_ram=68719476736 bytes" in captured.err
+    assert "reserve=15%" in captured.err
+    assert "task_slots_per_node=5" in captured.err
+    assert "max_concurrent_simulations_total=5" in captured.err
 
 
 def test_cloud_session_accepts_attempt_suffixed_run_ids():
@@ -643,6 +676,8 @@ def test_add_batch_task_with_short_id_uses_relative_mount_paths(monkeypatch):
     run_options = first_task.container_settings.container_run_options
     assert "--name=job-rel-mounts_1" in run_options
     assert "--rm" in run_options
+    # Batch tasks intentionally override the image's non-root default user so
+    # BlobFuse-mounted output and log directories are writable.
     assert "--user 0:0" in run_options
     assert "source=" in run_options
     assert "target=/cloud-input" in run_options
@@ -1019,8 +1054,7 @@ def test_cloud_executor_failure_includes_task_log_excerpts(
             dest_path = Path(kwargs["dest_path"])
             if src_path.endswith("/stderr.txt"):
                 dest_path.write_text(
-                    "Traceback (most recent call last):\n"
-                    "ValueError: bad particle\n"
+                    "Traceback (most recent call last):\nValueError: bad particle\n"
                 )
                 return
             if src_path.endswith("/stdout.txt"):
@@ -1350,6 +1384,88 @@ def test_cloud_runner_reports_configured_dispatch_buffer(monkeypatch):
     assert runner.dispatch_buffer_size() == 1000
 
 
+def test_cloud_runner_async_simulate_awaits_completion_future_without_spin(
+    monkeypatch, tmp_path
+):
+    fake_client = _FakeClient()
+    sleep_calls: list[float] = []
+    original_sleep = cloud_runner_module.asyncio.sleep
+
+    async def tracking_sleep(delay, *args, **kwargs):
+        sleep_calls.append(delay)
+        return await original_sleep(delay, *args, **kwargs)
+
+    monkeypatch.setattr(cloud_runner_module.asyncio, "sleep", tracking_sleep)
+    monkeypatch.setattr(
+        "example_model.cloud_runner.create_cloud_client",
+        lambda *, keyvault: fake_client,
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.git_short_sha",
+        lambda repo_root: "testsha",
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.make_session_slug",
+        lambda tag: SESSION_SLUG,
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.build_local_image",
+        lambda **kwargs: "example-local:testsha",
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.upload_local_image",
+        lambda **kwargs: "fake-registry.azurecr.io/example-model:testsha",
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.load_cloud_runtime_settings",
+        lambda config_path: _cloud_settings(
+            vm_size="large",
+            jobs_per_session=1,
+        ),
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.create_pool_with_blob_mounts",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "example_model.cloud_runner.wait_for_pool_ready",
+        lambda **kwargs: fake_client.pool,
+    )
+
+    runner = ExampleModelCloudRunner(
+        Path("example_model.mrp.cloud.toml"),
+        repo_root=REPO_ROOT,
+        dockerfile=REPO_ROOT / "packages" / "example_model" / "Dockerfile",
+        generation_count=1,
+        max_concurrent_simulations=1,
+    )
+
+    async def fake_submit_run_async(run_id: str) -> None:
+        async def finish_run() -> None:
+            await original_sleep(0.01)
+            runner._resolve_run_success(run_id, [1, 2])
+
+        asyncio.create_task(finish_run())
+
+    runner._submit_run_async = fake_submit_run_async
+    runner._ensure_controller_started = lambda: None
+    runner._raise_controller_failure = lambda: None
+
+    try:
+        result = asyncio.run(
+            runner.simulate_async(
+                {"seed": 123, "run_id": "gen-1_particle-1"},
+                output_dir=tmp_path / "output",
+                run_id="gen-1_particle-1",
+            )
+        )
+    finally:
+        runner.close()
+
+    assert result == [1, 2]
+    assert 0 not in sleep_calls
+
+
 def test_cloud_runner_async_simulate_enforces_inflight_limit(
     monkeypatch, tmp_path
 ):
@@ -1510,11 +1626,16 @@ def test_cloud_runner_async_simulate_uploads_submits_and_downloads(
     monkeypatch, tmp_path
 ):
     fake_client = _FakeClient()
+    create_client_calls = []
     task_submit_calls = []
+
+    def fake_create_cloud_client(*, keyvault):
+        create_client_calls.append(keyvault)
+        return fake_client
 
     monkeypatch.setattr(
         "example_model.cloud_runner.create_cloud_client",
-        lambda *, keyvault: fake_client,
+        fake_create_cloud_client,
     )
     monkeypatch.setattr(
         "example_model.cloud_runner.git_short_sha",
@@ -1591,10 +1712,7 @@ def test_cloud_runner_async_simulate_uploads_submits_and_downloads(
         runner.close()
 
     assert result == [1, 2]
-    assert fake_client.save_logs_to_blob == runner.session.logs_container
-    assert (
-        fake_client.logs_folder == f"{SESSION_SLUG}/{JOB_1}/gen-1_particle-1"
-    )
+    assert create_client_calls == [runner.session.keyvault]
     assert (
         fake_client.upload_calls[0]["container_name"]
         == runner.session.input_container
@@ -1611,6 +1729,10 @@ def test_cloud_runner_async_simulate_uploads_submits_and_downloads(
     assert (
         task_submit_calls[0]["save_logs_path"]
         == runner.session.logs_mount_path
+    )
+    assert (
+        task_submit_calls[0]["logs_folder"]
+        == f"{SESSION_SLUG}/{JOB_1}/gen-1_particle-1"
     )
     assert fake_client.download_calls[0]["src_path"].endswith(
         "generation-1/gen-1_particle-1/output.csv"
@@ -2862,9 +2984,46 @@ def test_example_model_cloud_runner_delegates_to_shared_factory(monkeypatch):
     assert callable(captured["kwargs"]["read_output_dir"])
     assert captured["kwargs"]["output_filename"] == "output.csv"
     assert captured["kwargs"]["print_task_durations"] is True
+    assert captured["kwargs"]["auto_size_summary"] is None
     assert captured["kwargs"]["backend"].create_cloud_client is (
         cloud_runner.create_cloud_client
     )
+
+
+def test_example_model_cloud_runner_wraps_settings_for_auto_size(monkeypatch):
+    import example_model.cloud_runner as cloud_runner
+
+    captured: dict[str, Any] = {}
+    sentinel = object()
+    summary = SimpleNamespace(task_slots_per_node=3)
+
+    def fake_create_cloud_mrp_runner(config_path, **kwargs):
+        captured["config_path"] = config_path
+        captured["kwargs"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr(
+        cloud_runner,
+        "_create_cloud_mrp_runner",
+        fake_create_cloud_mrp_runner,
+    )
+
+    runner = cloud_runner.ExampleModelCloudRunner(
+        "example_model.mrp.cloud.toml",
+        generation_count=2,
+        max_concurrent_simulations=7,
+        repo_root=REPO_ROOT,
+        dockerfile=REPO_ROOT / "packages" / "example_model" / "Dockerfile",
+        task_slots_per_node_override=3,
+        auto_size_summary=summary,
+    )
+
+    assert runner is sentinel
+    assert captured["kwargs"]["auto_size_summary"] is summary
+    settings = captured["kwargs"]["settings_loader"](
+        "example_model.mrp.cloud.toml"
+    )
+    assert settings.task_slots_per_node == 3
 
 
 def test_example_model_cloud_runner_uses_default_build_context(monkeypatch):
@@ -2937,7 +3096,83 @@ def test_example_model_cloud_defaults_object_carries_model_defaults():
     assert defaults.output_container_prefix == "example-model-cloud-output"
     assert defaults.logs_container_prefix == "example-model-cloud-logs"
     assert defaults.task_slots_per_node == 50
+    assert defaults.pool_max_nodes == 5
+    assert defaults.pool_auto_scale_evaluation_interval_minutes == 5
     assert defaults.dispatch_buffer == 1000
+
+
+def test_cloud_runtime_settings_loads_autoscale_interval_override(tmp_path):
+    from calibrationtools.cloud.config import (
+        CloudRuntimeSettings,
+        load_cloud_runtime_settings,
+    )
+
+    config_path = tmp_path / "cloud.toml"
+    config_path.write_text(
+        """
+[runtime.cloud]
+pool_auto_scale_evaluation_interval_minutes = 10
+pool_max_nodes = 12
+""".strip()
+    )
+    defaults = CloudRuntimeSettings(
+        keyvault="keyvault",
+        local_image="local",
+        repository="repo",
+        task_mrp_config_path="/app/task.toml",
+        pool_prefix="pool",
+        job_prefix="job",
+        input_container_prefix="input",
+        output_container_prefix="output",
+        logs_container_prefix="logs",
+    )
+
+    settings = load_cloud_runtime_settings(config_path, defaults=defaults)
+
+    assert settings.pool_auto_scale_evaluation_interval_minutes == 10
+    assert settings.pool_max_nodes == 12
+
+
+def test_cloud_runtime_settings_rejects_invalid_pool_max_nodes():
+    from calibrationtools.cloud.config import CloudRuntimeSettings
+
+    with pytest.raises(
+        ValueError,
+        match="pool_max_nodes must be at least 1",
+    ):
+        CloudRuntimeSettings(
+            keyvault="keyvault",
+            local_image="local",
+            repository="repo",
+            task_mrp_config_path="/app/task.toml",
+            pool_prefix="pool",
+            job_prefix="job",
+            input_container_prefix="input",
+            output_container_prefix="output",
+            logs_container_prefix="logs",
+            pool_max_nodes=0,
+        )
+
+
+def test_cloud_runtime_settings_rejects_too_short_autoscale_interval():
+    from calibrationtools.cloud.config import CloudRuntimeSettings
+
+    with pytest.raises(
+        ValueError,
+        match="pool_auto_scale_evaluation_interval_minutes must be at least 5",
+    ):
+        CloudRuntimeSettings(
+            keyvault="keyvault",
+            local_image="local",
+            repository="repo",
+            task_mrp_config_path="/app/task.toml",
+            pool_prefix="pool",
+            job_prefix="job",
+            input_container_prefix="input",
+            output_container_prefix="output",
+            logs_container_prefix="logs",
+            pool_auto_scale_evaluation_interval_minutes=4,
+        )
 
 
 def test_example_model_executor_passes_backend_bundle(monkeypatch):

@@ -1,5 +1,6 @@
 """Evaluate particles by running the model and scoring its outputs."""
 
+import asyncio
 import inspect
 from pathlib import Path
 from typing import Any, Callable
@@ -89,8 +90,7 @@ class ParticleEvaluator:
         legacy_context = kwargs.pop(EVALUATION_CONTEXT_KEY, None)
         if evaluation_context is not None and legacy_context is not None:
             raise TypeError(
-                "Pass either evaluation_context or "
-                f"{EVALUATION_CONTEXT_KEY}, not both."
+                f"Pass either evaluation_context or {EVALUATION_CONTEXT_KEY}, not both."
             )
         if evaluation_context is not None:
             return evaluation_context
@@ -168,6 +168,15 @@ class ParticleEvaluator:
     async def _await_result(result: Any) -> Any:
         return await result
 
+    def _allows_sync_bridge(self) -> bool:
+        return bool(
+            getattr(
+                self.model_runner,
+                "allow_simulate_from_sync_bridge",
+                False,
+            )
+        )
+
     def _simulate(
         self,
         params: dict[str, Any],
@@ -177,9 +186,22 @@ class ParticleEvaluator:
         run_id: str | None,
     ) -> Any:
         simulate_async = getattr(self.model_runner, "simulate_async", None)
+        simulate_from_sync = getattr(
+            self.model_runner, "simulate_from_sync", None
+        )
         if bool(
             getattr(self.model_runner, "prefer_simulate_async", False)
         ) and callable(simulate_async):
+            if callable(simulate_from_sync) and self._allows_sync_bridge():
+                return simulate_from_sync(
+                    params,
+                    **self._build_simulate_kwargs(
+                        simulate_from_sync,
+                        input_path=input_path,
+                        output_dir=output_dir,
+                        run_id=run_id,
+                    ),
+                )
             return run_coroutine_from_sync(
                 lambda: self._simulate_async(
                     simulate_async,
@@ -216,6 +238,56 @@ class ParticleEvaluator:
                     output_dir=output_dir,
                     run_id=run_id,
                 )
+            )
+
+        raise AttributeError(
+            "model_runner must define simulate() or simulate_async()"
+        )
+
+    async def _simulate_async_preferred(
+        self,
+        params: dict[str, Any],
+        *,
+        input_path: Path | None,
+        output_dir: Path | None,
+        run_id: str | None,
+    ) -> Any:
+        simulate_async = getattr(self.model_runner, "simulate_async", None)
+        if bool(
+            getattr(self.model_runner, "prefer_simulate_async", False)
+        ) and callable(simulate_async):
+            return await self._simulate_async(
+                simulate_async,
+                params,
+                input_path=input_path,
+                output_dir=output_dir,
+                run_id=run_id,
+            )
+
+        simulate = getattr(self.model_runner, "simulate", None)
+        if callable(simulate):
+            result = await asyncio.to_thread(
+                lambda: simulate(
+                    params,
+                    **self._build_simulate_kwargs(
+                        simulate,
+                        input_path=input_path,
+                        output_dir=output_dir,
+                        run_id=run_id,
+                    ),
+                )
+            )
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        if callable(simulate_async):
+            return await self._simulate_async(
+                simulate_async,
+                params,
+                input_path=input_path,
+                output_dir=output_dir,
+                run_id=run_id,
             )
 
         raise AttributeError(
@@ -269,6 +341,35 @@ class ParticleEvaluator:
             (output_dir / "result.json").write_text(dumps_json(outputs) + "\n")
         return outputs
 
+    async def simulate_async(
+        self,
+        particle: Particle,
+        *,
+        evaluation_context: dict[str, int] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        context = self._resolve_evaluation_context(
+            evaluation_context=evaluation_context,
+            kwargs=kwargs,
+        )
+        params = self.particles_to_params(particle, **kwargs)
+        staged_params, input_path, output_dir, run_id = (
+            self._stage_simulation_io(params, context=context)
+        )
+        outputs = await self._simulate_async_preferred(
+            staged_params,
+            input_path=input_path,
+            output_dir=output_dir,
+            run_id=run_id,
+        )
+        if output_dir is not None:
+            await asyncio.to_thread(
+                lambda: (output_dir / "result.json").write_text(
+                    dumps_json(outputs) + "\n"
+                )
+            )
+        return outputs
+
     def distance(
         self,
         particle: Particle,
@@ -277,6 +378,20 @@ class ParticleEvaluator:
         **kwargs: Any,
     ) -> float:
         outputs = self.simulate(
+            particle,
+            evaluation_context=evaluation_context,
+            **kwargs,
+        )
+        return self.outputs_to_distance(outputs, self.target_data)
+
+    async def distance_async(
+        self,
+        particle: Particle,
+        *,
+        evaluation_context: dict[str, int] | None = None,
+        **kwargs: Any,
+    ) -> float:
+        outputs = await self.simulate_async(
             particle,
             evaluation_context=evaluation_context,
             **kwargs,

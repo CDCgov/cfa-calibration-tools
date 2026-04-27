@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 
 import pytest
@@ -96,6 +97,66 @@ def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in():
     )
 
     distance = evaluator.distance(Particle({"p": 0.2}))
+
+    assert distance == pytest.approx(0.25)
+    assert calls == [("simulate_async", {"params": {"p": 0.2}})]
+
+
+def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one():
+    calls: list[tuple[str, dict]] = []
+
+    class AsyncPreferredRunner:
+        prefer_simulate_async = True
+        allow_simulate_from_sync_bridge = True
+
+        def simulate_from_sync(self, params, **kwargs):
+            calls.append(("simulate_from_sync", {"params": params, **kwargs}))
+            return 1.5
+
+        async def simulate_async(self, params, **kwargs):
+            raise AssertionError("simulate_async() should not be used")
+
+    evaluator = ParticleEvaluator(
+        particles_to_params=lambda particle: particle,
+        outputs_to_distance=lambda model_output, target_data: abs(
+            model_output - target_data
+        ),
+        target_data=1.0,
+        model_runner=AsyncPreferredRunner(),
+    )
+
+    distance = evaluator.distance(Particle({"p": 0.2}))
+
+    assert distance == pytest.approx(0.5)
+    assert calls == [("simulate_from_sync", {"params": {"p": 0.2}})]
+
+
+def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_bridge():
+    calls: list[tuple[str, dict]] = []
+
+    class AsyncPreferredRunner:
+        prefer_simulate_async = True
+
+        def simulate(self, params, **kwargs):
+            raise AssertionError("simulate() should not be used")
+
+        def simulate_from_sync(self, params, **kwargs):
+            raise AssertionError("simulate_from_sync() should not be used")
+
+        async def simulate_async(self, params, **kwargs):
+            calls.append(("simulate_async", {"params": params, **kwargs}))
+            return 1.25
+
+    evaluator = ParticleEvaluator(
+        particles_to_params=lambda particle: particle,
+        outputs_to_distance=lambda model_output, target_data: abs(
+            model_output - target_data
+        ),
+        target_data=1.0,
+        model_runner=AsyncPreferredRunner(),
+    )
+
+    distance = asyncio.run(evaluator.distance_async(Particle({"p": 0.2})))
 
     assert distance == pytest.approx(0.25)
     assert calls == [("simulate_async", {"params": {"p": 0.2}})]

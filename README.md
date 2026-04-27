@@ -16,6 +16,9 @@ uv sync --all-packages --all-extras
 
 ## Running the example model
 
+The default MRP config uses the inline runtime, so `mrp` calls the example
+model in the current Python process.
+
 ```bash
 # Default parameters
 uv run mrp run example_model.mrp.toml

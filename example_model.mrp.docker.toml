@@ -5,6 +5,7 @@ spec = "example_model"
 version = "0.0.1"
 
 [runtime]
+spec = "process"
 command = "sh"
 args = [
   "-c",

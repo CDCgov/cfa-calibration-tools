@@ -50,9 +50,8 @@ def _bundled_config_text(
             'spec = "example_model"\n'
             'version = "0.0.1"\n\n'
             "[runtime]\n"
-            'env = "uv"\n'
-            'command = "python"\n'
-            'args = ["-m", "example_model"]\n\n'
+            'spec = "inline"\n'
+            'callable = "example_model.example_model:run_inline"\n\n'
             "[output]\n"
             'spec = "filesystem"\n'
             'dir = "./output"\n'
@@ -64,6 +63,7 @@ def _bundled_config_text(
             'spec = "example_model"\n'
             'version = "0.0.1"\n\n'
             "[runtime]\n"
+            'spec = "process"\n'
             'command = "sh"\n'
             "args = [\n"
             '  "-c",\n'
@@ -80,12 +80,8 @@ def _bundled_config_text(
             'spec = "example_model"\n'
             'version = "0.0.1"\n\n'
             "[runtime]\n"
-            'spec = "process"\n'
-            'command = "python"\n'
-            "args = [\n"
-            '  "-m",\n'
-            '  "example_model.cloud_mrp_executor",\n'
-            "]\n\n"
+            'spec = "inline"\n'
+            'callable = "example_model.cloud_mrp_executor:execute_cloud_run"\n\n'
             "[runtime.cloud]\n"
             'keyvault = "cfa-predict"\n'
             'local_image = "cfa-calibration-tools-example-model-python"\n'
@@ -104,6 +100,7 @@ def _bundled_config_text(
             "task_slots_per_node = 50\n"
             "task_timeout_minutes = 60\n"
             "pool_ready_timeout_minutes = 20\n"
+            "pool_auto_scale_evaluation_interval_minutes = 5\n"
             "dispatch_buffer = 1000\n"
             "print_task_durations = false\n\n"
             "[output]\n"

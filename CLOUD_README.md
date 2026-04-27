@@ -58,6 +58,7 @@ uv run --group cloudops python -m example_model.calibrate --cloud
 Useful flags:
 
 - `--max-concurrent-simulations 25`
+- `--auto-size`
 - `--print-task-progress`
 - `--print-task-durations`
 - `--artifacts-dir ./artifacts`
@@ -66,6 +67,7 @@ Example:
 
 ```bash
 uv run --group cloudops python -m example_model.calibrate --cloud \
+  --auto-size \
   --max-concurrent-simulations 25 \
   --print-task-progress \
   --print-task-durations \
@@ -168,7 +170,9 @@ Important settings under `[runtime.cloud]`:
 | `vm_size` | VM shorthand or raw Azure VM SKU |
 | `jobs_per_session` | Number of reusable Azure Batch jobs shared across all generations (formerly `jobs_per_generation`, which is still accepted but deprecated) |
 | `task_slots_per_node` | Number of Batch tasks each node may run concurrently |
+| `pool_max_nodes` | Maximum dedicated nodes the autoscaled Batch pool may use |
 | `pool_ready_timeout_minutes` | How long to wait for the Batch pool to become ready |
+| `pool_auto_scale_evaluation_interval_minutes` | Azure Batch autoscale evaluation interval; minimum `5` |
 | `task_timeout_minutes` | Per-task timeout used while waiting for Batch completion |
 | `dispatch_buffer` | Extra queued runs admitted beyond active submissions |
 | `print_task_durations` | Prints upload, queue, run, and download timing summaries |
@@ -179,7 +183,9 @@ Current defaults in this repo:
 - `vm_size = "large"`
 - `jobs_per_session = 1`
 - `task_slots_per_node = 50`
+- `pool_max_nodes = 5`
 - `pool_ready_timeout_minutes = 20`
+- `pool_auto_scale_evaluation_interval_minutes = 5`
 - `task_timeout_minutes = 60`
 - `dispatch_buffer = 1000`
 - `print_task_durations = false`
@@ -201,8 +207,8 @@ The cloud code supports these shorthand values for `vm_size`:
 | `large` | `Standard_D16s_v3` | 16 | 64 GiB |
 | `xlarge` | `Standard_D32s_v3` | 32 | 128 GiB |
 
-You can also set a raw Azure SKU directly. Any `vm_size` value outside the
-five shorthands is passed through unchanged.
+For normal cloud runs, you can also set a raw Azure SKU directly. Any `vm_size`
+value outside the five shorthands is passed through unchanged.
 
 Example:
 
@@ -210,6 +216,47 @@ Example:
 [runtime.cloud]
 vm_size = "Standard_D48s_v3"
 ```
+
+## Auto-Size
+
+Cloud calibration supports `--auto-size` as a RAM-based guardrail. The flag is
+valid only with `--cloud`. Before the cloud runner is constructed, the CLI runs
+one local example-model simulation in a fresh Python subprocess, measures the
+child process peak RSS, and derives `task_slots_per_node` for the configured
+`vm_size`.
+
+The formula is:
+
+```text
+usable_vm_ram = vm_ram_bytes * 0.85
+memory_task_slots = floor(usable_vm_ram / measured_task_peak_rss_bytes)
+task_slots_per_node = min(memory_task_slots, vm_vcpus * 4)
+```
+
+The `vm_vcpus * 4` cap matches Azure Batch's maximum task slots per node for
+these VM sizes. For example, `large` maps to `Standard_D16s_v3`, so auto-size
+will never request more than 64 task slots per node even when the local memory
+probe suggests that more model tasks could fit in RAM.
+
+Precedence:
+
+- `--auto-size` overrides `[runtime.cloud].task_slots_per_node` for that run
+  without editing the TOML file.
+- If `--max-concurrent-simulations` is passed explicitly, it remains the total
+  cloud submission limit; auto-size changes only `task_slots_per_node`.
+- If `--max-concurrent-simulations` is omitted, auto-size sets per-node task
+  concurrency to the computed `task_slots_per_node` and sets total concurrency
+  to `task_slots_per_node * pool_max_nodes`. This is intentionally not limited
+  to one node: `--auto-size` sizes the pool-wide cloud run so Azure Batch can
+  scale up to the configured `pool_max_nodes` when there is enough queued work.
+
+Auto-size supports the five VM shorthands above and their documented Dsv3 SKUs
+(`Standard_D2s_v3` through `Standard_D32s_v3`). Unknown raw SKUs fail fast with
+a clear error because the first implementation uses the static RAM table in
+this repo rather than Azure SKU discovery. If the measured task does not fit
+within the 85% usable RAM budget for one node, the command fails before cloud
+provisioning and asks you to choose a larger `vm_size` or disable
+`--auto-size`.
 
 ## What A Cloud Run Creates
 
@@ -244,19 +291,28 @@ generations.
 - The runner expects `run_id` values like `gen-1_particle-1`
 - Each Batch task runs `mrp run` inside the container using
   `example_model.mrp.task.toml`
+- The example image defaults to a non-root user for local container execution,
+  but Azure Batch tasks currently pass `--user 0:0` because the BlobFuse output
+  and logs mounts are not reliably writable by the image user.
 - `--print-task-progress` prints local generation progress as particle
   evaluations finish; in cloud mode each evaluation corresponds to one Batch task
+- `--max-concurrent-simulations` controls the cloud task window. In cloud mode,
+  this is also the local async submit/wait/download coroutine limit; the local
+  path no longer spawns one `mrp run` subprocess per task.
 - The progress line includes completed evaluations, accepted particles, the
   current number of in-progress tasks, and the running average task duration
   for the generation
 - While tasks are still waiting on Azure Batch, the progress line can also
   include Batch task state counts plus pool node/allocation state
-- During calibration, the sampler now keeps the cloud task window filled up to
-  `--max-concurrent-simulations` instead of waiting for a whole batch wave to
-  finish, and it best-effort cancels surplus in-flight tasks once a generation
-  has enough accepted particles
+- During calibration, async cloud evaluations are bounded by
+  `--max-concurrent-simulations`
 - The cloud runner prints a startup summary with the created pool config and
-  the number of reusable Batch jobs for the run
+  the number of reusable Batch jobs for the run; when `--auto-size` is enabled,
+  the summary also includes measured peak RSS, VM RAM, reserve percentage,
+  chosen task slots, and effective concurrency
+- The local cloud path bypasses local per-particle `mrp run` subprocesses.
+  `mrp run` executes inside each Batch container with
+  `example_model.mrp.task.toml`.
 - The cloud runner routes new tasks to the least-busy shared Batch job rather
   than assigning strictly by particle-number modulo
 - The cloud executor uploads the per-particle input JSON to the input container
@@ -272,9 +328,21 @@ generations.
   not delete the pool, jobs, blob containers, or ACR image tag automatically.
 - The cleanup command refuses to delete Batch or Blob resources unless an exact
   `--session-slug` is provided.
-- `--max-concurrent-simulations` now drives the total desired task capacity for
-  the fixed-size Batch pool in cloud mode. The dedicated node count is derived
-  from that value and `task_slots_per_node`.
+- `pool_max_nodes` bounds the autoscaled Batch pool in cloud mode. The maximum
+  task capacity is `pool_max_nodes * task_slots_per_node`.
+- When `--auto-size` is enabled and `--max-concurrent-simulations` is omitted,
+  that maximum task capacity also becomes the local submission limit. Set
+  `--max-concurrent-simulations` explicitly to cap total in-flight work below
+  the pool-wide auto-sized capacity.
+- The pool autoscale formula can target `0` dedicated nodes once Azure Batch
+  reports no queued or running tasks. The pool resource still exists until
+  manual cleanup.
+- Pool scale-up and scale-down are bounded by the Azure Batch autoscale
+  evaluation interval, which defaults to `5` minutes and can be overridden with
+  `pool_auto_scale_evaluation_interval_minutes`.
+- `--auto-size` is a memory-only sizing helper. It does not account for CPU,
+  IO, BlobFuse overhead, or model inputs that use more memory than the single
+  local probe run.
 - The async cloud controller admits up to
   `--max-concurrent-simulations + dispatch_buffer` queued runs while only
   `--max-concurrent-simulations` submissions execute at once.
@@ -283,8 +351,9 @@ generations.
 - `task_timeout_minutes` affects how long the executor waits for each Batch task.
 - Only `output.csv` is explicitly downloaded back to the local output folder.
   If a task fails, the logs container is the first place to inspect.
-- The pool currently uses fixed scaling and regional placement. Task slots per
-  node are configurable in `example_model.mrp.cloud.toml`.
+- The pool currently uses Azure Batch autoscale and regional placement. Task
+  slots per node and the autoscale evaluation interval are configurable in
+  `example_model.mrp.cloud.toml`.
 - Blobfuse-backed mounts are used for input, output, and logs, so storage and
   mount behavior matter for performance and debugging.
 - The default cloud key vault, prefixes, and repository names are all project
@@ -296,7 +365,8 @@ generations.
 2. Verify `docker`, `git`, and `az` are available.
 3. Check or edit `example_model.mrp.cloud.toml`.
 4. Run cloud calibration with `--cloud`.
-5. Use `check_runner.py` if you need to inspect image, pool, or job state.
+5. Use Azure Batch, Azure Storage, or ACR tooling if you need to inspect image,
+   pool, job, or blob state during a run.
 6. Use `example_model.cloud_cleanup` after the run to remove cloud resources.
 
 ## Using `calibrationtools` In A New Model With Cloud Execution
@@ -349,20 +419,20 @@ reporting, and cleanup.
 For a hypothetical `my_model` workspace package, add the following files and
 wire them in:
 
-1. **A Dockerfile** that installs `calibrationtools` and your model, copies
-   your `my_model.mrp.task.toml`, and sets the container entrypoint to your
-   model CLI. See [packages/example_model/Dockerfile](packages/example_model/Dockerfile)
-   for the two-stage wheel-based pattern.
+1. **A Dockerfile** that installs `calibrationtools` and your model and copies
+   your `my_model.mrp.task.toml` into the image. See
+   [packages/example_model/Dockerfile](packages/example_model/Dockerfile) for
+   the two-stage wheel-based pattern.
 
-2. **Three MRP configs at the repo root** (names are conventional):
-   - `my_model.mrp.toml` — local/in-process run
+2. **Four MRP configs at the repo root** (names are conventional):
+   - `my_model.mrp.toml` — local inline run
    - `my_model.mrp.docker.toml` — local Docker run
    - `my_model.mrp.cloud.toml` — cloud run. It must set:
-     - `[runtime]` to launch `python -m my_model.cloud_mrp_executor`
+     - `[runtime]` to inline-call `my_model.cloud_mrp_executor:execute_cloud_run`
      - `[runtime.cloud]` block (see
        [example_model.mrp.cloud.toml](example_model.mrp.cloud.toml))
-   - `my_model.mrp.task.toml` — config used **inside** the container to run
-     one simulation. The image bakes this in at `task_mrp_config_path`.
+   - `my_model.mrp.task.toml` — inline config used **inside** the container to
+     run one simulation. The image bakes this in at `task_mrp_config_path`.
 
 3. **A thin `cloud_utils` module** that defines a model-specific
    `DEFAULT_CLOUD_RUNTIME_SETTINGS` object and exposes
@@ -386,7 +456,7 @@ wire them in:
    [packages/example_model/src/example_model/cloud_runner.py](packages/example_model/src/example_model/cloud_runner.py)
    for the example-model wrapper function.
 
-6. **A `cloud_mrp_executor` entrypoint** inside the container image that calls
+6. **A `cloud_mrp_executor` inline dispatch callable** that calls
    `calibrationtools.cloud.executor.execute_cloud_run`. Mirror
    [packages/example_model/src/example_model/cloud_mrp_executor.py](packages/example_model/src/example_model/cloud_mrp_executor.py).
 
@@ -463,20 +533,19 @@ re-implementing cloud-runner construction inside the model package.
 calibrate.py                        (local driver)
   └─ ABCSampler(model_runner=MyModelCloudRunner(...))
         └─ simulate_async(params, run_id=..., output_dir=...)
-              └─ mrp run my_model.mrp.cloud.toml   (local mrp subprocess)
-                    └─ python -m my_model.cloud_mrp_executor
-                          └─ execute_cloud_run(run_json)
-                                ├─ upload input JSON to input container
-                                ├─ submit Azure Batch task (runs your image)
-                                ├─ poll until completion
-                                └─ download output.csv to local output_dir
+              └─ mrp run my_model.mrp.cloud.toml
+                    └─ inline execute_cloud_run(run_json)
+                          ├─ upload input JSON to input container
+                          ├─ submit Azure Batch task (runs your image)
+                          ├─ poll until completion
+                          └─ download output.csv to local output_dir
 ```
 
 The Batch task started inside Azure runs `mrp run` against the image-baked
-`my_model.mrp.task.toml`, which invokes your model's CLI. Your model reads the
-particle input from the mounted `input_mount_path` and writes `output.csv`
-(or your `output_filename`) to `output_mount_path`. `stdout`/`stderr` land in
-the logs container.
+`my_model.mrp.task.toml`, whose inline callable runs one simulation. Your
+model reads the particle input from the mounted `input_mount_path` and writes
+`output.csv` (or your `output_filename`) to `output_mount_path`.
+`stdout`/`stderr` land in the logs container.
 
 ### Checklist before the first cloud run
 

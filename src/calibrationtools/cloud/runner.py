@@ -100,6 +100,7 @@ def create_cloud_mrp_runner(
     backend: CloudRunnerBackend | None = None,
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
     mrp_run_func: Callable[..., Any] = mrp_run,
+    auto_size_summary: Any | None = None,
 ) -> "CloudMRPRunner":
     resolved_repo_root, resolved_dockerfile = resolve_cloud_build_context(
         default_repo_root=default_repo_root,
@@ -121,6 +122,7 @@ def create_cloud_mrp_runner(
         backend=backend,
         poll_interval_seconds=poll_interval_seconds,
         mrp_run_func=mrp_run_func,
+        auto_size_summary=auto_size_summary,
     )
 
 
@@ -188,6 +190,7 @@ class CloudMRPRunner:
         progress_refresh_interval_seconds: float | None = None,
         controller_start_timeout_seconds: float | None = 10.0,
         mrp_run_func: Callable[..., Any] = mrp_run,
+        auto_size_summary: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path)
         self.repo_root = Path(repo_root)
@@ -277,12 +280,19 @@ class CloudMRPRunner:
             controller_start_timeout_seconds
         )
         self._mrp_run = mrp_run_func
+        self.auto_size_summary = auto_size_summary
 
         self.settings = self._load_cloud_runtime_settings(self.config_path)
         if self.settings.jobs_per_session < 1:
             raise ValueError("jobs_per_session must be at least 1")
         if self.settings.task_slots_per_node < 1:
             raise ValueError("task_slots_per_node must be at least 1")
+        if self.settings.pool_max_nodes < 1:
+            raise ValueError("pool_max_nodes must be at least 1")
+        if self.settings.pool_auto_scale_evaluation_interval_minutes < 5:
+            raise ValueError(
+                "pool_auto_scale_evaluation_interval_minutes must be at least 5"
+            )
         if self.settings.dispatch_buffer < 0:
             raise ValueError("dispatch_buffer must be at least 0")
 
@@ -396,9 +406,7 @@ class CloudMRPRunner:
             raise
 
         try:
-            while not future.done():
-                await asyncio.sleep(0)
-            return future.result()
+            return await asyncio.wrap_future(future)
         except asyncio.CancelledError:
             self.cancel_run(run_id)
             raise
@@ -524,7 +532,7 @@ class CloudMRPRunner:
                 name="cloud-progress-refresh",
             )
             self._track_controller_task(refresh_task)
-            self._controller_ready.set()
+            loop.call_soon(self._controller_ready.set)
             loop.run_forever()
         except BaseException as exc:  # pragma: no cover - defensive
             controller_failure = exc
@@ -577,7 +585,7 @@ class CloudMRPRunner:
                 if submission_future.done():
                     await asyncio.wrap_future(submission_future)
                     return
-                await asyncio.sleep(0)
+                await asyncio.sleep(min(self._poll_interval_seconds, 0.1))
         finally:
             with self._run_state_lock:
                 state = self._active_runs.get(run_id)
@@ -799,8 +807,11 @@ class CloudMRPRunner:
                 mounts=mounts,
                 container_image_name=remote_image_ref,
                 vm_size=self.settings.vm_size,
-                target_dedicated_nodes=self._target_dedicated_nodes(),
+                target_dedicated_nodes=self.settings.pool_max_nodes,
                 task_slots_per_node=self.settings.task_slots_per_node,
+                auto_scale_evaluation_interval_minutes=(
+                    self.settings.pool_auto_scale_evaluation_interval_minutes
+                ),
             )
             created_pool = True
             self._last_pool_snapshot = self._wait_for_pool_ready(
@@ -880,19 +891,38 @@ class CloudMRPRunner:
         unique_job_count = len(
             {job_name for names in job_names.values() for job_name in names}
         )
+        max_task_capacity = (
+            self.settings.pool_max_nodes * self.settings.task_slots_per_node
+        )
         print(
             (
                 f"[cloud-run] created pool {pool_name} "
                 f"(vm_size={self.settings.vm_size}, "
-                f"target_nodes={self._target_dedicated_nodes()}, "
-                f"task_slots={self.settings.task_slots_per_node}, "
-                f"capacity={self._target_dedicated_nodes() * self.settings.task_slots_per_node}, "
-                f"scaling=fixed, "
+                f"max_nodes={self.settings.pool_max_nodes}, "
+                f"task_slots_per_node={self.settings.task_slots_per_node}, "
+                f"max_task_capacity={max_task_capacity}, "
+                f"scaling=auto(max_nodes={self.settings.pool_max_nodes}, "
+                f"min_nodes=0, "
+                f"interval={self.settings.pool_auto_scale_evaluation_interval_minutes}m), "
                 f"image={remote_image_ref})"
             ),
             file=sys.stderr,
             flush=True,
         )
+        if self.auto_size_summary is not None:
+            summary = self.auto_size_summary
+            print(
+                (
+                    "[cloud-run] auto-size "
+                    f"measured_peak_rss={summary.measured_task_peak_rss_bytes} bytes, "
+                    f"vm_ram={summary.vm_memory_bytes} bytes, "
+                    f"reserve={summary.reserve:.0%}, "
+                    f"task_slots_per_node={summary.task_slots_per_node}, "
+                    f"max_concurrent_simulations_total={self.max_concurrent_simulations}"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
         print(
             (
                 f"[cloud-run] created {unique_job_count} reusable job(s) for "
@@ -948,13 +978,6 @@ class CloudMRPRunner:
                 future=future,
             )
             return assigned
-
-    def _target_dedicated_nodes(self) -> int:
-        task_slots = max(1, self.settings.task_slots_per_node)
-        return max(
-            1,
-            (self.max_concurrent_simulations + task_slots - 1) // task_slots,
-        )
 
     def _select_job_name(self, run_id: str | None) -> str:
         with self._run_state_lock:
@@ -1330,7 +1353,7 @@ class CloudMRPRunner:
                     self._resolve_run_cancelled(run_id)
                 return
 
-            client = self._create_cloud_client(keyvault=self.session.keyvault)
+            client = self.client
             try:
                 task_status = await self._wait_for_task_completion_async(
                     client=client,
@@ -1441,9 +1464,7 @@ class CloudMRPRunner:
         if self._is_run_cancelled(run_id):
             raise SimulationCancelledError(run_id)
 
-        client = self._create_cloud_client(keyvault=self.session.keyvault)
-        client.save_logs_to_blob = self.session.logs_container
-        client.logs_folder = self.session.logs_folder_for_job(job_name, run_id)
+        client = self.client
         mount_pairs = self.session.mount_pairs()
         remote_input_dir = self.session.remote_input_dir(run_id)
         remote_output_dir = self.session.remote_output_dir(run_id)
@@ -1482,6 +1503,7 @@ class CloudMRPRunner:
             mount_pairs=mount_pairs,
             container_image_name=self.session.remote_image_ref,
             save_logs_path=self.session.logs_mount_path,
+            logs_folder=self.session.logs_folder_for_job(job_name, run_id),
         )
 
         if self._is_run_cancelled(run_id):
@@ -1504,12 +1526,11 @@ class CloudMRPRunner:
         run_id: str,
         output_dir: Path,
     ) -> float:
-        client = self._create_cloud_client(keyvault=self.session.keyvault)
         remote_output_dir = self.session.remote_output_dir(run_id)
         final_path = output_dir / self._output_filename
         download_started = time.monotonic()
         download_blob_to_path_atomic(
-            client,
+            self.client,
             src_path=f"{remote_output_dir}/{self._output_filename}",
             dest_path=final_path,
             container_name=self.session.output_container,

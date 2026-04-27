@@ -73,6 +73,31 @@ class FileAwareModelRunner:
         return 0.75
 
 
+class AsyncPreferredModelRunner:
+    prefer_simulate_async = True
+
+    def __init__(self):
+        self.calls = 0
+        self.active = 0
+        self.max_active = 0
+
+    def simulate(self, params, **kwargs):
+        raise AssertionError("simulate() should not be used")
+
+    def simulate_from_sync(self, params, **kwargs):
+        raise AssertionError("simulate_from_sync() should not be used")
+
+    async def simulate_async(self, params, **kwargs):
+        self.calls += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await sampler_module.asyncio.sleep(0)
+            return 0.75
+        finally:
+            self.active -= 1
+
+
 def particles_to_params(particle):
     return particle
 
@@ -393,6 +418,36 @@ def test_sampler_max_concurrent_simulations_alias_sets_default_worker_count(
 
     assert recorded["max_workers"] == 2
     assert sampler.max_concurrent_simulations == 2
+
+
+def test_sampler_async_preferred_runner_avoids_thread_pool_fanout(
+    K, P, Vnorm, monkeypatch
+):
+    def fail_thread_pool(*args, **kwargs):
+        raise AssertionError("ThreadPoolExecutor should not be used")
+
+    monkeypatch.setattr(sampler_module, "ThreadPoolExecutor", fail_thread_pool)
+
+    runner = AsyncPreferredModelRunner()
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=runner,
+        max_concurrent_simulations=2,
+        entropy=123,
+        verbose=False,
+    )
+
+    sampler.run_parallel()
+
+    assert runner.calls == 5
+    assert runner.max_active <= 2
 
 
 def test_sampler_rejects_invalid_max_concurrent_simulations(K, P, Vnorm):

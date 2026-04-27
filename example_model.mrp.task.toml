@@ -5,8 +5,8 @@ spec = "example_model"
 version = "0.0.1"
 
 [runtime]
-spec = "process"
-command = "example_model"
+spec = "inline"
+callable = "example_model.example_model:run_inline"
 
 [output]
 spec = "filesystem"
