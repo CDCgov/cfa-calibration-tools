@@ -2,7 +2,9 @@ import json
 from pathlib import Path
 
 import pytest
-from deterministic_lv_model import Deterministic_LV_Model
+from deterministic_lv_model.deterministic_lv_model import (
+    Deterministic_LV_Model,
+)
 
 
 @pytest.fixture
