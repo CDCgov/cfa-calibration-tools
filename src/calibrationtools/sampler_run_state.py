@@ -43,6 +43,7 @@ class SamplerRunState:
         self.step_attempts = [0] * self.generation_count
         self.generator_history: dict[int, list[GeneratorSlot]] = {}
         self.population_archive: dict[int, ParticlePopulation] = {}
+        self.distance_history: dict[int, list[dict[str, int | float]]] = {}
 
     def record_generation_history(
         self,
@@ -111,6 +112,28 @@ class SamplerRunState:
                 else 0
             )
             self.population_archive[step] = previous_population
+
+    def record_distances(
+        self,
+        error_distribution: list[dict[str, int | float]],
+    ) -> None:
+        """Store the error distribution for one generation.
+
+        This method records the error distribution for later result inspection.
+
+        Args:
+            error_distribution (list[dict[str, int | float]]): Error
+                distribution for the generation, where each entry is a dict
+                containing at least "slot_id" and "distance" keys.
+
+        """
+        if len(error_distribution) > 0:
+            step = (
+                max(self.distance_history.keys()) + 1
+                if self.distance_history
+                else 0
+            )
+            self.distance_history[step] = error_distribution
 
     def build_success_counts(
         self, generation_particle_count: int

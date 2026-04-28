@@ -91,9 +91,18 @@ sampler = ABCSampler(
     entropy=0x60636577C7AD93BBE463F30A6241FDE4,  # This value is the initial entropy for the `sampler.seed_sequence`
 )
 
-results = sampler.run(execution="serial", base_inputs=default_inputs)
+results = sampler.run(execution="parallel", base_inputs=default_inputs)
 # Default printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
 print(results)
+print("\nFlattened distance history (mean distance per generation):")
+print(
+    [
+        {
+            k: np.mean(errs)
+            for k, errs in results.flatten_distance_history().items()
+        }
+    ]
+)
 
 # Example user print function
 print("Posterior estimates table example:")

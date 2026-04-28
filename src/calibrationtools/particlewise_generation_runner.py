@@ -106,6 +106,8 @@ class ParticlewiseGenerationState:
     Attributes:
         proposed_population (ParticlePopulation): Population being filled for
             the active generation.
+        error_distribution (list[dict[str, int | float]]): List of dictionaries
+            containing the slot ID and distance for each proposed particle in the generation
         generator_slots (list[GeneratorSlot]): Proposal slots used to preserve
             deterministic ordering across execution modes.
         sample_method (Callable[[SeedSequence | None], Particle]): Proposal
@@ -113,6 +115,7 @@ class ParticlewiseGenerationState:
     """
 
     proposed_population: ParticlePopulation
+    error_distribution: list[dict[str, int | float]]
     generator_slots: list[GeneratorSlot]
     sample_method: Callable[[SeedSequence | None], Particle]
 
@@ -215,11 +218,13 @@ class ParticlewiseGenerationRunner:
                 return AcceptedProposal(
                     slot_id=generator.id,
                     particle=proposed_particle,
+                    distance=err,
                     attempts=attempt + 1,
                 )
         return AcceptedProposal(
             slot_id=generator.id,
             particle=None,
+            distance=None,
             attempts=max_attempts,
         )
 
@@ -273,6 +278,7 @@ class ParticlewiseGenerationRunner:
         return ParticlewiseGenerationState(
             proposed_population=ParticlePopulation(),
             generator_slots=generator_slots,
+            error_distribution=[],
             sample_method=self._get_sample_method(generation),
         )
 
@@ -551,8 +557,9 @@ class ParticlewiseGenerationRunner:
                 without producing an accepted particle.
         """
 
-        with self.config.reporter.create_weight_progress() as progress:
-            handle = self.config.reporter.start_weight_task(
+        with self.config.reporter.create_task_progress() as progress:
+            handle = self.config.reporter.start_task(
+                description="Calculating weights... ",
                 progress=progress,
                 total=self.config.generation_particle_count,
             )
@@ -567,17 +574,25 @@ class ParticlewiseGenerationRunner:
                         f"{accepted_proposal.attempts} samples and found no "
                         "acceptable values."
                     )
-                particle_weight = (
-                    1.0
-                    if request.generation == 0
-                    else self.config.calculate_weight(
-                        accepted_proposal.particle
+                else:
+                    assert accepted_proposal.distance is not None
+                    particle_weight = (
+                        1.0
+                        if request.generation == 0
+                        else self.config.calculate_weight(
+                            accepted_proposal.particle
+                        )
                     )
-                )
-                state.proposed_population.add_particle(
-                    accepted_proposal.particle,
-                    particle_weight,
-                )
+                    state.proposed_population.add_particle(
+                        accepted_proposal.particle,
+                        particle_weight,
+                    )
+                    state.error_distribution.append(
+                        {
+                            "slot_id": accepted_proposal.slot_id,
+                            "distance": accepted_proposal.distance,
+                        }
+                    )
                 self.config.reporter.advance(handle)
 
         self.run_state.record_generation_history(
@@ -589,6 +604,7 @@ class ParticlewiseGenerationRunner:
             attempts=generation_stats.attempts,
             successes=generation_stats.successes,
         )
+        self.run_state.record_distances(state.error_distribution)
         self.config.replace_particle_population(state.proposed_population)
         weights_time = (
             time.time()

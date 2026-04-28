@@ -136,7 +136,7 @@ class SamplerReporter:
             eta=formatting._format_time(eta_seconds),
         )
 
-    def create_weight_progress(self) -> Progress:
+    def create_task_progress(self) -> Progress:
         """Create the progress layout used during weight calculation.
 
         This helper centralizes the simplified Rich progress display used for
@@ -156,8 +156,9 @@ class SamplerReporter:
             transient=True,
         )
 
-    def start_weight_task(
+    def start_task(
         self,
+        description: str,
         progress: Progress,
         total: int,
     ) -> ProgressHandle:
@@ -167,6 +168,7 @@ class SamplerReporter:
         calculation and returns a handle for later updates.
 
         Args:
+            description (str): String argument to place at the head of the prgoress bar describing the tasks being executed
             progress (Progress): Active Rich progress instance.
             total (int): Total number of accepted particles to process.
 
@@ -174,7 +176,7 @@ class SamplerReporter:
             ProgressHandle: Handle referencing the created progress task.
         """
 
-        task_id = progress.add_task("Calculating weights...", total=total)
+        task_id = progress.add_task(description=description, total=total)
         return ProgressHandle(progress=progress, task_id=task_id)
 
     def advance(self, handle: ProgressHandle, steps: int = 1) -> None:
@@ -261,7 +263,9 @@ class SamplerReporter:
             f"total time: {formatting._format_time(total_time)})"
         )
 
-    def print_run_summary(self, total_time: float) -> None:
+    def print_run_summary(
+        self, total_time: float, process_name: str = "Calibration"
+    ) -> None:
         """Print the summary for the completed sampler run.
 
         This helper keeps the final run-completion message in one place so the
@@ -269,12 +273,12 @@ class SamplerReporter:
 
         Args:
             total_time (float): Seconds elapsed for the full sampler run.
-
+            process_name (str): Optional string to use describing a process being tracked. Defaults to 'Calibration'
         Returns:
             None: This helper does not return a value.
         """
 
         self.console.print(
-            f"[green]✓[/green] Calibration complete! "
+            f"[green]✓[/green] {process_name} complete! "
             f"(total time: {formatting._format_time(total_time)})"
         )
