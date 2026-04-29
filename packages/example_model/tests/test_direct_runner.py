@@ -1,10 +1,12 @@
 import csv
 import json
 
-from calibrationtools.particle import Particle
-from calibrationtools.particle_evaluator import ParticleEvaluator
 from example_model.direct_runner import ExampleModelDirectRunner
 from example_model.example_model import Binom_BP_Model
+
+from calibrationtools.particle import Particle
+from calibrationtools.particle_evaluator import ParticleEvaluator
+from calibrationtools.particle_reader import ParticleReader
 
 
 def test_direct_runner_loads_staged_input_and_writes_output_csv(tmp_path):
@@ -70,10 +72,16 @@ def test_direct_runner_adds_run_id_without_mutating_params(tmp_path):
 def test_direct_runner_writes_sampler_artifact_tree(tmp_path):
     runner = ExampleModelDirectRunner()
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle, base_inputs: {
-            **base_inputs,
-            **dict(particle),
-        },
+        particle_reader=ParticleReader(
+            particle_param_names=["p"],
+            default_params = {
+                "seed": 123,
+                "max_gen": 3,
+                "n": 3,
+                "p": 0.1,
+                "max_infect": 500,
+            },
+        ),
         outputs_to_distance=lambda outputs, target: 0.0,
         target_data=None,
         model_runner=runner,
@@ -82,13 +90,6 @@ def test_direct_runner_writes_sampler_artifact_tree(tmp_path):
 
     evaluator.distance(
         Particle({"p": 0.5}),
-        base_inputs={
-            "seed": 123,
-            "max_gen": 3,
-            "n": 3,
-            "p": 0.1,
-            "max_infect": 500,
-        },
         evaluation_context={
             "generation_index": 0,
             "proposal_index": 0,

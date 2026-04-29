@@ -260,46 +260,51 @@ def test_read_particle_no_defaults(dense_particle, nested_dict):
 
 def test_read_particle_with_callable(dense_particle):
     all_names = list(dense_particle.keys())
-    reader = ParticleReader(
-        particle_param_names=all_names,
-        default_params=None,
-    )
 
     def my_read_fn(particle: Particle) -> dict:
         return {"custom": dict(particle)}
+    
+    reader = ParticleReader(
+        particle_param_names=all_names,
+        default_params=None,
+        read_fn=my_read_fn,
+    )
 
-    read = reader.read_particle(dense_particle, read_fn=my_read_fn)
+    read = reader.read_particle(dense_particle)
     assert read == {"custom": dict(dense_particle)}
 
 
 def test_read_particle_ignores_defaults_with_callable(
     dense_particle, default_param_dict
 ):
+
+    def my_read_fn(particle: Particle) -> dict:
+        return {"custom": dict(particle)}
+    
     all_names = list(dense_particle.keys())
     reader = ParticleReader(
         particle_param_names=all_names,
         default_params=default_param_dict,
+        read_fn=my_read_fn
     )
 
-    def my_read_fn(particle: Particle) -> dict:
-        return {"custom": dict(particle)}
-
-    read = reader.read_particle(dense_particle, read_fn=my_read_fn)
+    read = reader.read_particle(dense_particle)
     assert read == {"custom": dict(dense_particle)}
 
 
 def test_read_particle_callable_collects_defaults(
     dense_particle, default_param_dict
 ):
+    def my_read_fn(particle: Particle, default_params: dict[str, Any]) -> dict:
+        return {"defaults": default_params, "particle": dict(particle)}
+
     all_names = list(dense_particle.keys())
     reader = ParticleReader(
         particle_param_names=all_names,
         default_params=default_param_dict,
+        read_fn=my_read_fn
     )
 
-    def my_read_fn(particle: Particle, default_params: dict[str, Any]) -> dict:
-        return {"defaults": default_params, "particle": dict(particle)}
-
-    read = reader.read_particle(dense_particle, read_fn=my_read_fn)
+    read = reader.read_particle(dense_particle)
     assert read["defaults"] == default_param_dict
     assert read["particle"] == dict(dense_particle)

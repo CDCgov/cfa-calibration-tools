@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 _RUN_ID_PATTERN = re.compile(
     r"^gen_(?P<generation>\d+)_particle_(?P<particle>\d+)"

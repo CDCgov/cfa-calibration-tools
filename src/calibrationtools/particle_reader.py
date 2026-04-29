@@ -85,6 +85,10 @@ class ParticleReader:
             (possibly multi-level) that particle values should override. If provided,
             ParticleReader attempts to map each flat particle parameter name to a
             corresponding flattened key in this defaults dictionary. Defaults to None.
+        read_fn (Callable[Concatenate[Particle, ...], dict] | None): Optional user-supplied function to read the particle. It should
+            accept the particle as its first argument and return a dict of attributes. If it accepts a parameter
+            named "default_params" or accepts arbitrary keyword arguments, default_params from this instance will be
+            supplied automatically.
     Behavior:
         - When default_params is provided, the constructor flattens it (via
           flatten_dict) and attempts to match each particle_param_names entry to one
@@ -100,10 +104,12 @@ class ParticleReader:
         self,
         particle_param_names: list[str],
         default_params: dict[str, Any] | None = None,
+        read_fn: Callable[Concatenate[Particle, ...], dict] | None = None
     ):
         self.default_params = default_params or {}
         self.particle_param_names = particle_param_names
         self.name_key = self._map_particle_params_to_defaults()
+        self.read_fn = read_fn
 
     def _map_particle_params_to_defaults(self) -> dict[str, str]:
         """
@@ -174,7 +180,6 @@ class ParticleReader:
     def read_particle(
         self,
         particle: Particle,
-        read_fn: Callable[Concatenate[Particle, ...], dict] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
@@ -190,19 +195,15 @@ class ParticleReader:
 
         Args:
             particle (Particle): The particle object to read/convert into a dict.
-            read_fn (Callable[Concatenate[Particle, ...], dict] | None): Optional user-supplied function to read the particle. It should
-                accept the particle as its first argument and return a dict of attributes. If it accepts a parameter
-                named "default_params" or accepts arbitrary keyword arguments, default_params from this instance will be
-                supplied automatically.
             **kwargs: Additional keyword arguments forwarded to read_fn when provided.
 
         Returns:
             dict[str, Any]: A dictionary representation of the particle produced either by read_fn or by
             _merge_particle_with_defaults.
         """
-        if read_fn is not None:
+        if self.read_fn is not None:
             # Be sure to pass default params to user-defined read_fn if expected
-            args = inspect.signature(read_fn).parameters
+            args = inspect.signature(self.read_fn).parameters
             accepts_default = (
                 any(
                     req.kind == inspect.Parameter.VAR_KEYWORD
@@ -211,10 +212,10 @@ class ParticleReader:
                 or "default_params" in args
             )
             if accepts_default:
-                return read_fn(
+                return self.read_fn(
                     particle, default_params=self.default_params, **kwargs
                 )
             else:
-                return read_fn(particle, **kwargs)
+                return self.read_fn(particle, **kwargs)
         else:
             return self._merge_particle_with_defaults(particle)

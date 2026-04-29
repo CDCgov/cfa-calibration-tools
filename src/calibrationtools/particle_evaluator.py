@@ -9,6 +9,7 @@ from uuid import uuid4
 from .async_runner import run_coroutine_from_sync
 from .json_utils import dumps_json, to_jsonable
 from .particle import Particle
+from .particle_reader import ParticleReader
 from .run_id import format_generation_name, format_sampler_run_id
 
 EVALUATION_CONTEXT_ARG = "evaluation_context"
@@ -44,13 +45,13 @@ class ParticleEvaluator:
 
     def __init__(
         self,
-        particles_to_params: Callable[..., dict],
+        particle_reader: ParticleReader,
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: object,
         artifacts_dir: Path | str | None = None,
     ) -> None:
-        self.particles_to_params = particles_to_params
+        self.particle_reader = particle_reader
         self.outputs_to_distance = outputs_to_distance
         self.target_data = target_data
         self.model_runner = model_runner
@@ -324,7 +325,7 @@ class ParticleEvaluator:
             evaluation_context=evaluation_context,
             kwargs=kwargs,
         )
-        params = self.particles_to_params(particle, **kwargs)
+        params = self.particle_reader.read_particle(particle, **kwargs)
         staged_params, input_path, output_dir, run_id = (
             self._stage_simulation_io(params, context=context)
         )
@@ -349,7 +350,7 @@ class ParticleEvaluator:
             evaluation_context=evaluation_context,
             kwargs=kwargs,
         )
-        params = self.particles_to_params(particle, **kwargs)
+        params = self.particle_reader.read_particle(particle, **kwargs)
         staged_params, input_path, output_dir, run_id = (
             self._stage_simulation_io(params, context=context)
         )

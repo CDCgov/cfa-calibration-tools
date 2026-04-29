@@ -9,16 +9,30 @@ from calibrationtools.particle_evaluator import (
     EVALUATION_CONTEXT_KEY,
     ParticleEvaluator,
 )
-
+from calibrationtools.particle_reader import ParticleReader
 
 class DummyModelRunner:
     def simulate(self, params):
         return 0.5 + params["p"]
+    
+@pytest.fixture 
+def basic_reader() -> ParticleReader:
+    return ParticleReader(
+        particle_param_names=["p"]
+    )
 
+@pytest.fixture
+def scale_reader() -> ParticleReader:
+    return ParticleReader(
+        particle_param_names=["p"],
+        read_fn=lambda particle, scale: {
+            "p": particle["p"] * scale
+        }
+    )
 
-def test_particle_evaluator_distance():
+def test_particle_evaluator_distance(basic_reader):
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: particle,
+        particle_reader=basic_reader,
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),
@@ -31,11 +45,9 @@ def test_particle_evaluator_distance():
     assert distance == pytest.approx(0.15)
 
 
-def test_particle_evaluator_distance_passes_kwargs():
+def test_particle_evaluator_distance_passes_kwargs(scale_reader):
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle, scale: {
-            "p": particle["p"] * scale
-        },
+        particle_reader=scale_reader,
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),
@@ -48,7 +60,7 @@ def test_particle_evaluator_distance_passes_kwargs():
     assert distance == pytest.approx(0.0)
 
 
-def test_particle_evaluator_prefers_simulate_when_available():
+def test_particle_evaluator_prefers_simulate_when_available(basic_reader):
     calls: list[tuple[str, dict]] = []
 
     class DualModelRunner:
@@ -60,7 +72,7 @@ def test_particle_evaluator_prefers_simulate_when_available():
             raise AssertionError("simulate_async() should not be used")
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: particle,
+        particle_reader=basic_reader,
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),
@@ -74,7 +86,7 @@ def test_particle_evaluator_prefers_simulate_when_available():
     assert calls == [("simulate", {"params": {"p": 0.2}})]
 
 
-def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in():
+def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in(basic_reader):
     calls: list[tuple[str, dict]] = []
 
     class AsyncPreferredRunner:
@@ -89,7 +101,7 @@ def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in():
             return 1.25
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: particle,
+        particle_reader=basic_reader,
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),
@@ -103,7 +115,7 @@ def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in():
     assert calls == [("simulate_async", {"params": {"p": 0.2}})]
 
 
-def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one():
+def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one(basic_reader):
     calls: list[tuple[str, dict]] = []
 
     class AsyncPreferredRunner:
@@ -118,7 +130,7 @@ def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one():
             raise AssertionError("simulate_async() should not be used")
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: particle,
+        particle_reader=basic_reader,
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),
@@ -132,7 +144,7 @@ def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one():
     assert calls == [("simulate_from_sync", {"params": {"p": 0.2}})]
 
 
-def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_bridge():
+def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_bridge(basic_reader):
     calls: list[tuple[str, dict]] = []
 
     class AsyncPreferredRunner:
@@ -149,7 +161,7 @@ def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_brid
             return 1.25
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: particle,
+        particle_reader=basic_reader,
         outputs_to_distance=lambda model_output, target_data: abs(
             model_output - target_data
         ),
@@ -164,7 +176,7 @@ def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_brid
 
 
 def test_particle_evaluator_writes_artifacts_under_correct_generation(
-    tmp_path,
+    tmp_path, basic_reader
 ):
     class RecordingRunner:
         def simulate(
@@ -173,7 +185,7 @@ def test_particle_evaluator_writes_artifacts_under_correct_generation(
             return {"run_id": run_id, "input_path": str(input_path)}
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: dict(particle),
+        particle_reader=basic_reader,
         outputs_to_distance=lambda outputs, target: 0.0,
         target_data=None,
         model_runner=RecordingRunner(),
@@ -199,7 +211,7 @@ def test_particle_evaluator_writes_artifacts_under_correct_generation(
 
 
 def test_particle_evaluator_run_id_mirrors_zero_based_attempt_index(
-    tmp_path,
+    tmp_path, basic_reader
 ):
     calls: list[tuple[str, str]] = []
 
@@ -215,7 +227,7 @@ def test_particle_evaluator_run_id_mirrors_zero_based_attempt_index(
             return {"run_id": run_id, "output_dir": str(output_dir)}
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: dict(particle),
+        particle_reader=basic_reader,
         outputs_to_distance=lambda outputs, target: 0.0,
         target_data=None,
         model_runner=RecordingRunner(),
@@ -258,7 +270,7 @@ def test_particle_evaluator_run_id_mirrors_zero_based_attempt_index(
 
 
 def test_particle_evaluator_writes_direct_artifacts_without_context(
-    tmp_path,
+    tmp_path, basic_reader
 ):
     class RecordingRunner:
         def simulate(
@@ -271,7 +283,7 @@ def test_particle_evaluator_writes_direct_artifacts_without_context(
             }
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: dict(particle),
+        particle_reader=basic_reader,
         outputs_to_distance=lambda outputs, target: 0.0,
         target_data=None,
         model_runner=RecordingRunner(),
@@ -300,7 +312,7 @@ def test_particle_evaluator_signature_exposes_public_evaluation_context():
     assert "evaluation_context" in distance_params
 
 
-def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path):
+def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path, basic_reader):
     class RecordingRunner:
         def simulate(
             self, params, *, input_path=None, output_dir=None, run_id=None
@@ -308,7 +320,7 @@ def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path):
             return {"run_id": run_id}
 
     evaluator = ParticleEvaluator(
-        particles_to_params=lambda particle: dict(particle),
+        particle_reader=basic_reader,
         outputs_to_distance=lambda outputs, target: 0.0,
         target_data=None,
         model_runner=RecordingRunner(),
@@ -334,6 +346,12 @@ def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path):
 def _pickle_particles_to_params(particle):
     return dict(particle)
 
+@pytest.fixture
+def pickle_reader() -> ParticleReader:
+    return ParticleReader(
+        particle_param_names=["p"],
+        read_fn=_pickle_particles_to_params
+    )
 
 def _pickle_outputs_to_distance(outputs, target):
     return 0.0
@@ -344,11 +362,11 @@ class _PickleDummyModelRunner:
         return 0.0
 
 
-def test_particle_evaluator_survives_pickle():
+def test_particle_evaluator_survives_pickle(pickle_reader):
     import pickle
 
     evaluator = ParticleEvaluator(
-        particles_to_params=_pickle_particles_to_params,
+        particle_reader=pickle_reader,
         outputs_to_distance=_pickle_outputs_to_distance,
         target_data=None,
         model_runner=_PickleDummyModelRunner(),
@@ -356,7 +374,7 @@ def test_particle_evaluator_survives_pickle():
 
     restored = pickle.loads(pickle.dumps(evaluator))
 
-    assert restored.particles_to_params is _pickle_particles_to_params
+    assert restored.particle_reader.read_fn is _pickle_particles_to_params
     assert restored.outputs_to_distance is _pickle_outputs_to_distance
     assert restored.target_data is None
     assert isinstance(restored.model_runner, _PickleDummyModelRunner)

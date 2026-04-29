@@ -16,6 +16,7 @@ from .batch_generation_runner import (
 from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_evaluator import ParticleEvaluator
+from .particle_reader import ParticleReader
 from .particle_population import ParticlePopulation
 from .particle_updater import _ParticleUpdater
 from .particlewise_generation_runner import (
@@ -39,12 +40,13 @@ class ABCSampler:
         generation_particle_count: int,
         tolerance_values: list[float],
         priors: PriorDistribution | dict | Path,
-        particles_to_params: Callable[..., dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: object,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
+        particles_to_params: Callable[..., dict] | None = None,
+        default_parameters: dict[str, Any] | None = None,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         max_proposals_per_batch: int = 10_000,
         parallel_worker_count: int = 10,
@@ -124,9 +126,15 @@ class ABCSampler:
             self._priors = load_priors_from_json(priors)
         else:  # pragma: no cover - defensive typing
             raise TypeError("Unsupported priors type")
+        
+        self.particle_reader = ParticleReader(
+            particle_param_names=self._priors.params,
+            default_params=default_parameters,
+            read_fn=self.particles_to_params
+        )
 
         self._particle_evaluator = ParticleEvaluator(
-            particles_to_params=particles_to_params,
+            particle_reader=self.particle_reader,
             outputs_to_distance=outputs_to_distance,
             target_data=target_data,
             model_runner=model_runner,

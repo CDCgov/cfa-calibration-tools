@@ -8,15 +8,12 @@ from .load_priors import (
 from .mrp_csv_runner import CSVOutputMRPRunner
 from .particle import Particle
 from .particle_population import ParticlePopulation
-<<<<<<< HEAD
 from .particle_population_metrics import ParticlePopulationMetrics
-=======
 from .particle_reader import (
     ParticleReader,
     flatten_dict,
     unflatten_parameter_name,
 )
->>>>>>> 8dae0fa (squash)
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -75,13 +72,10 @@ __all__ = [
     "AdaptMultivariateNormalVariance",
     "AdaptIdentityVariance",
     "AdaptUniformVariance",
-<<<<<<< HEAD
     "load_priors_from_json",
     "independent_priors_from_dict",
     "validate_schema",
-=======
     "ParticleReader",
     "flatten_dict",
     "unflatten_parameter_name",
->>>>>>> 8dae0fa (squash)
 ]
