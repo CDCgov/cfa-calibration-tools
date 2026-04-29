@@ -115,7 +115,7 @@ calibrate-cloud: ## Run cloud-backed example calibration. Pass CLOUD_ARGS='...'.
 
 .PHONY: calibrate-cloud-auto
 calibrate-cloud-auto: ## Run cloud calibration with auto-size and progress output.
-	$(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud --auto-size --print-task-progress --print-task-durations --artifacts-dir $(ARTIFACTS_DIR) $(CLOUD_ARGS)
+	$(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud --auto-size --print-task-progress --artifacts-dir $(ARTIFACTS_DIR) $(CLOUD_ARGS)
 
 .PHONY: benchmark
 benchmark: ## Compare serial and parallel example calibration execution.
