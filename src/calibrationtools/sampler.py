@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Sequence
 
 import numpy as np
-from mrp import MRPModel
 from numpy.random import SeedSequence
 
 from .batch_generation_runner import (
@@ -43,7 +42,7 @@ class ABCSampler:
         particles_to_params: Callable[..., dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
-        model_runner: MRPModel,
+        model_runner: object,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,

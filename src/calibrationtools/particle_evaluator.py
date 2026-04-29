@@ -6,11 +6,10 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from mrp import MRPModel
-
 from .async_runner import run_coroutine_from_sync
 from .json_utils import dumps_json, to_jsonable
 from .particle import Particle
+from .run_id import format_generation_name, format_sampler_run_id
 
 EVALUATION_CONTEXT_ARG = "evaluation_context"
 # Deprecated compatibility alias for historical internal callers.
@@ -48,7 +47,7 @@ class ParticleEvaluator:
         particles_to_params: Callable[..., dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
-        model_runner: MRPModel,
+        model_runner: object,
         artifacts_dir: Path | str | None = None,
     ) -> None:
         self.particles_to_params = particles_to_params
@@ -69,13 +68,11 @@ class ParticleEvaluator:
     def _build_run_id(context: dict[str, int] | None) -> str | None:
         if context is None:
             return None
-        base = (
-            f"gen-{context['generation_index'] + 1}_"
-            f"particle-{context['proposal_index'] + 1}"
+        return format_sampler_run_id(
+            generation_index=context["generation_index"],
+            proposal_index=context["proposal_index"],
+            attempt_index=context.get("attempt_index", 0),
         )
-        if context.get("attempt_index", 0) <= 0:
-            return base
-        return f"{base}-attempt-{context['attempt_index'] + 1}"
 
     @staticmethod
     def _build_direct_run_id() -> str:
@@ -149,7 +146,7 @@ class ParticleEvaluator:
             run_id = self._build_direct_run_id()
         else:
             generation_index = context["generation_index"]
-            generation_name = f"generation-{generation_index + 1}"
+            generation_name = format_generation_name(generation_index)
             assert (
                 run_id is not None
             )  # narrow for type checker; context is set

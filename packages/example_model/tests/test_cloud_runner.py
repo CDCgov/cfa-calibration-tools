@@ -33,7 +33,7 @@ from calibrationtools.cloud import (
 from calibrationtools.cloud import runner as cloud_runner_module
 
 LONG_TASK_NAME_SUFFIX = (
-    "gen-123456789_particle-123456789_" + "extra_suffix_that_needs_truncation"
+    "gen_123456789_particle_123456789_" + "extra_suffix_that_needs_truncation"
 )
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SESSION_SLUG = "20260409010101-testsha-ab12cd34ef56"
@@ -201,14 +201,17 @@ def test_cloud_runner_initializes_resources_and_uses_mrp(
     def fake_mrp_run(config_path, overrides, output_dir: str | None = None):
         assert config_path == Path("example_model.mrp.cloud.toml")
         assert overrides["runtime"]["command"]
-        assert overrides["runtime"]["cloud"]["run_id"] == "gen-1_particle-1"
+        assert (
+            overrides["runtime"]["cloud"]["run_id"]
+            == "gen_0_particle_0_attempt_0"
+        )
         assert overrides["runtime"]["cloud"]["job_name"].endswith("-j1")
-        assert overrides["runtime"]["cloud"]["job_names"]["1"][0].endswith(
+        assert overrides["runtime"]["cloud"]["job_names"]["0"][0].endswith(
             "-j1"
         )
         assert (
-            overrides["runtime"]["cloud"]["job_names"]["1"]
-            == overrides["runtime"]["cloud"]["job_names"]["2"]
+            overrides["runtime"]["cloud"]["job_names"]["0"]
+            == overrides["runtime"]["cloud"]["job_names"]["1"]
         )
         assert overrides["input"] == str(tmp_path / "input.json")
         assert output_dir == str(tmp_path / "output")
@@ -242,14 +245,16 @@ def test_cloud_runner_initializes_resources_and_uses_mrp(
     assert "created 2 reusable job(s) for 2 generation(s)" in captured.err
 
     input_path = tmp_path / "input.json"
-    input_path.write_text('{"seed": 123, "run_id": "gen-1_particle-1"}')
+    input_path.write_text(
+        '{"seed": 123, "run_id": "gen_0_particle_0_attempt_0"}'
+    )
     output_dir = tmp_path / "output"
 
     assert runner.simulate(
         {"seed": 123},
         input_path=input_path,
         output_dir=output_dir,
-        run_id="gen-1_particle-1",
+        run_id="gen_0_particle_0_attempt_0",
     ) == [1, 2]
 
     blob_calls = [
@@ -266,7 +271,9 @@ def test_cloud_runner_initializes_resources_and_uses_mrp(
     assert pool_create_calls[0]["target_dedicated_nodes"] == 5
     assert pool_create_calls[0]["task_slots_per_node"] == 2
     assert pool_create_calls[0]["auto_scale_evaluation_interval_minutes"] == 5
-    assert runner.session.job_name_for_run("gen-2_particle-2").endswith("-j2")
+    assert runner.session.job_name_for_run(
+        "gen_1_particle_1_attempt_0"
+    ).endswith("-j2")
 
 
 def test_cloud_runner_startup_summary_includes_auto_size(capsys):
@@ -285,7 +292,7 @@ def test_cloud_runner_startup_summary_includes_auto_size(capsys):
 
     runner._print_session_startup_summary(
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1], "2": [JOB_1]},
+        job_names={"0": [JOB_1], "1": [JOB_1]},
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
     )
 
@@ -306,8 +313,8 @@ def test_cloud_session_accepts_attempt_suffixed_run_ids():
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
         job_names={
-            "1": [JOB_1, JOB_2],
-            "2": [JOB_3, JOB_4],
+            "0": [JOB_1, JOB_2],
+            "1": [JOB_3, JOB_4],
         },
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
@@ -319,16 +326,16 @@ def test_cloud_session_accepts_attempt_suffixed_run_ids():
         task_timeout_minutes=60,
         print_task_durations=False,
     )
-    run_id = "gen-2_particle-2-attempt-2"
+    run_id = "gen_1_particle_1_attempt_0"
 
-    assert parse_generation_from_run_id(run_id) == 2
-    assert parse_particle_from_run_id(run_id) == 2
+    assert parse_generation_from_run_id(run_id) == 1
+    assert parse_particle_from_run_id(run_id) == 1
     assert session.job_name_for_run(run_id) == JOB_4
     assert session.remote_input_dir(run_id).endswith(
-        "generation-2/gen-2_particle-2-attempt-2"
+        "generation-1/gen_1_particle_1_attempt_0"
     )
     assert session.remote_output_dir(run_id).endswith(
-        "generation-2/gen-2_particle-2-attempt-2"
+        "generation-1/gen_1_particle_1_attempt_0"
     )
 
 
@@ -395,7 +402,7 @@ def test_cloud_executor_uploads_input_submits_task_and_downloads_output(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1, JOB_2]},
+        job_names={"0": [JOB_1, JOB_2]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -408,12 +415,12 @@ def test_cloud_executor_uploads_input_submits_task_and_downloads_output(
     )
     output_dir = tmp_path / "output"
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(output_dir)},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
                 "job_name": JOB_2,
             }
         },
@@ -423,20 +430,24 @@ def test_cloud_executor_uploads_input_submits_task_and_downloads_output(
 
     assert fake_client.save_logs_to_blob == session.logs_container
     assert (
-        fake_client.logs_folder == f"{SESSION_SLUG}/{JOB_2}/gen-1_particle-1"
+        fake_client.logs_folder
+        == f"{SESSION_SLUG}/{JOB_2}/gen_0_particle_0_attempt_0"
     )
     assert (
         fake_client.upload_calls[0]["container_name"]
         == session.input_container
     )
     assert fake_client.upload_calls[0]["location_in_blob"].endswith(
-        "generation-1/gen-1_particle-1"
+        "generation-0/gen_0_particle_0_attempt_0"
     )
-    assert task_submit_calls[0]["task_name_suffix"] == "gen-1_particle-1"
+    assert (
+        task_submit_calls[0]["task_name_suffix"]
+        == "gen_0_particle_0_attempt_0"
+    )
     assert task_submit_calls[0]["task_id_max_override"] == (
         make_stable_batch_task_id_max(
             JOB_2,
-            "gen-1_particle-1",
+            "gen_0_particle_0_attempt_0",
         )
     )
     assert (
@@ -448,15 +459,15 @@ def test_cloud_executor_uploads_input_submits_task_and_downloads_output(
     task_command = task_submit_calls[0]["command_line"]
     assert "mrp run /app/example_model.mrp.task.toml" in task_command
     assert (
-        f"/cloud-input/input/{SESSION_SLUG}/generation-1/gen-1_particle-1"
+        f"/cloud-input/input/{SESSION_SLUG}/generation-0/gen_0_particle_0_attempt_0"
         in task_command
     )
     assert (
-        f"/cloud-output/output/{SESSION_SLUG}/generation-1/gen-1_particle-1"
+        f"/cloud-output/output/{SESSION_SLUG}/generation-0/gen_0_particle_0_attempt_0"
         in task_command
     )
     assert fake_client.download_calls[0]["src_path"].endswith(
-        "generation-1/gen-1_particle-1/output.csv"
+        "generation-0/gen_0_particle_0_attempt_0/output.csv"
     )
     assert (
         (output_dir / "output.csv")
@@ -512,7 +523,7 @@ def test_cloud_executor_reads_local_json_input_path_before_upload(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1]},
+        job_names={"0": [JOB_1]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -524,7 +535,9 @@ def test_cloud_executor_reads_local_json_input_path_before_upload(
         print_task_durations=False,
     )
     staged_input_path = tmp_path / "input.json"
-    staged_input_path.write_text('{"seed": 123, "run_id": "gen-1_particle-1"}')
+    staged_input_path.write_text(
+        '{"seed": 123, "run_id": "gen_0_particle_0_attempt_0"}'
+    )
     output_dir = tmp_path / "output"
     run_json = {
         "input": str(staged_input_path),
@@ -532,7 +545,7 @@ def test_cloud_executor_reads_local_json_input_path_before_upload(
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
             }
         },
     }
@@ -540,10 +553,10 @@ def test_cloud_executor_reads_local_json_input_path_before_upload(
     execute_cloud_run(run_json)
 
     assert fake_client.uploaded_payloads == [
-        {"seed": 123, "run_id": "gen-1_particle-1"}
+        {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"}
     ]
     assert fake_client.upload_calls[0]["location_in_blob"].endswith(
-        "generation-1/gen-1_particle-1"
+        "generation-0/gen_0_particle_0_attempt_0"
     )
 
 
@@ -589,15 +602,21 @@ def test_make_session_slug_uses_uuid_to_avoid_same_second_collisions(
 
 
 def test_make_batch_task_id_uses_shortened_suffix():
-    task_id = make_batch_task_id("gen-1_particle-1")
+    task_id = make_batch_task_id("gen_0_particle_0_attempt_0")
 
-    assert task_id == "task-gen-1_particle-1-1"
+    assert task_id == "task-gen_0_particle_0_attempt_0-1"
 
 
 def test_make_stable_batch_task_id_max_is_stable_and_distinct():
-    first = make_stable_batch_task_id_max("job-1", "gen-1_particle-1")
-    second = make_stable_batch_task_id_max("job-1", "gen-1_particle-1")
-    third = make_stable_batch_task_id_max("job-1", "gen-1_particle-2")
+    first = make_stable_batch_task_id_max(
+        "job-1", "gen_0_particle_0_attempt_0"
+    )
+    second = make_stable_batch_task_id_max(
+        "job-1", "gen_0_particle_0_attempt_0"
+    )
+    third = make_stable_batch_task_id_max(
+        "job-1", "gen_0_particle_1_attempt_0"
+    )
 
     assert first == second
     assert first != third
@@ -633,7 +652,7 @@ def test_add_batch_task_with_short_id_uses_relative_mount_paths(monkeypatch):
         client=fake_client,
         job_name="job-rel-mounts",
         command_line="echo hello",
-        task_name_suffix="gen-1_particle-1",
+        task_name_suffix="gen_0_particle_0_attempt_0",
         timeout=60,
         mount_pairs=[
             {
@@ -668,7 +687,7 @@ def test_add_batch_task_with_short_id_uses_relative_mount_paths(monkeypatch):
         save_logs_path="/cloud-logs",
     )
 
-    assert task_id == "task-gen-1_particle-1-1"
+    assert task_id == "task-gen_0_particle_0_attempt_0-1"
     assert second_task_id.startswith("task-")
     first_task = task_add_calls[0]["task"]
     second_task = task_add_calls[1]["task"]
@@ -682,7 +701,7 @@ def test_add_batch_task_with_short_id_uses_relative_mount_paths(monkeypatch):
     assert "source=" in run_options
     assert "target=/cloud-input" in run_options
     assert "target=/cloud-output" in run_options
-    assert first_task.id == "task-gen-1_particle-1-1"
+    assert first_task.id == "task-gen_0_particle_0_attempt_0-1"
     assert second_task.id.endswith("-2")
     assert len(second_task.id) <= 64
 
@@ -718,7 +737,7 @@ def test_add_batch_task_with_short_id_tracks_override_for_future_calls(
         client=fake_client,
         job_name="job-override",
         command_line="echo hello",
-        task_name_suffix="gen-1_particle-1",
+        task_name_suffix="gen_0_particle_0_attempt_0",
         timeout=60,
         container_image_name="fake-registry.azurecr.io/example-model:testsha",
         task_id_max_override=41,
@@ -727,7 +746,7 @@ def test_add_batch_task_with_short_id_tracks_override_for_future_calls(
         client=fake_client,
         job_name="job-override",
         command_line="echo again",
-        task_name_suffix="gen-1_particle-2",
+        task_name_suffix="gen_0_particle_1_attempt_0",
         timeout=60,
         container_image_name="fake-registry.azurecr.io/example-model:testsha",
     )
@@ -822,7 +841,7 @@ def test_cloud_executor_upload_input_suppresses_noisy_cloudops_progress(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1]},
+        job_names={"0": [JOB_1]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -834,12 +853,12 @@ def test_cloud_executor_upload_input_suppresses_noisy_cloudops_progress(
         print_task_durations=False,
     )
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(tmp_path / "output")},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
             }
         },
     }
@@ -907,7 +926,7 @@ def test_cloud_executor_can_print_task_durations(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1]},
+        job_names={"0": [JOB_1]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -920,12 +939,12 @@ def test_cloud_executor_can_print_task_durations(
     )
     output_dir = tmp_path / "output"
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(output_dir)},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
             }
         },
     }
@@ -933,7 +952,7 @@ def test_cloud_executor_can_print_task_durations(
     execute_cloud_run(run_json)
 
     captured = capsys.readouterr()
-    assert "[cloud-task] gen-1_particle-1" in captured.err
+    assert "[cloud-task] gen_0_particle_0_attempt_0" in captured.err
     assert "queue=2.00s" in captured.err
     assert "run=5.00s" in captured.err
 
@@ -953,7 +972,7 @@ def test_cloud_executor_failure_includes_batch_details(monkeypatch, tmp_path):
 
     fake_client = FakeExecutorClient()
     failed_task = SimpleNamespace(
-        id="task-gen-1_particle-1-1",
+        id="task-gen_0_particle_0_attempt_0-1",
         state="completed",
         exit_conditions=SimpleNamespace(
             pre_processing_error="mount failed",
@@ -980,7 +999,7 @@ def test_cloud_executor_failure_includes_batch_details(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "example_model.cloud_mrp_executor.add_batch_task_with_short_id",
-        lambda **kwargs: "task-gen-1_particle-1-1",
+        lambda **kwargs: "task-gen_0_particle_0_attempt_0-1",
     )
     monkeypatch.setattr(
         "example_model.cloud_mrp_executor.wait_for_task_completion",
@@ -997,7 +1016,7 @@ def test_cloud_executor_failure_includes_batch_details(monkeypatch, tmp_path):
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1]},
+        job_names={"0": [JOB_1]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -1010,12 +1029,12 @@ def test_cloud_executor_failure_includes_batch_details(monkeypatch, tmp_path):
     )
     output_dir = tmp_path / "output"
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(output_dir)},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
             }
         },
     }
@@ -1024,14 +1043,14 @@ def test_cloud_executor_failure_includes_batch_details(monkeypatch, tmp_path):
         execute_cloud_run(run_json)
 
     message = str(exc_info.value)
-    assert "task-gen-1_particle-1-1" in message
+    assert "task-gen_0_particle_0_attempt_0-1" in message
     assert "result='failure'" in message
     assert "TaskFailedToStart" in message
     assert "image pull timeout" in message
     assert "container create error" in message
     assert "pre_processing_error='mount failed'" in message
     assert (
-        f"logs_prefix={LOGS_CONTAINER}/{SESSION_SLUG}/{JOB_1}/gen-1_particle-1/stdout_stderr/"
+        f"logs_prefix={LOGS_CONTAINER}/{SESSION_SLUG}/{JOB_1}/gen_0_particle_0_attempt_0/stdout_stderr/"
     ) in message
 
 
@@ -1064,7 +1083,7 @@ def test_cloud_executor_failure_includes_task_log_excerpts(
 
     fake_client = FakeExecutorClient()
     failed_task = SimpleNamespace(
-        id="task-gen-1_particle-1-1",
+        id="task-gen_0_particle_0_attempt_0-1",
         state="completed",
         execution_info=SimpleNamespace(
             result="failure",
@@ -1084,7 +1103,7 @@ def test_cloud_executor_failure_includes_task_log_excerpts(
     )
     monkeypatch.setattr(
         "example_model.cloud_mrp_executor.add_batch_task_with_short_id",
-        lambda **kwargs: "task-gen-1_particle-1-1",
+        lambda **kwargs: "task-gen_0_particle_0_attempt_0-1",
     )
     monkeypatch.setattr(
         "example_model.cloud_mrp_executor.wait_for_task_completion",
@@ -1101,7 +1120,7 @@ def test_cloud_executor_failure_includes_task_log_excerpts(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1]},
+        job_names={"0": [JOB_1]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -1113,12 +1132,12 @@ def test_cloud_executor_failure_includes_task_log_excerpts(
         print_task_durations=False,
     )
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(tmp_path / "output")},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
             }
         },
     }
@@ -1141,11 +1160,11 @@ def test_cloud_runner_describe_progress_reports_batch_and_pool_state(
     task_map = {
         (
             JOB_1,
-            "task-gen-1_particle-1-1",
+            "task-gen_0_particle_0_attempt_0-1",
         ): SimpleNamespace(state="active"),
         (
             JOB_2,
-            "task-gen-1_particle-2-1",
+            "task-gen_0_particle_1_attempt_0-1",
         ): SimpleNamespace(state="running"),
     }
     pool = SimpleNamespace(
@@ -1215,40 +1234,40 @@ def test_cloud_runner_describe_progress_reports_batch_and_pool_state(
         max_concurrent_simulations=3,
     )
     runner._register_active_run(
-        "gen-1_particle-1",
+        "gen_0_particle_0_attempt_0",
         JOB_1,
         output_dir=Path("/tmp/test-output-progress-1"),
-        input_payload={"run_id": "gen-1_particle-1"},
+        input_payload={"run_id": "gen_0_particle_0_attempt_0"},
         overall_started=0.0,
         future=_dummy_future(),
     )
     runner._set_task_id(
-        "gen-1_particle-1",
-        task_id="task-gen-1_particle-1-1",
+        "gen_0_particle_0_attempt_0",
+        task_id="task-gen_0_particle_0_attempt_0-1",
         upload_elapsed_seconds=0.0,
         submitted_at=0.0,
     )
     runner._register_active_run(
-        "gen-1_particle-2",
+        "gen_0_particle_1_attempt_0",
         JOB_2,
         output_dir=Path("/tmp/test-output-progress-2"),
-        input_payload={"run_id": "gen-1_particle-2"},
+        input_payload={"run_id": "gen_0_particle_1_attempt_0"},
         overall_started=0.0,
         future=_dummy_future(),
     )
     runner._set_task_id(
-        "gen-1_particle-2",
-        task_id="task-gen-1_particle-2-1",
+        "gen_0_particle_1_attempt_0",
+        task_id="task-gen_0_particle_1_attempt_0-1",
         upload_elapsed_seconds=0.0,
         submitted_at=0.0,
     )
     # particle-3 is admitted but has not yet been assigned a Batch task
     # id, so it should be counted as ``submitting=1`` below.
     runner._register_active_run(
-        "gen-1_particle-3",
+        "gen_0_particle_2_attempt_0",
         JOB_1,
         output_dir=Path("/tmp/test-output-progress-3"),
-        input_payload={"run_id": "gen-1_particle-3"},
+        input_payload={"run_id": "gen_0_particle_2_attempt_0"},
         overall_started=0.0,
         future=_dummy_future(),
     )
@@ -1260,9 +1279,9 @@ def test_cloud_runner_describe_progress_reports_batch_and_pool_state(
 
     status = runner.describe_progress(
         (
-            "gen-1_particle-1",
-            "gen-1_particle-2",
-            "gen-1_particle-3",
+            "gen_0_particle_0_attempt_0",
+            "gen_0_particle_1_attempt_0",
+            "gen_0_particle_2_attempt_0",
         )
     )
 
@@ -1320,17 +1339,17 @@ def test_cloud_runner_selects_least_busy_job(monkeypatch):
         generation_count=1,
         max_concurrent_simulations=2,
     )
-    job_1, job_2 = runner.session.job_names["1"]
+    job_1, job_2 = runner.session.job_names["0"]
     runner._register_active_run(
-        "gen-1_particle-1",
+        "gen_0_particle_0_attempt_0",
         job_1,
         output_dir=Path("/tmp/test-output-select"),
-        input_payload={"run_id": "gen-1_particle-1"},
+        input_payload={"run_id": "gen_0_particle_0_attempt_0"},
         overall_started=0.0,
         future=_dummy_future(),
     )
 
-    assert runner._select_job_name("gen-1_particle-2") == job_2
+    assert runner._select_job_name("gen_0_particle_1_attempt_0") == job_2
 
 
 def test_cloud_runner_reports_configured_dispatch_buffer(monkeypatch):
@@ -1454,9 +1473,9 @@ def test_cloud_runner_async_simulate_awaits_completion_future_without_spin(
     try:
         result = asyncio.run(
             runner.simulate_async(
-                {"seed": 123, "run_id": "gen-1_particle-1"},
+                {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
                 output_dir=tmp_path / "output",
-                run_id="gen-1_particle-1",
+                run_id="gen_0_particle_0_attempt_0",
             )
         )
     finally:
@@ -1584,10 +1603,10 @@ def test_cloud_runner_async_simulate_enforces_inflight_limit(
 
     async def run_batch() -> list[list[int]]:
         run_ids = [
-            "gen-1_particle-1",
-            "gen-1_particle-2",
-            "gen-1_particle-3",
-            "gen-1_particle-4",
+            "gen_0_particle_0_attempt_0",
+            "gen_0_particle_1_attempt_0",
+            "gen_0_particle_2_attempt_0",
+            "gen_0_particle_3_attempt_0",
         ]
         tasks = [
             asyncio.create_task(
@@ -1605,8 +1624,8 @@ def test_cloud_runner_async_simulate_enforces_inflight_limit(
         assert await asyncio.to_thread(first_wave_started.wait, 30.0)
         with submit_lock:
             assert entered_run_ids == [
-                "gen-1_particle-1",
-                "gen-1_particle-2",
+                "gen_0_particle_0_attempt_0",
+                "gen_0_particle_1_attempt_0",
             ]
             assert max_active_submissions == 2
 
@@ -1703,9 +1722,9 @@ def test_cloud_runner_async_simulate_uploads_submits_and_downloads(
         output_dir = tmp_path / "output"
         result = asyncio.run(
             runner.simulate_async(
-                {"seed": 123, "run_id": "gen-1_particle-1"},
+                {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
                 output_dir=output_dir,
-                run_id="gen-1_particle-1",
+                run_id="gen_0_particle_0_attempt_0",
             )
         )
     finally:
@@ -1718,9 +1737,12 @@ def test_cloud_runner_async_simulate_uploads_submits_and_downloads(
         == runner.session.input_container
     )
     assert fake_client.upload_calls[0]["location_in_blob"].endswith(
-        "generation-1/gen-1_particle-1"
+        "generation-0/gen_0_particle_0_attempt_0"
     )
-    assert task_submit_calls[0]["task_name_suffix"] == "gen-1_particle-1"
+    assert (
+        task_submit_calls[0]["task_name_suffix"]
+        == "gen_0_particle_0_attempt_0"
+    )
     assert (
         task_submit_calls[0]["container_image_name"]
         == runner.session.remote_image_ref
@@ -1732,10 +1754,10 @@ def test_cloud_runner_async_simulate_uploads_submits_and_downloads(
     )
     assert (
         task_submit_calls[0]["logs_folder"]
-        == f"{SESSION_SLUG}/{JOB_1}/gen-1_particle-1"
+        == f"{SESSION_SLUG}/{JOB_1}/gen_0_particle_0_attempt_0"
     )
     assert fake_client.download_calls[0]["src_path"].endswith(
-        "generation-1/gen-1_particle-1/output.csv"
+        "generation-0/gen_0_particle_0_attempt_0/output.csv"
     )
 
 
@@ -1815,9 +1837,9 @@ def test_cloud_runner_upload_input_suppresses_noisy_cloudops_progress(
         capsys.readouterr()
         runner._upload_run_input(
             fake_client,
-            "gen-1_particle-1.json",
-            {"seed": 123, "run_id": "gen-1_particle-1"},
-            runner.session.remote_input_dir("gen-1_particle-1"),
+            "gen_0_particle_0_attempt_0.json",
+            {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
+            runner.session.remote_input_dir("gen_0_particle_0_attempt_0"),
         )
     finally:
         runner.close()
@@ -1835,7 +1857,7 @@ def test_cloud_runner_async_failure_includes_batch_details(
 ):
     fake_client = _FakeClient()
     failed_task = SimpleNamespace(
-        id="task-gen-1_particle-1-1",
+        id="task-gen_0_particle_0_attempt_0-1",
         state="completed",
         exit_conditions=SimpleNamespace(
             pre_processing_error="mount failed",
@@ -1899,10 +1921,10 @@ def test_cloud_runner_async_failure_includes_batch_details(
         "example_model.cloud_runner.add_batch_task_with_short_id",
         lambda **kwargs: (
             fake_client.tasks.__setitem__(
-                (kwargs["job_name"], "task-gen-1_particle-1-1"),
+                (kwargs["job_name"], "task-gen_0_particle_0_attempt_0-1"),
                 failed_task,
             ),
-            "task-gen-1_particle-1-1",
+            "task-gen_0_particle_0_attempt_0-1",
         )[-1],
     )
 
@@ -1918,23 +1940,23 @@ def test_cloud_runner_async_failure_includes_batch_details(
         with pytest.raises(RuntimeError) as exc_info:
             asyncio.run(
                 runner.simulate_async(
-                    {"seed": 123, "run_id": "gen-1_particle-1"},
+                    {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
                     output_dir=tmp_path / "output",
-                    run_id="gen-1_particle-1",
+                    run_id="gen_0_particle_0_attempt_0",
                 )
             )
     finally:
         runner.close()
 
     message = str(exc_info.value)
-    assert "task-gen-1_particle-1-1" in message
+    assert "task-gen_0_particle_0_attempt_0-1" in message
     assert "result='failure'" in message
     assert "TaskFailedToStart" in message
     assert "image pull timeout" in message
     assert "container create error" in message
     assert "pre_processing_error='mount failed'" in message
     assert (
-        f"logs_prefix={LOGS_CONTAINER}/{SESSION_SLUG}/{JOB_1}/gen-1_particle-1/stdout_stderr/"
+        f"logs_prefix={LOGS_CONTAINER}/{SESSION_SLUG}/{JOB_1}/gen_0_particle_0_attempt_0/stdout_stderr/"
     ) in message
 
 
@@ -1943,7 +1965,7 @@ def test_cloud_runner_failure_includes_task_log_excerpts(
 ):
     fake_client = _FakeClient()
     failed_task = SimpleNamespace(
-        id="task-gen-1_particle-1-1",
+        id="task-gen_0_particle_0_attempt_0-1",
         state="completed",
         execution_info=SimpleNamespace(
             result="failure",
@@ -2017,10 +2039,10 @@ def test_cloud_runner_failure_includes_task_log_excerpts(
         "example_model.cloud_runner.add_batch_task_with_short_id",
         lambda **kwargs: (
             fake_client.tasks.__setitem__(
-                (kwargs["job_name"], "task-gen-1_particle-1-1"),
+                (kwargs["job_name"], "task-gen_0_particle_0_attempt_0-1"),
                 failed_task,
             ),
-            "task-gen-1_particle-1-1",
+            "task-gen_0_particle_0_attempt_0-1",
         )[-1],
     )
 
@@ -2036,9 +2058,9 @@ def test_cloud_runner_failure_includes_task_log_excerpts(
         with pytest.raises(RuntimeError) as exc_info:
             asyncio.run(
                 runner.simulate_async(
-                    {"seed": 123, "run_id": "gen-1_particle-1"},
+                    {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
                     output_dir=tmp_path / "output",
-                    run_id="gen-1_particle-1",
+                    run_id="gen_0_particle_0_attempt_0",
                 )
             )
     finally:
@@ -2099,26 +2121,26 @@ def test_cloud_runner_cancel_run_terminates_active_batch_task(monkeypatch):
         max_concurrent_simulations=1,
     )
     runner._register_active_run(
-        "gen-1_particle-1",
+        "gen_0_particle_0_attempt_0",
         JOB_1,
         output_dir=Path("/tmp/test-output-cancel"),
-        input_payload={"run_id": "gen-1_particle-1"},
+        input_payload={"run_id": "gen_0_particle_0_attempt_0"},
         overall_started=0.0,
         future=_dummy_future(),
     )
     runner._set_task_id(
-        "gen-1_particle-1",
-        task_id="task-gen-1_particle-1-1",
+        "gen_0_particle_0_attempt_0",
+        task_id="task-gen_0_particle_0_attempt_0-1",
         upload_elapsed_seconds=0.0,
         submitted_at=0.0,
     )
 
-    runner.cancel_run("gen-1_particle-1")
+    runner.cancel_run("gen_0_particle_0_attempt_0")
 
     assert fake_client.terminated_tasks == [
         (
             JOB_1,
-            "task-gen-1_particle-1-1",
+            "task-gen_0_particle_0_attempt_0-1",
         )
     ]
 
@@ -2337,7 +2359,7 @@ def test_execute_cloud_run_leaves_no_final_file_after_download_failure(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1, JOB_2]},
+        job_names={"0": [JOB_1, JOB_2]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -2350,12 +2372,12 @@ def test_execute_cloud_run_leaves_no_final_file_after_download_failure(
     )
     output_dir = tmp_path / "output"
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(output_dir)},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
                 "job_name": JOB_2,
             }
         },
@@ -2681,7 +2703,7 @@ def test_execute_cloud_run_cancels_task_when_wait_times_out(
         image_tag="testsha",
         remote_image_ref="fake-registry.azurecr.io/example-model:testsha",
         pool_name=POOL_NAME,
-        job_names={"1": [JOB_1, JOB_2]},
+        job_names={"0": [JOB_1, JOB_2]},
         input_container=INPUT_CONTAINER,
         output_container=OUTPUT_CONTAINER,
         logs_container=LOGS_CONTAINER,
@@ -2694,12 +2716,12 @@ def test_execute_cloud_run_cancels_task_when_wait_times_out(
     )
     output_dir = tmp_path / "output"
     run_json = {
-        "input": {"seed": 123, "run_id": "gen-1_particle-1"},
+        "input": {"seed": 123, "run_id": "gen_0_particle_0_attempt_0"},
         "output": {"spec": "filesystem", "dir": str(output_dir)},
         "runtime": {
             "cloud": {
                 **session.to_runtime_cloud(),
-                "run_id": "gen-1_particle-1",
+                "run_id": "gen_0_particle_0_attempt_0",
                 "job_name": JOB_2,
             }
         },
@@ -2751,10 +2773,10 @@ def test_cloud_runner_rejects_duplicate_active_run_id(monkeypatch, tmp_path):
         # without actually driving a controller loop (which would require
         # real Azure plumbing).
         runner._register_active_run(
-            "gen-1_particle-1",
+            "gen_0_particle_0_attempt_0",
             JOB_1,
             output_dir=tmp_path / "out1",
-            input_payload={"run_id": "gen-1_particle-1"},
+            input_payload={"run_id": "gen_0_particle_0_attempt_0"},
             overall_started=0.0,
             future=_dummy_future(),
         )
@@ -2763,10 +2785,10 @@ def test_cloud_runner_rejects_duplicate_active_run_id(monkeypatch, tmp_path):
         # rather than silently overwrite and orphan the first future.
         with pytest.raises(ValueError, match="already active"):
             runner._register_active_run(
-                "gen-1_particle-1",
+                "gen_0_particle_0_attempt_0",
                 JOB_1,
                 output_dir=tmp_path / "out2",
-                input_payload={"run_id": "gen-1_particle-1"},
+                input_payload={"run_id": "gen_0_particle_0_attempt_0"},
                 overall_started=0.0,
                 future=_dummy_future(),
             )
@@ -2778,7 +2800,7 @@ def test_cloud_runner_rejects_duplicate_active_run_id(monkeypatch, tmp_path):
             await runner.simulate_async(
                 {"seed": 1},
                 output_dir=tmp_path / "out3",
-                run_id="gen-1_particle-1",
+                run_id="gen_0_particle_0_attempt_0",
             )
 
         with pytest.raises(ValueError, match="already active"):

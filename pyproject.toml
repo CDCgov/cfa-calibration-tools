@@ -35,4 +35,4 @@ members = ["packages/*"]
 
 [tool.pydoclint]
 style = 'google'
-exclude = '\.git|tests|packages'
+exclude = '\.git|tests'

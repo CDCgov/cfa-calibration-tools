@@ -97,6 +97,40 @@ def test_batch_generation_runner_run_generation_records_state():
     assert stored_populations[0].size == 1
 
 
+def test_batch_generation_runner_uses_explicit_zero_attempt_context():
+    contexts: list[dict[str, int]] = []
+    runner = _make_runner_for_batch_size(
+        generation_particle_count=2,
+        max_proposals_per_batch=10_000,
+    )
+    runner.config = BatchGenerationConfig(
+        generation_particle_count=2,
+        tolerance_values=[1.0],
+        seed_sequence=SeedSequence(123),
+        max_proposals_per_batch=10_000,
+        sample_particle_from_priors=lambda _: Particle({"p": 0.0}),
+        sample_and_perturb_particle=lambda _: Particle({"p": 0.0}),
+        particle_to_distance=lambda _particle, **kwargs: (
+            contexts.append(kwargs["evaluation_context"]) or 0.0
+        ),
+        calculate_weight=lambda _: 1.0,
+        replace_particle_population=lambda _: None,
+        reporter=runner.config.reporter,
+    )
+
+    runner._evaluate_particle_chunk(
+        generation=4,
+        proposal_offset=2,
+        proposed_particles=[Particle({"p": 0.0}), Particle({"p": 0.0})],
+        particle_kwargs={},
+    )
+
+    assert contexts == [
+        {"generation_index": 4, "proposal_index": 2, "attempt_index": 0},
+        {"generation_index": 4, "proposal_index": 3, "attempt_index": 0},
+    ]
+
+
 def _make_runner_for_batch_size(
     *,
     generation_particle_count: int,

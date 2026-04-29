@@ -57,7 +57,10 @@ uv run python -m example_model.calibrate
 
 This is the fast path. It evaluates each simulation directly with
 `Binom_BP_Model.simulate(...)` inside the current Python process, without
-going through `mrp`.
+going through `mrp`. Calibration writes staged inputs and outputs to
+`./artifacts` by default. Use `--artifacts-dir path/to/artifacts` to choose
+another location, or `--no-artifacts` to disable staging for non-cloud local
+runs.
 
 To run the same calibration with the Docker-backed MRP config, first build
 the image:

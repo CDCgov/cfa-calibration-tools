@@ -288,7 +288,8 @@ generations.
 ## Cloud Runtime Notes
 
 - Cloud mode requires a filesystem output directory
-- The runner expects `run_id` values like `gen-1_particle-1`
+- The runner expects zero-based, attempt-explicit `run_id` values like
+  `gen_0_particle_0_attempt_0`
 - Each Batch task runs `mrp run` inside the container using
   `example_model.mrp.task.toml`
 - The example image defaults to a non-root user for local container execution,

@@ -1,5 +1,6 @@
 # Data
 benchmarks/
+artifacts/
 input/
 output/
 *.csv

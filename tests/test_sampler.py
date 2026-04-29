@@ -492,17 +492,17 @@ def test_sampler_stages_simulation_inputs_and_outputs(tmp_path, K, P, Vnorm):
     sampler.run_serial()
 
     assert [call[0] for call in runner.calls] == [
-        "gen-1_particle-1",
-        "gen-1_particle-2",
-        "gen-1_particle-3",
-        "gen-1_particle-4",
+        "gen_0_particle_0_attempt_0",
+        "gen_0_particle_1_attempt_0",
+        "gen_0_particle_2_attempt_0",
+        "gen_0_particle_3_attempt_0",
     ]
 
     for run_id, input_path, output_dir in runner.calls:
         assert input_path == (
-            tmp_path / "input" / "generation-1" / f"{run_id}.json"
+            tmp_path / "input" / "generation-0" / f"{run_id}.json"
         )
-        assert output_dir == (tmp_path / "output" / "generation-1" / run_id)
+        assert output_dir == (tmp_path / "output" / "generation-0" / run_id)
         assert json.loads(input_path.read_text())["run_id"] == run_id
         assert json.loads((output_dir / "result.json").read_text()) == 0.75
         assert json.loads((output_dir / "runner.json").read_text()) == {

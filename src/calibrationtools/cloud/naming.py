@@ -6,37 +6,29 @@ from datetime import datetime, timezone
 from threading import Lock
 from uuid import uuid4
 
+from calibrationtools.run_id import (
+    format_generation_name as _format_generation_name,
+)
+from calibrationtools.run_id import (
+    parse_sampler_run_id,
+)
+
 DEFAULT_BATCH_TASK_ID_MAX_LENGTH = 64
 
-_RUN_ID_PATTERN = re.compile(r"^gen-(\d+)_particle-(\d+)(?:-attempt-(\d+))?$")
 _JOB_TASK_ID_MAX_BY_JOB: dict[str, int] = {}
 _JOB_TASK_ID_MAX_LOCK = Lock()
 
 
 def parse_generation_from_run_id(run_id: str) -> int:
-    match = _RUN_ID_PATTERN.match(run_id)
-    if match is None:
-        raise ValueError(
-            "Cloud calibration requires run ids like "
-            "`gen-1_particle-1` or `gen-1_particle-1-attempt-2`; "
-            f"received {run_id!r}."
-        )
-    return int(match.group(1))
+    return parse_sampler_run_id(run_id).generation_index
 
 
 def parse_particle_from_run_id(run_id: str) -> int:
-    match = _RUN_ID_PATTERN.match(run_id)
-    if match is None:
-        raise ValueError(
-            "Cloud calibration requires run ids like "
-            "`gen-1_particle-1` or `gen-1_particle-1-attempt-2`; "
-            f"received {run_id!r}."
-        )
-    return int(match.group(2))
+    return parse_sampler_run_id(run_id).proposal_index
 
 
-def format_generation_name(generation_number: int) -> str:
-    return f"generation-{generation_number}"
+def format_generation_name(generation_index: int) -> str:
+    return _format_generation_name(generation_index)
 
 
 def sanitize_name(value: str) -> str:

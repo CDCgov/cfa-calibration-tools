@@ -289,11 +289,10 @@ def test_execute_cleanup_deletes_resources_in_safe_order(monkeypatch):
     )
     monkeypatch.setattr(
         "example_model.cloud_cleanup.delete_acr_image_tag",
-        lambda registry_name,
-        repository_name,
-        image_tag,
-        **kwargs: operations.append(
-            f"acr:{registry_name}/{repository_name}:{image_tag}"
+        lambda registry_name, repository_name, image_tag, **kwargs: (
+            operations.append(
+                f"acr:{registry_name}/{repository_name}:{image_tag}"
+            )
         ),
     )
 

@@ -4,21 +4,25 @@ from pathlib import Path
 import pytest
 from example_model import (
     DEFAULT_CLOUD_MRP_CONFIG_PATH,
-    Binom_BP_Model,
     ExampleModelMRPRunner,
 )
 from example_model.calibrate import (
+    DEFAULT_ARTIFACTS_DIR,
     DEFAULT_CLOUD_MAX_CONCURRENT_SIMULATIONS,
     DEFAULT_MAX_CONCURRENT_SIMULATIONS,
     main,
     parse_args,
     print_cloud_auto_size_summary,
+    resolve_artifacts_dir,
     resolve_cloud_sizing,
     resolve_max_concurrent_simulations,
     resolve_model_runner,
     run_calibration,
 )
+from example_model.direct_runner import ExampleModelDirectRunner
 from example_model.mrp_runner import DEFAULT_DOCKER_MRP_CONFIG_PATH
+
+from calibrationtools.cloud.auto_size import AutoSizeSummary, CloudSizing
 
 
 def test_parse_args_accepts_auto_size_for_cloud(monkeypatch):
@@ -43,7 +47,28 @@ def test_resolve_model_runner_defaults_to_direct_simulation():
         print_task_durations=False,
     )
 
-    assert resolve_model_runner(args) is Binom_BP_Model
+    assert isinstance(resolve_model_runner(args), ExampleModelDirectRunner)
+
+
+def test_resolve_artifacts_dir_defaults_to_shared_artifacts_dir():
+    args = Namespace(
+        artifacts_dir=None,
+        no_artifacts=False,
+        cloud=False,
+    )
+
+    assert resolve_artifacts_dir(args) == DEFAULT_ARTIFACTS_DIR
+
+
+def test_resolve_artifacts_dir_rejects_no_artifacts_for_cloud():
+    args = Namespace(
+        artifacts_dir=None,
+        no_artifacts=True,
+        cloud=True,
+    )
+
+    with pytest.raises(ValueError, match="--cloud requires artifacts"):
+        resolve_artifacts_dir(args)
 
 
 def test_resolve_model_runner_uses_docker_flag():
@@ -255,9 +280,9 @@ def test_resolve_cloud_sizing_auto_size_caps_default_concurrency(monkeypatch):
 
 def test_print_cloud_auto_size_summary_includes_ram_sizing(capsys):
     print_cloud_auto_size_summary(
-        Namespace(
+        CloudSizing(
             max_concurrent_simulations=320,
-            summary=Namespace(
+            summary=AutoSizeSummary(
                 vm_size="large",
                 vm_memory_bytes=64 * 1024**3,
                 measured_task_peak_rss_bytes=100 * 1024**2,
@@ -333,10 +358,18 @@ def test_resolve_model_runner_passes_auto_size_override(monkeypatch, tmp_path):
 
     runner = resolve_model_runner(
         args,
-        cloud_sizing=Namespace(
+        cloud_sizing=CloudSizing(
             max_concurrent_simulations=7,
             task_slots_per_node_override=3,
-            summary=Namespace(task_slots_per_node=3),
+            summary=AutoSizeSummary(
+                vm_size="large",
+                vm_memory_bytes=64 * 1024**3,
+                measured_task_peak_rss_bytes=100 * 1024**2,
+                reserve=0.15,
+                memory_task_slots_per_node=557,
+                max_task_slots_per_node=64,
+                task_slots_per_node=3,
+            ),
         ),
     )
 
@@ -381,6 +414,34 @@ def test_main_auto_size_failure_happens_before_cloud_runner(monkeypatch):
     assert constructed is False
 
 
+def test_main_rejects_cloud_no_artifacts_before_auto_size_probe(monkeypatch):
+    probed = False
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["calibrate", "--cloud", "--no-artifacts", "--auto-size"],
+    )
+    monkeypatch.setattr(
+        "example_model.calibrate.load_cloud_runtime_settings",
+        lambda config_path: Namespace(vm_size="large", pool_max_nodes=5),
+    )
+
+    def fake_probe(probe_module, base_inputs):
+        nonlocal probed
+        probed = True
+        return 100 * 1024**2
+
+    monkeypatch.setattr(
+        "example_model.calibrate.run_local_memory_probe",
+        fake_probe,
+    )
+
+    with pytest.raises(ValueError, match="--cloud requires artifacts"):
+        main()
+
+    assert probed is False
+
+
 def test_main_auto_size_passes_resolved_concurrency_to_sampler(monkeypatch):
     captured: dict[str, object] = {}
 
@@ -415,6 +476,29 @@ def test_main_auto_size_passes_resolved_concurrency_to_sampler(monkeypatch):
     assert captured["max_concurrent_simulations"] == 320
 
 
+def test_main_passes_default_artifacts_dir_to_sampler(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("sys.argv", ["calibrate"])
+    monkeypatch.setattr(
+        "example_model.calibrate.resolve_model_runner",
+        lambda args, *, cloud_sizing: "runner",
+    )
+
+    def fake_run_calibration(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "example_model.calibrate.run_calibration",
+        fake_run_calibration,
+    )
+
+    main()
+
+    assert captured["model_runner"] == "runner"
+    assert captured["artifacts_dir"] == DEFAULT_ARTIFACTS_DIR
+
+
 def test_run_calibration_passes_task_progress_to_sampler(monkeypatch):
     captured: dict[str, object] = {}
 
@@ -438,7 +522,7 @@ def test_run_calibration_passes_task_progress_to_sampler(monkeypatch):
     monkeypatch.setattr("example_model.calibrate.ABCSampler", FakeSampler)
 
     run_calibration(
-        model_runner=Binom_BP_Model,
+        model_runner=ExampleModelDirectRunner(),
         max_concurrent_simulations=7,
         print_task_progress=True,
     )

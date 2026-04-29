@@ -18,6 +18,10 @@ _EXPORTS = {
         ".cloud_runner",
         "ExampleModelCloudRunner",
     ),
+    "ExampleModelDirectRunner": (
+        ".direct_runner",
+        "ExampleModelDirectRunner",
+    ),
     "ExampleModelMRPRunner": (".mrp_runner", "ExampleModelMRPRunner"),
 }
 

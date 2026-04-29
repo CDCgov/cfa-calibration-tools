@@ -77,6 +77,7 @@ def example_model_sampler() -> ABCSampler:
     ##===================================#
     def particles_to_params(particle, **kwargs):
         base_inputs = kwargs.get("base_inputs")
+        assert isinstance(base_inputs, dict)
         model_params = apply_dict_overrides(base_inputs, particle)
         return model_params
 
@@ -180,6 +181,7 @@ def test_sampler_run_integration_is_deterministic_under_same_entropy(
 
         def particles_to_params(particle, **kwargs):
             base_inputs = kwargs.get("base_inputs")
+            assert isinstance(base_inputs, dict)
             return apply_dict_overrides(base_inputs, particle)
 
         def outputs_to_distance(model_output, target_data):

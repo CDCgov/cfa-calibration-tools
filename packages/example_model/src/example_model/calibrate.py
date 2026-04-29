@@ -2,8 +2,8 @@
 
 import argparse
 import sys
-import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from mrp.api import apply_dict_overrides
@@ -23,8 +23,8 @@ from calibrationtools.variance_adapter import AdaptMultivariateNormalVariance
 from example_model import (
     DEFAULT_CLOUD_MRP_CONFIG_PATH,
     DEFAULT_DOCKER_MRP_CONFIG_PATH,
-    Binom_BP_Model,
     ExampleModelCloudRunner,
+    ExampleModelDirectRunner,
     ExampleModelMRPRunner,
 )
 from example_model.cloud_runner import resolve_cloud_build_context
@@ -53,10 +53,16 @@ PRIORS = {
 TOLERANCE_VALUES = [5.0, 1.0]
 DEFAULT_MAX_CONCURRENT_SIMULATIONS = 10
 DEFAULT_CLOUD_MAX_CONCURRENT_SIMULATIONS = 50
+DEFAULT_ARTIFACTS_DIR = Path("artifacts")
 
 
-def particles_to_params(particle, **kwargs):
+def particles_to_params(
+    particle: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
     base_inputs = kwargs.get("base_inputs")
+    if not isinstance(base_inputs, dict):
+        raise ValueError("base_inputs must be provided as a dictionary.")
     return apply_dict_overrides(base_inputs, particle)
 
 
@@ -138,8 +144,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Root directory where calibration writes input and output "
-            "folders. Defaults to no on-disk staging for pure in-process "
-            "runs; required for --docker and --cloud workflows."
+            f"folders. Defaults to {DEFAULT_ARTIFACTS_DIR}."
+        ),
+    )
+    parser.add_argument(
+        "--no-artifacts",
+        action="store_true",
+        help=(
+            "Disable local input/output artifact staging. Not valid with "
+            "--cloud."
         ),
     )
     return parser.parse_args()
@@ -190,6 +203,24 @@ def resolve_cloud_sizing(args: argparse.Namespace) -> CloudSizing:
                 DEFAULT_INPUTS,
             )
         ),
+    )
+
+
+def resolve_artifacts_dir(args: argparse.Namespace) -> Path | None:
+    artifacts_dir = args.artifacts_dir
+    if args.no_artifacts:
+        if artifacts_dir is not None:
+            raise ValueError(
+                "Pass either --artifacts-dir or --no-artifacts, not both."
+            )
+        if args.cloud:
+            raise ValueError(
+                "--cloud requires artifacts; omit --no-artifacts or pass "
+                "--artifacts-dir."
+            )
+        return None
+    return (
+        artifacts_dir if artifacts_dir is not None else DEFAULT_ARTIFACTS_DIR
     )
 
 
@@ -263,7 +294,7 @@ def resolve_model_runner(
         return ExampleModelMRPRunner(args.mrp_config)
     if args.docker:
         return ExampleModelMRPRunner(DEFAULT_DOCKER_MRP_CONFIG_PATH)
-    return Binom_BP_Model
+    return ExampleModelDirectRunner()
 
 
 def run_calibration(
@@ -328,40 +359,19 @@ def run_calibration(
 
 def main():
     args = parse_args()
+    artifacts_dir = resolve_artifacts_dir(args)
     cloud_sizing = resolve_cloud_sizing(args)
     print_cloud_auto_size_summary(cloud_sizing)
 
-    artifacts_dir = args.artifacts_dir
-    temp_artifacts_dir: tempfile.TemporaryDirectory | None = None
-    # Cloud mode requires on-disk staging because the async runner needs a
-    # concrete output_dir to write downloaded blobs into. Rather than
-    # failing at runtime deep inside `simulate_async()`, allocate a
-    # managed temp dir here so the default `--cloud` CLI invocation just
-    # works. Users can still pass `--artifacts-dir` explicitly to persist
-    # artifacts.
-    if args.cloud and artifacts_dir is None:
-        temp_artifacts_dir = tempfile.TemporaryDirectory(
-            prefix="example-model-cloud-artifacts-"
-        )
-        artifacts_dir = Path(temp_artifacts_dir.name)
-        print(
-            f"--cloud requires staged artifacts; using temporary "
-            f"directory {artifacts_dir}"
-        )
-
-    try:
-        run_calibration(
-            model_runner=resolve_model_runner(
-                args,
-                cloud_sizing=cloud_sizing,
-            ),
-            max_concurrent_simulations=cloud_sizing.max_concurrent_simulations,
-            print_task_progress=args.print_task_progress,
-            artifacts_dir=artifacts_dir,
-        )
-    finally:
-        if temp_artifacts_dir is not None:
-            temp_artifacts_dir.cleanup()
+    run_calibration(
+        model_runner=resolve_model_runner(
+            args,
+            cloud_sizing=cloud_sizing,
+        ),
+        max_concurrent_simulations=cloud_sizing.max_concurrent_simulations,
+        print_task_progress=args.print_task_progress,
+        artifacts_dir=artifacts_dir,
+    )
 
 
 if __name__ == "__main__":

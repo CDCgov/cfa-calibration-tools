@@ -327,7 +327,7 @@ class CloudMRPRunner:
             raise ValueError("Cloud runner requires a run_id.")
         job_name = self._select_job_name(run_id)
 
-        overrides = {
+        overrides: dict[str, Any] = {
             "runtime": {
                 "command": sys.executable,
                 "cloud": {
@@ -852,7 +852,7 @@ class CloudMRPRunner:
 
         job_names = {
             str(generation): list(shared_job_names)
-            for generation in range(1, self.generation_count + 1)
+            for generation in range(self.generation_count)
         }
 
         self._print_session_startup_summary(
@@ -986,7 +986,7 @@ class CloudMRPRunner:
     def _select_job_name_locked(self, run_id: str | None) -> str:
         """Pick a job name; caller MUST hold ``_run_state_lock``."""
         if run_id is None:
-            generation = "1"
+            generation = "0"
         else:
             generation = str(self._parse_generation_from_run_id(run_id))
         try:

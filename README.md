@@ -52,6 +52,12 @@ uv run python -m example_model.calibrate
 ```
 
 This runs the ABC-SMC calibration workflow defined in `packages/example_model/src/example_model/calibrate.py` and prints the posterior summary and diagnostics.
+By default, calibration stages per-simulation inputs and outputs under
+`./artifacts`, including paths like
+`artifacts/input/generation-0/gen_0_particle_0_attempt_0.json` and
+`artifacts/output/generation-0/gen_0_particle_0_attempt_0/output.csv`.
+Use `--artifacts-dir path/to/artifacts` to choose another location, or
+`--no-artifacts` to disable artifact staging for non-cloud local runs.
 
 To run calibration through the Docker-backed MRP config:
 

@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -189,10 +190,71 @@ def test_particle_evaluator_writes_artifacts_under_correct_generation(
             },
         )
 
-    for human_generation in (1, 2, 3):
-        gen_dir = tmp_path / "input" / f"generation-{human_generation}"
+    for generation_index in (0, 1, 2):
+        gen_dir = tmp_path / "input" / f"generation-{generation_index}"
         assert gen_dir.is_dir()
-        assert (gen_dir / f"gen-{human_generation}_particle-1.json").is_file()
+        assert (
+            gen_dir / f"gen_{generation_index}_particle_0_attempt_0.json"
+        ).is_file()
+
+
+def test_particle_evaluator_run_id_mirrors_zero_based_attempt_index(
+    tmp_path,
+):
+    calls: list[tuple[str, str]] = []
+
+    class RecordingRunner:
+        def simulate(
+            self, params, *, input_path=None, output_dir=None, run_id=None
+        ):
+            assert input_path is not None
+            assert output_dir is not None
+            assert run_id is not None
+
+            calls.append((run_id, Path(input_path).stem))
+            return {"run_id": run_id, "output_dir": str(output_dir)}
+
+    evaluator = ParticleEvaluator(
+        particles_to_params=lambda particle: dict(particle),
+        outputs_to_distance=lambda outputs, target: 0.0,
+        target_data=None,
+        model_runner=RecordingRunner(),
+        artifacts_dir=tmp_path,
+    )
+
+    evaluator.distance(
+        Particle({"p": 0.1}),
+        evaluation_context={
+            "generation_index": 0,
+            "proposal_index": 0,
+            "attempt_index": 0,
+        },
+    )
+    evaluator.distance(
+        Particle({"p": 0.2}),
+        evaluation_context={
+            "generation_index": 0,
+            "proposal_index": 0,
+            "attempt_index": 1,
+        },
+    )
+
+    assert calls == [
+        (
+            "gen_0_particle_0_attempt_0",
+            "gen_0_particle_0_attempt_0",
+        ),
+        (
+            "gen_0_particle_0_attempt_1",
+            "gen_0_particle_0_attempt_1",
+        ),
+    ]
+    assert (
+        tmp_path / "output" / "generation-0" / "gen_0_particle_0_attempt_0"
+    ).is_dir()
+    assert (
+        tmp_path / "output" / "generation-0" / "gen_0_particle_0_attempt_1"
+    ).is_dir()
 
 
 def test_particle_evaluator_writes_direct_artifacts_without_context(
@@ -265,7 +327,7 @@ def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path):
     )
 
     assert (
-        tmp_path / "input" / "generation-2" / "gen-2_particle-3.json"
+        tmp_path / "input" / "generation-1" / "gen_1_particle_2_attempt_0.json"
     ).is_file()
 
 

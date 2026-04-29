@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..run_id import parse_sampler_run_id
 from .naming import (
     format_generation_name,
     parse_generation_from_run_id,
-    parse_particle_from_run_id,
 )
 
 
@@ -81,15 +81,15 @@ class CloudSession:
         )
 
     def job_name_for_run(self, run_id: str) -> str:
-        generation = str(parse_generation_from_run_id(run_id))
+        parsed_run_id = parse_sampler_run_id(run_id)
+        generation = str(parsed_run_id.generation_index)
         try:
             job_names = _normalize_job_name_list(self.job_names[generation])
         except KeyError as exc:
             raise KeyError(
                 f"No Azure Batch job configured for generation {generation}"
             ) from exc
-        particle_number = parse_particle_from_run_id(run_id)
-        return job_names[(particle_number - 1) % len(job_names)]
+        return job_names[parsed_run_id.proposal_index % len(job_names)]
 
     def logs_folder_for_job(
         self, job_name: str, run_id: str | None = None
