@@ -156,7 +156,73 @@ class ABCSampler:
         return self._run_state.population_archive
 
     @property
+    def step_successes(self) -> list[int]:
+        """Return accepted-particle counts for the active run.
+
+        This property exposes the generation-level success counts recorded in
+        the sampler run state.
+
+        Returns:
+            list[int]: Accepted-particle count for each generation in the
+                active run.
+        """
+
+        return self._run_state.step_successes
+
+    @property
+    def step_attempts(self) -> list[int]:
+        """Return proposal-attempt counts for the active run.
+
+        This property exposes the generation-level attempt counts recorded in
+        the sampler run state.
+
+        Returns:
+            list[int]: Proposal-attempt count for each generation in the active
+                run.
+        """
+
+        return self._run_state.step_attempts
+
+    @property
+    def generator_history(self) -> dict[int, list[GeneratorSlot]]:
+        """Return generator slots used for each completed generation.
+
+        This property exposes the deterministic generator slots recorded during
+        particlewise execution.
+
+        Returns:
+            dict[int, list[GeneratorSlot]]: Generator slots keyed by generation
+                index.
+        """
+
+        return self._run_state.generator_history
+
+    @property
+    def population_archive(self) -> dict[int, ParticlePopulation]:
+        """Return archived populations captured during the active run.
+
+        This property exposes the per-run archive of previous populations that
+        was recorded while the active run progressed across generations.
+
+        Returns:
+            dict[int, ParticlePopulation]: Archived populations keyed by their
+                archive step.
+        """
+
+        return self._run_state.population_archive
+
+    @property
     def particle_population(self) -> ParticlePopulation:
+        """Return the current particle population.
+
+        This property exposes the sampler's active population without changing
+        any run bookkeeping.
+
+        Returns:
+            ParticlePopulation: Current particle population stored on the
+                updater.
+        """
+
         return self._updater.particle_population
 
     @particle_population.setter

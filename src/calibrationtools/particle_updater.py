@@ -100,9 +100,13 @@ class _ParticleUpdater:
         return self.particle_population.particles[idx]
 
     def sample_and_perturb_particle(
+<<<<<<< HEAD
         self,
         seed_sequence: SeedSequence,
         max_attempts: int = np.iinfo(np.int32).max,
+=======
+        self, max_attempts: int = np.iinfo(np.int32).max
+>>>>>>> 8dae0fa (squash)
     ) -> Particle:
         """
         Samples a particle from the current population and applies a perturbation to it,

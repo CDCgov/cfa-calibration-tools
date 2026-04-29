@@ -38,7 +38,14 @@ DEFAULT_INPUTS = {
     "max_infect": 500,
 }
 
+<<<<<<< HEAD
 PRIORS = {
+=======
+##===================================#
+## Define priors
+##===================================#
+P = {
+>>>>>>> 8dae0fa (squash)
     "priors": {
         "p": {
             "distribution": "uniform",
@@ -50,10 +57,24 @@ PRIORS = {
         },
     }
 }
+<<<<<<< HEAD
 TOLERANCE_VALUES = [5.0, 1.0]
 DEFAULT_MAX_CONCURRENT_SIMULATIONS = 10
 DEFAULT_CLOUD_MAX_CONCURRENT_SIMULATIONS = 50
 DEFAULT_ARTIFACTS_DIR = Path("artifacts")
+=======
+
+K = IndependentKernels(
+    [
+        MultivariateNormalKernel(
+            [p for p in P["priors"].keys()],
+        ),
+        SeedKernel("seed"),
+    ]
+)
+
+V = AdaptMultivariateNormalVariance()
+>>>>>>> 8dae0fa (squash)
 
 
 def particles_to_params(
@@ -70,6 +91,7 @@ def outputs_to_distance(model_output, target_data):
     return abs(np.sum(model_output) - target_data)
 
 
+<<<<<<< HEAD
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run ABC-SMC calibration for the example model."
@@ -376,3 +398,39 @@ def main():
 
 if __name__ == "__main__":
     main()
+=======
+sampler = ABCSampler(
+    generation_particle_count=500,
+    tolerance_values=[5.0, 1.0],
+    priors=P,
+    perturbation_kernel=K,
+    variance_adapter=V,
+    particles_to_params=particles_to_params,
+    outputs_to_distance=outputs_to_distance,
+    target_data=5,
+    model_runner=model,
+    entropy=0x60636577C7AD93BBE463F30A6241FDE4,  # This value is the initial entropy for the `sampler.seed_sequence`
+)
+
+results = sampler.run(execution="serial", base_inputs=default_inputs)
+# Default printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
+print(results)
+
+# Example user print function
+print("Posterior estimates table example:")
+for par_name in P["priors"].keys():
+    print(
+        f"{par_name}: {results.point_estimates[par_name]:.2f}, 95% CI: {[f'{v:.2f}' for v in results.credible_intervals[par_name]]}"
+    )
+
+diagnostics = results.get_diagnostics()
+
+print("\nAvailable diagnostics metrics:")
+print(diagnostics.keys())
+
+print("\nQuantiles for each parameter:")
+print(diagnostics["quantiles"])
+
+print("\nCorrelation matrix:")
+print(diagnostics["correlation_matrix"])
+>>>>>>> 8dae0fa (squash)
