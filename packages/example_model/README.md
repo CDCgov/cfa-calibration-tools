@@ -44,11 +44,48 @@ Additionally, as described in the repo-level README, the model can be run as spe
 uv sync --all-packages
 uv run mrp run example_model.mrp.toml
 ```
+That config uses the MRP inline runtime, so it calls the example model in the
+current Python process instead of spawning `python -m example_model`.
 
 ## Running the calibration
-To run the calibration example for this model, run
+To run the calibration example in local Python mode, run
 
 ```bash
 uv sync --all-packages
 uv run python -m example_model.calibrate
 ```
+
+This is the fast path. It evaluates each simulation directly with
+`Binom_BP_Model.simulate(...)` inside the current Python process, without
+going through `mrp`. Calibration writes staged inputs and outputs to
+`./artifacts` by default. Use `--artifacts-dir path/to/artifacts` to choose
+another location, or `--no-artifacts` to disable staging for non-cloud local
+runs.
+
+To run the same calibration with the Docker-backed MRP config, first build
+the image:
+
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+```
+
+For cloud-backed calibration, use the workflow in the repo-level
+`CLOUD_README.md`. Cloud mode builds the Docker image, uploads it to Azure
+Container Registry, and creates the Batch resources as part of the calibration
+startup path.
+
+Then run:
+
+```bash
+uv sync --all-packages
+uv run python -m example_model.calibrate --docker
+```
+
+The Docker-backed config resolves the container UID/GID from the current host
+user so the bind-mounted `./output` directory remains writable. If an older
+run left behind an `output/` directory with different ownership, remove it
+before retrying.
+
+In Docker mode, calibration uses `mrp` under the covers for each simulation
+using `example_model.mrp.docker.toml`. You can also point at an explicit
+MRP config file with `--mrp-config path/to/config.toml`.

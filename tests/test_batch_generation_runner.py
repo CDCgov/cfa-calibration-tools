@@ -8,6 +8,7 @@ from calibrationtools.batch_generation_runner import (
     BatchGenerationConfig,
     BatchGenerationRequest,
     BatchGenerationRunner,
+    BatchGenerationState,
 )
 from calibrationtools.particle import Particle
 from calibrationtools.particle_population import ParticlePopulation
@@ -94,3 +95,100 @@ def test_batch_generation_runner_run_generation_records_state():
     assert run_state.step_successes == [1]
     assert run_state.step_attempts == [1]
     assert stored_populations[0].size == 1
+
+
+def test_batch_generation_runner_uses_explicit_zero_attempt_context():
+    contexts: list[dict[str, int]] = []
+    runner = _make_runner_for_batch_size(
+        generation_particle_count=2,
+        max_proposals_per_batch=10_000,
+    )
+    runner.config = BatchGenerationConfig(
+        generation_particle_count=2,
+        tolerance_values=[1.0],
+        seed_sequence=SeedSequence(123),
+        max_proposals_per_batch=10_000,
+        sample_particle_from_priors=lambda _: Particle({"p": 0.0}),
+        sample_and_perturb_particle=lambda _: Particle({"p": 0.0}),
+        particle_to_distance=lambda _particle, **kwargs: (
+            contexts.append(kwargs["evaluation_context"]) or 0.0
+        ),
+        calculate_weight=lambda _: 1.0,
+        replace_particle_population=lambda _: None,
+        reporter=runner.config.reporter,
+    )
+
+    runner._evaluate_particle_chunk(
+        generation=4,
+        proposal_offset=2,
+        proposed_particles=[Particle({"p": 0.0}), Particle({"p": 0.0})],
+        particle_kwargs={},
+    )
+
+    assert contexts == [
+        {"generation_index": 4, "proposal_index": 2, "attempt_index": 0},
+        {"generation_index": 4, "proposal_index": 3, "attempt_index": 0},
+    ]
+
+
+def _make_runner_for_batch_size(
+    *,
+    generation_particle_count: int,
+    max_proposals_per_batch: int,
+) -> BatchGenerationRunner:
+    reporter = SamplerReporter(
+        verbose=False,
+        console=Console(file=StringIO(), force_terminal=True),
+    )
+    return BatchGenerationRunner(
+        config=BatchGenerationConfig(
+            generation_particle_count=generation_particle_count,
+            tolerance_values=[1.0],
+            seed_sequence=SeedSequence(0),
+            max_proposals_per_batch=max_proposals_per_batch,
+            sample_particle_from_priors=lambda _: Particle({"p": 0.0}),
+            sample_and_perturb_particle=lambda _: Particle({"p": 0.0}),
+            particle_to_distance=lambda _particle, **_: 0.0,
+            calculate_weight=lambda _: 1.0,
+            replace_particle_population=lambda _: None,
+            reporter=reporter,
+        ),
+        run_state=SamplerRunState(1, False),
+    )
+
+
+def test_get_batch_sample_size_warmup_first_batch_uses_configured_batchsize():
+    """Pin the warmup heuristic so future edits do not silently rewire it.
+
+    During warmup the *first* batch (population still empty) intentionally
+    uses the caller-supplied ``batchsize`` rather than the warmup ceiling;
+    later batches in the same warmup phase scale up to
+    ``max_proposals_per_batch``. This test locks both branches in.
+    """
+    runner = _make_runner_for_batch_size(
+        generation_particle_count=100,
+        max_proposals_per_batch=64,
+    )
+    state = BatchGenerationState(proposed_population=ParticlePopulation())
+
+    # First batch: population empty -> use the configured batchsize.
+    assert runner._get_batch_sample_size(state, batchsize=8, warmup=True) == 8
+
+    # Second batch in warmup: population has progressed, so the warmup
+    # ceiling kicks in.
+    state.proposed_population.add_particle(Particle({"p": 0.0}), 1.0)
+    state.attempts = 1
+    sample = runner._get_batch_sample_size(state, batchsize=8, warmup=True)
+    assert sample <= 64
+    assert sample >= 1
+
+
+def test_get_batch_sample_size_non_warmup_uses_batchsize_only():
+    runner = _make_runner_for_batch_size(
+        generation_particle_count=100,
+        max_proposals_per_batch=10_000,
+    )
+    state = BatchGenerationState(proposed_population=ParticlePopulation())
+
+    # Empty population -> first batch returns the configured batchsize.
+    assert runner._get_batch_sample_size(state, batchsize=4, warmup=False) == 4

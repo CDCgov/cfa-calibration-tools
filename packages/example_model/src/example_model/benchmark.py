@@ -74,6 +74,8 @@ V = AdaptMultivariateNormalVariance()
 ##===================================#
 def particles_to_params(particle, **kwargs):
     base_inputs = kwargs.get("base_inputs")
+    if not isinstance(base_inputs, dict):
+        raise ValueError("base_inputs must be provided as a dictionary.")
     model_params = apply_dict_overrides(base_inputs, particle)
     return model_params
 

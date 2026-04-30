@@ -45,11 +45,14 @@ class PerturbationKernel(ABC):
         """Change the particle values based on the perturbation kernel."""
         to_particle = copy.deepcopy(from_particle)
         if isinstance(perturbed_values, np.ndarray):
-            if len(perturbed_values) == 1:
-                to_particle[self.params[0]] = type(perturbed_values[0])
+            values = perturbed_values.tolist()
+            if not isinstance(values, list):
+                values = [values]
+            if len(values) == 1:
+                to_particle[self.params[0]] = type(values[0])
             else:
-                for i, param in enumerate(self.params):
-                    to_particle[param] = type(perturbed_values[i])
+                for param, value in zip(self.params, values):
+                    to_particle[param] = type(value)
         else:
             to_particle[self.params[0]] = type(perturbed_values)
         return to_particle
@@ -94,7 +97,7 @@ class CompositePerturbationKernel(PerturbationKernel, ABC):
         self.kernels = kernels if kernels is not None else []
 
     def perturb(
-        self, from_particle: Particle, seed_sequence: SeedSequence
+        self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         """Return combined perturbation from all component kernels.
 
@@ -104,7 +107,8 @@ class CompositePerturbationKernel(PerturbationKernel, ABC):
 
         Args:
             from_particle (Particle): Original particle.
-            seed_sequence (SeedSequence): SeedSequence for RNG spawning.
+            seed_sequence (SeedSequence | None): SeedSequence for RNG
+                spawning.
 
         Returns:
             Particle: Updated particle.

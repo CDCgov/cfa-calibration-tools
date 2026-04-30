@@ -1,11 +1,12 @@
 from typing import Any
 
-from mrp import MRPModel
+from mrp import Environment, MRPModel
 from numpy.random import default_rng
 
 
 class Binom_BP_Model(MRPModel):
     def run(self):
+        print("Running Binomial Branching Process Model...")
         results = self.simulate(self.input)
         self.write_csv(
             "output.csv",
@@ -25,12 +26,8 @@ class Binom_BP_Model(MRPModel):
         runs for multiple generations until reaching max_gen or max_infect threshold.
 
         Args:
-            model_inputs: Dictionary containing model parameters:
-                seed (int, optional): Random seed for reproducibility. If not provided, uses random seed.
-                max_gen (int): Maximum number of generations to simulate
-                n (int): Number of trials in binomial distribution (max offspring per individual)
-                p (float): Success probability in binomial distribution (0 to 1)
-                max_infect (int): Population threshold to stop simulation early
+            model_inputs (dict[str, Any]): Dictionary containing model
+                parameters: seed, max_gen, n, p, and max_infect.
 
         Returns:
             list[int]: Population size at each generation, starting from generation 0
@@ -63,3 +60,7 @@ class Binom_BP_Model(MRPModel):
 
 def main():
     Binom_BP_Model().run()
+
+
+def run_inline(run_json: dict[str, Any]) -> None:
+    Binom_BP_Model(env=Environment(run_json)).run()
