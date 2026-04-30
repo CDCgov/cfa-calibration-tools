@@ -40,12 +40,12 @@ class ABCSampler:
         generation_particle_count: int,
         tolerance_values: list[float],
         priors: PriorDistribution | dict | Path,
-        outputs_to_distance: Callable[..., float],
-        target_data: Any,
-        model_runner: object,
-        perturbation_kernel: PerturbationKernel,
-        variance_adapter: VarianceAdapter,
         particles_to_params: Callable[..., dict] | None = None,
+        outputs_to_distance: Callable[..., float] | None = None,
+        target_data: Any = None,
+        model_runner: object | None = None,
+        perturbation_kernel: PerturbationKernel | None = None,
+        variance_adapter: VarianceAdapter | None = None,
         default_parameters: dict[str, Any] | None = None,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         max_proposals_per_batch: int = 10_000,
@@ -61,6 +61,15 @@ class ABCSampler:
         seed_parameter_name: str | None = "seed",
         artifacts_dir: Path | str | None = None,
     ):
+        if outputs_to_distance is None:
+            raise TypeError("outputs_to_distance is required")
+        if model_runner is None:
+            raise TypeError("model_runner is required")
+        if perturbation_kernel is None:
+            raise TypeError("perturbation_kernel is required")
+        if variance_adapter is None:
+            raise TypeError("variance_adapter is required")
+
         if seed is not None:
             if entropy is not None and entropy != seed:
                 raise ValueError(
