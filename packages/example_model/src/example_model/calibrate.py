@@ -3,9 +3,9 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
 
 import numpy as np
+
 from calibrationtools.cloud.auto_size import (
     CloudSizing,
     resolve_cloud_auto_size,
@@ -52,6 +52,7 @@ TOLERANCE_VALUES = [5.0, 1.0]
 DEFAULT_MAX_CONCURRENT_SIMULATIONS = 10
 DEFAULT_CLOUD_MAX_CONCURRENT_SIMULATIONS = 50
 DEFAULT_ARTIFACTS_DIR = Path("artifacts")
+
 
 def outputs_to_distance(model_output, target_data):
     return abs(np.sum(model_output) - target_data)

@@ -104,7 +104,7 @@ class ParticleReader:
         self,
         particle_param_names: list[str],
         default_params: dict[str, Any] | None = None,
-        read_fn: Callable[Concatenate[Particle, ...], dict] | None = None
+        read_fn: Callable[Concatenate[Particle, ...], dict] | None = None,
     ):
         self.default_params = default_params or {}
         self.particle_param_names = particle_param_names

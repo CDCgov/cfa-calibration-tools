@@ -11,24 +11,24 @@ from calibrationtools.particle_evaluator import (
 )
 from calibrationtools.particle_reader import ParticleReader
 
+
 class DummyModelRunner:
     def simulate(self, params):
         return 0.5 + params["p"]
-    
-@pytest.fixture 
+
+
+@pytest.fixture
 def basic_reader() -> ParticleReader:
-    return ParticleReader(
-        particle_param_names=["p"]
-    )
+    return ParticleReader(particle_param_names=["p"])
+
 
 @pytest.fixture
 def scale_reader() -> ParticleReader:
     return ParticleReader(
         particle_param_names=["p"],
-        read_fn=lambda particle, scale: {
-            "p": particle["p"] * scale
-        }
+        read_fn=lambda particle, scale: {"p": particle["p"] * scale},
     )
+
 
 def test_particle_evaluator_distance(basic_reader):
     evaluator = ParticleEvaluator(
@@ -86,7 +86,9 @@ def test_particle_evaluator_prefers_simulate_when_available(basic_reader):
     assert calls == [("simulate", {"params": {"p": 0.2}})]
 
 
-def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in(basic_reader):
+def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in(
+    basic_reader,
+):
     calls: list[tuple[str, dict]] = []
 
     class AsyncPreferredRunner:
@@ -115,7 +117,9 @@ def test_particle_evaluator_can_prefer_simulate_async_when_runner_opts_in(basic_
     assert calls == [("simulate_async", {"params": {"p": 0.2}})]
 
 
-def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one(basic_reader):
+def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one(
+    basic_reader,
+):
     calls: list[tuple[str, dict]] = []
 
     class AsyncPreferredRunner:
@@ -144,7 +148,9 @@ def test_particle_evaluator_uses_sync_bridge_when_runner_provides_one(basic_read
     assert calls == [("simulate_from_sync", {"params": {"p": 0.2}})]
 
 
-def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_bridge(basic_reader):
+def test_particle_evaluator_async_distance_uses_simulate_async_without_sync_bridge(
+    basic_reader,
+):
     calls: list[tuple[str, dict]] = []
 
     class AsyncPreferredRunner:
@@ -312,7 +318,9 @@ def test_particle_evaluator_signature_exposes_public_evaluation_context():
     assert "evaluation_context" in distance_params
 
 
-def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path, basic_reader):
+def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(
+    tmp_path, basic_reader
+):
     class RecordingRunner:
         def simulate(
             self, params, *, input_path=None, output_dir=None, run_id=None
@@ -346,12 +354,13 @@ def test_particle_evaluator_accepts_legacy_hidden_context_kwarg(tmp_path, basic_
 def _pickle_particles_to_params(particle):
     return dict(particle)
 
+
 @pytest.fixture
 def pickle_reader() -> ParticleReader:
     return ParticleReader(
-        particle_param_names=["p"],
-        read_fn=_pickle_particles_to_params
+        particle_param_names=["p"], read_fn=_pickle_particles_to_params
     )
+
 
 def _pickle_outputs_to_distance(outputs, target):
     return 0.0

@@ -74,7 +74,7 @@ def test_direct_runner_writes_sampler_artifact_tree(tmp_path):
     evaluator = ParticleEvaluator(
         particle_reader=ParticleReader(
             particle_param_names=["p"],
-            default_params = {
+            default_params={
                 "seed": 123,
                 "max_gen": 3,
                 "n": 3,

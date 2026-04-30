@@ -263,7 +263,7 @@ def test_read_particle_with_callable(dense_particle):
 
     def my_read_fn(particle: Particle) -> dict:
         return {"custom": dict(particle)}
-    
+
     reader = ParticleReader(
         particle_param_names=all_names,
         default_params=None,
@@ -277,15 +277,14 @@ def test_read_particle_with_callable(dense_particle):
 def test_read_particle_ignores_defaults_with_callable(
     dense_particle, default_param_dict
 ):
-
     def my_read_fn(particle: Particle) -> dict:
         return {"custom": dict(particle)}
-    
+
     all_names = list(dense_particle.keys())
     reader = ParticleReader(
         particle_param_names=all_names,
         default_params=default_param_dict,
-        read_fn=my_read_fn
+        read_fn=my_read_fn,
     )
 
     read = reader.read_particle(dense_particle)
@@ -302,7 +301,7 @@ def test_read_particle_callable_collects_defaults(
     reader = ParticleReader(
         particle_param_names=all_names,
         default_params=default_param_dict,
-        read_fn=my_read_fn
+        read_fn=my_read_fn,
     )
 
     read = reader.read_particle(dense_particle)

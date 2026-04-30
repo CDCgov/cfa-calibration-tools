@@ -16,8 +16,8 @@ from .batch_generation_runner import (
 from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_evaluator import ParticleEvaluator
-from .particle_reader import ParticleReader
 from .particle_population import ParticlePopulation
+from .particle_reader import ParticleReader
 from .particle_updater import _ParticleUpdater
 from .particlewise_generation_runner import (
     ParticlewiseGenerationConfig,
@@ -135,11 +135,11 @@ class ABCSampler:
             self._priors = load_priors_from_json(priors)
         else:  # pragma: no cover - defensive typing
             raise TypeError("Unsupported priors type")
-        
+
         self.particle_reader = ParticleReader(
             particle_param_names=self._priors.params,
             default_params=default_parameters,
-            read_fn=self.particles_to_params
+            read_fn=self.particles_to_params,
         )
 
         self._particle_evaluator = ParticleEvaluator(
@@ -155,22 +155,6 @@ class ABCSampler:
             generation_count=len(self.tolerance_values),
             keep_previous_population_data=keep_previous_population_data,
         )
-
-    @property
-    def step_successes(self) -> list[int]:
-        return self._run_state.step_successes
-
-    @property
-    def step_attempts(self) -> list[int]:
-        return self._run_state.step_attempts
-
-    @property
-    def generator_history(self) -> dict[int, list[GeneratorSlot]]:
-        return self._run_state.generator_history
-
-    @property
-    def population_archive(self) -> dict[int, ParticlePopulation]:
-        return self._run_state.population_archive
 
     @property
     def step_successes(self) -> list[int]:
