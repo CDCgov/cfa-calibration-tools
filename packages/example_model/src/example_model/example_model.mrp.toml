@@ -1,4 +1,4 @@
-input = "packages/example_model/defaults.json"
+input = "defaults.json"
 
 [model]
 spec = "example_model"

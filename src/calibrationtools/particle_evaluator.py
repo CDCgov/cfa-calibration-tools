@@ -1,4 +1,9 @@
-"""Evaluate particles by running the model and scoring its outputs."""
+"""Evaluate particles by running the model and scoring its outputs.
+
+This module isolates particle reading, model execution, optional artifact
+staging, and distance scoring behind one collaborator so sampler execution code
+stays focused on proposal and acceptance flow.
+"""
 
 import asyncio
 import inspect
@@ -41,7 +46,23 @@ def build_evaluation_context_kwargs(
 
 
 class ParticleEvaluator:
-    """Evaluate particles by running the model and scoring its outputs."""
+    """Evaluate particles by running the model and scoring its outputs.
+
+    This class holds the particle reader, scoring function, target data, model
+    runner, and optional artifact directory so particle evaluation has a single,
+    testable boundary.
+
+    Args:
+        particle_reader (ParticleReader): Reader that maps particles and run
+            kwargs into model parameters.
+        outputs_to_distance (Callable[..., float]): Function scoring simulated
+            outputs against target data.
+        target_data (Any): Observed data used for distance evaluation.
+        model_runner (object): Runner defining `simulate()`,
+            `simulate_async()`, or both.
+        artifacts_dir (Path | str | None): Optional directory for staged input,
+            output, and normalized result artifacts.
+    """
 
     def __init__(
         self,
@@ -321,6 +342,24 @@ class ParticleEvaluator:
         evaluation_context: dict[str, int] | None = None,
         **kwargs: Any,
     ) -> Any:
+        """Run the model for a particle and return simulated outputs.
+
+        The particle is converted to model parameters, staged to disk when an
+        artifact directory is configured, and passed to the best available
+        runner method.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            evaluation_context (dict[str, int] | None): Optional generation,
+                proposal, and attempt metadata used to build stable artifact
+                paths.
+            **kwargs (Any): Additional keyword arguments forwarded to the
+                particle reader.
+
+        Returns:
+            Any: Simulated outputs produced by the model runner.
+        """
+
         context = self._resolve_evaluation_context(
             evaluation_context=evaluation_context,
             kwargs=kwargs,
@@ -346,6 +385,20 @@ class ParticleEvaluator:
         evaluation_context: dict[str, int] | None = None,
         **kwargs: Any,
     ) -> Any:
+        """Run the model asynchronously for a particle.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            evaluation_context (dict[str, int] | None): Optional generation,
+                proposal, and attempt metadata used to build stable artifact
+                paths.
+            **kwargs (Any): Additional keyword arguments forwarded to the
+                particle reader.
+
+        Returns:
+            Any: Simulated outputs produced by the model runner.
+        """
+
         context = self._resolve_evaluation_context(
             evaluation_context=evaluation_context,
             kwargs=kwargs,
@@ -375,6 +428,20 @@ class ParticleEvaluator:
         evaluation_context: dict[str, int] | None = None,
         **kwargs: Any,
     ) -> float:
+        """Return the distance between simulated outputs and target data.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            evaluation_context (dict[str, int] | None): Optional generation,
+                proposal, and attempt metadata used to build stable artifact
+                paths.
+            **kwargs (Any): Additional keyword arguments forwarded to the
+                particle reader.
+
+        Returns:
+            float: Distance between simulated outputs and target data.
+        """
+
         outputs = self.simulate(
             particle,
             evaluation_context=evaluation_context,
@@ -389,6 +456,20 @@ class ParticleEvaluator:
         evaluation_context: dict[str, int] | None = None,
         **kwargs: Any,
     ) -> float:
+        """Asynchronously return the distance for a particle.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            evaluation_context (dict[str, int] | None): Optional generation,
+                proposal, and attempt metadata used to build stable artifact
+                paths.
+            **kwargs (Any): Additional keyword arguments forwarded to the
+                particle reader.
+
+        Returns:
+            float: Distance between simulated outputs and target data.
+        """
+
         outputs = await self.simulate_async(
             particle,
             evaluation_context=evaluation_context,

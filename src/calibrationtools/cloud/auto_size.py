@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_POOL_MAX_NODES
+from mrp import run as mrp_run
+
+from .config import DEFAULT_POOL_MAX_NODES, load_cloud_model_config
 from .sizing import (
     DEFAULT_MEMORY_RESERVE_FRACTION,
     compute_task_slots_per_node,
@@ -82,6 +84,25 @@ def run_local_memory_probe(
     return peak_rss_bytes
 
 
+def run_local_mrp_memory_probe(
+    local_mrp_config_path: str | Path,
+    base_inputs: dict[str, Any],
+    *,
+    run_id: str = "auto-size-probe",
+    python_executable: str | Path = sys.executable,
+) -> int:
+    """Measure peak RSS for a generic local ``mrp run`` probe."""
+    return run_local_memory_probe(
+        "calibrationtools.cloud.auto_size",
+        {
+            "mrp_config_path": str(local_mrp_config_path),
+            "input": base_inputs,
+        },
+        run_id=run_id,
+        python_executable=python_executable,
+    )
+
+
 def resolve_cloud_auto_size(
     *,
     auto_size: bool,
@@ -145,7 +166,113 @@ def resolve_cloud_auto_size(
     )
 
 
+def resolve_cloud_sizing_from_config(
+    *,
+    cloud_config_path: str | Path,
+    base_inputs: dict[str, Any],
+    auto_size: bool,
+    cloud: bool,
+    max_concurrent_simulations: int,
+    max_concurrent_simulations_explicit: bool,
+) -> CloudSizing:
+    """Resolve optional cloud auto-size settings from a cloud config file."""
+    if not auto_size or not cloud:
+        return resolve_cloud_auto_size(
+            auto_size=auto_size,
+            cloud=cloud,
+            max_concurrent_simulations=max_concurrent_simulations,
+            max_concurrent_simulations_explicit=(
+                max_concurrent_simulations_explicit
+            ),
+        )
+
+    cloud_config = load_cloud_model_config(cloud_config_path)
+    settings = cloud_config.runtime_settings
+
+    if cloud_config.auto_size.probe == "mrp":
+        local_mrp_config_path = cloud_config.auto_size.local_mrp_config_path
+        if local_mrp_config_path is None:
+            raise ValueError(
+                "cloud.auto_size.local_mrp_config_path is required"
+            )
+
+        def measure_task_peak_rss_bytes() -> int:
+            """Measure RSS with the configured shared MRP probe."""
+            return run_local_mrp_memory_probe(
+                local_mrp_config_path,
+                base_inputs,
+            )
+
+    elif cloud_config.auto_size.probe_module:
+        probe_module = cloud_config.auto_size.probe_module
+
+        def measure_task_peak_rss_bytes() -> int:
+            """Measure RSS with the configured custom probe module."""
+            return run_local_memory_probe(probe_module, base_inputs)
+
+    else:
+        raise ValueError(
+            "cloud.auto_size requires probe='mrp' or probe_module when "
+            "auto-size is enabled"
+        )
+
+    return resolve_cloud_auto_size(
+        auto_size=auto_size,
+        cloud=cloud,
+        max_concurrent_simulations=max_concurrent_simulations,
+        max_concurrent_simulations_explicit=max_concurrent_simulations_explicit,
+        vm_size=settings.vm_size,
+        pool_max_nodes=settings.pool_max_nodes,
+        measure_task_peak_rss_bytes=measure_task_peak_rss_bytes,
+    )
+
+
+def format_bytes(size: int) -> str:
+    """Format a byte count for concise operator output."""
+    if size >= 1024**3:
+        return f"{size / 1024**3:.1f} GiB"
+    if size >= 1024**2:
+        return f"{size / 1024**2:.1f} MiB"
+    return f"{size} bytes"
+
+
+def print_cloud_auto_size_summary(sizing: CloudSizing) -> None:
+    """Print a human-readable auto-size summary when one was computed."""
+    summary = sizing.summary
+    if summary is None:
+        return
+
+    cap_note = ""
+    if summary.task_slots_per_node < summary.memory_task_slots_per_node:
+        cap_note = (
+            f", capped_from_ram_slots={summary.memory_task_slots_per_node}"
+        )
+
+    print(
+        (
+            "[cloud-run] auto-size simulation RAM "
+            f"measured_peak_rss="
+            f"{summary.measured_task_peak_rss_bytes} bytes "
+            f"({format_bytes(summary.measured_task_peak_rss_bytes)}), "
+            f"vm_size={summary.vm_size}, "
+            f"vm_ram={summary.vm_memory_bytes} bytes "
+            f"({format_bytes(summary.vm_memory_bytes)}), "
+            f"reserve={summary.reserve:.0%}, "
+            f"batch_slot_limit={summary.max_task_slots_per_node}, "
+            f"task_slots_per_node={summary.task_slots_per_node}"
+            f"{cap_note}, "
+            f"max_concurrent_simulations_per_node="
+            f"{summary.task_slots_per_node}, "
+            f"max_concurrent_simulations_total="
+            f"{sizing.max_concurrent_simulations}"
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def run_memory_probe_child_main(run_probe_simulation: ProbeSimulation) -> None:
+    """Run an auto-size memory probe child process entrypoint."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--child", action="store_true")
     args = parser.parse_args()
@@ -177,8 +304,41 @@ def _run_memory_probe_child(run_probe_simulation: ProbeSimulation) -> None:
     print(json.dumps({"peak_rss_bytes": _peak_rss_bytes()}), flush=True)
 
 
+def _run_mrp_probe_simulation(
+    base_inputs: dict[str, Any],
+    run_id: str,
+    output_dir: Path,
+) -> None:
+    """Run one local MRP simulation for the shared memory probe child."""
+    config_path = base_inputs.get("mrp_config_path")
+    if not isinstance(config_path, str) or not config_path:
+        raise ValueError("MRP probe requires string mrp_config_path")
+    input_value = base_inputs.get("input")
+    if not isinstance(input_value, dict):
+        raise ValueError("MRP probe requires object input")
+    model_input = dict(input_value)
+    model_input.setdefault("run_id", run_id)
+    result = mrp_run(
+        config_path,
+        {"input": model_input},
+        output_dir=str(output_dir),
+    )
+    if not result.ok:
+        raise RuntimeError(result.stderr.decode())
+
+
 def _peak_rss_bytes() -> int:
+    """Return peak resident memory for the current process in bytes."""
     peak_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     if sys.platform == "darwin":
         return peak_rss
     return peak_rss * 1024
+
+
+def main() -> None:
+    """Run the shared generic MRP auto-size probe child entrypoint."""
+    run_memory_probe_child_main(_run_mrp_probe_simulation)
+
+
+if __name__ == "__main__":
+    main()

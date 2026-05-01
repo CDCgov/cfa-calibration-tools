@@ -1,142 +1,173 @@
-"""Calibrate the example branching process."""
+"""Benchmark serial and parallel example-model calibration execution."""
 
+from __future__ import annotations
+
+import argparse
 import json
 import timeit
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, Protocol, Sequence
 
-import numpy as np
-from mrp import Environment
-from mrp.api import apply_dict_overrides
-
-from calibrationtools.perturbation_kernel import (
-    IndependentKernels,
-    MultivariateNormalKernel,
-    SeedKernel,
-)
 from calibrationtools.sampler import ABCSampler
 from calibrationtools.variance_adapter import AdaptMultivariateNormalVariance
-from example_model import Binom_BP_Model
 
-##===================================#
-## Define model
-##===================================#
-env = Environment(
-    {
-        "input": {
-            "seed": 123,
-            "max_gen": 15,
-            "n": 3,
-            "p": 0.5,
-            "max_infect": 500,
-        },
-        "output": {"spec": "filesystem", "dir": "./output"},
-    }
+from .calibrate import (
+    CALIBRATION_SPEC,
+    DEFAULT_INPUTS,
+    PRIORS,
+    build_perturbation_kernel,
+    outputs_to_distance,
 )
-default_inputs = {
-    "seed": 123,
-    "max_gen": 15,
-    "n": 3,
-    "p": 0.5,
-    "max_infect": 500,
-}
-model = Binom_BP_Model(env=env)
+from .direct_runner import ExampleModelDirectRunner
 
-##===================================#
-## Define priors
-##===================================#
-P = {
-    "priors": {
-        "p": {
-            "distribution": "uniform",
-            "parameters": {"min": 0.0, "max": 1.0},
-        },
-        "n": {
-            "distribution": "uniform",
-            "parameters": {"min": 0.0, "max": 5.0},
-        },
-    }
-}
+DEFAULT_BENCHMARK_DIR = Path("benchmarks")
+DEFAULT_BENCHMARK_OUTPUT = DEFAULT_BENCHMARK_DIR / "parallelization_check.json"
+DEFAULT_GENERATION_PARTICLE_COUNT = 100
+MIN_GENERATION_PARTICLE_COUNT = 3
+DEFAULT_TOLERANCE_VALUES = [5.0, 2.0]
+DEFAULT_WORKER_COUNTS = (8, 2, 1)
 
-K = IndependentKernels(
-    [
-        MultivariateNormalKernel(
-            [p for p in P["priors"].keys()],
+
+class _BenchmarkRunResult(Protocol):
+    smc_step_attempts: Any
+
+
+class _BenchmarkSampler(Protocol):
+    def run_serial(self) -> _BenchmarkRunResult: ...
+
+    def run_parallel(self, *, max_workers: int) -> _BenchmarkRunResult: ...
+
+
+@dataclass(frozen=True)
+class BenchmarkResult:
+    """One benchmark timing result."""
+
+    time: float
+    attempts: Any
+    max_workers: int | None
+
+
+def build_sampler(
+    *,
+    generation_particle_count: int = DEFAULT_GENERATION_PARTICLE_COUNT,
+    tolerance_values: list[float] | None = None,
+) -> ABCSampler:
+    """Build the sampler used by the benchmark command."""
+    return ABCSampler(
+        generation_particle_count=generation_particle_count,
+        tolerance_values=(
+            tolerance_values
+            if tolerance_values is not None
+            else DEFAULT_TOLERANCE_VALUES
         ),
-        SeedKernel("seed"),
-    ]
-)
-
-V = AdaptMultivariateNormalVariance()
-
-
-##===================================#
-## Run ABC-SMC
-##===================================#
-def particles_to_params(particle, **kwargs):
-    base_inputs = kwargs.get("base_inputs")
-    if not isinstance(base_inputs, dict):
-        raise ValueError("base_inputs must be provided as a dictionary.")
-    model_params = apply_dict_overrides(base_inputs, particle)
-    return model_params
+        priors=PRIORS,
+        perturbation_kernel=build_perturbation_kernel(),
+        variance_adapter=AdaptMultivariateNormalVariance(),
+        default_parameters=DEFAULT_INPUTS,
+        outputs_to_distance=outputs_to_distance,
+        target_data=CALIBRATION_SPEC.target_data,
+        model_runner=ExampleModelDirectRunner(),
+        entropy=CALIBRATION_SPEC.entropy,
+        verbose=False,
+    )
 
 
-def outputs_to_distance(model_output, target_data):
-    return abs(np.sum(model_output) - target_data)
+def run_benchmark(
+    *,
+    sampler: _BenchmarkSampler | None = None,
+    worker_counts: Sequence[int] = DEFAULT_WORKER_COUNTS,
+    generation_particle_count: int = DEFAULT_GENERATION_PARTICLE_COUNT,
+) -> list[BenchmarkResult]:
+    """Run serial and parallel timing checks and return structured results."""
+    benchmark_sampler = sampler or build_sampler(
+        generation_particle_count=generation_particle_count
+    )
+    results: list[BenchmarkResult] = []
 
-
-sampler = ABCSampler(
-    generation_particle_count=100,
-    tolerance_values=[5.0, 2.0],
-    priors=P,
-    perturbation_kernel=K,
-    variance_adapter=V,
-    particles_to_params=particles_to_params,
-    outputs_to_distance=outputs_to_distance,
-    target_data=5,
-    model_runner=model,
-    entropy=123,  # Propagation of seed must be SeedSequence not int for proper pseudorandom draws
-)
-
-benchmark_results = []
-
-start = timeit.default_timer()
-results = sampler.run_serial(base_inputs=default_inputs)
-end = timeit.default_timer()
-print(f"Execution time: {end - start} seconds")
-benchmark_results.append(
-    {
-        "time": end - start,
-        "attempts": results.smc_step_attempts,
-        "max_workers": None,
-        "chunksize": None,
-    }
-)
-
-for max_workers in [8, 2, 1]:
     start = timeit.default_timer()
-    results = sampler.run_parallel(
-        base_inputs=default_inputs,
-        max_workers=max_workers,
-    )
-    end = timeit.default_timer()
-    print(f"Execution time: {end - start} seconds")
-
-    benchmark_results.append(
-        {
-            "time": end - start,
-            "attempts": results.smc_step_attempts,
-            # "chunksize": chunksize,
-            "max_workers": max_workers,
-        }
+    calibration_results = benchmark_sampler.run_serial()
+    elapsed = timeit.default_timer() - start
+    print(f"workers: serial, time: {elapsed}")
+    results.append(
+        BenchmarkResult(
+            time=elapsed,
+            attempts=calibration_results.smc_step_attempts,
+            max_workers=None,
+        )
     )
 
+    for max_workers in worker_counts:
+        start = timeit.default_timer()
+        calibration_results = benchmark_sampler.run_parallel(
+            max_workers=max_workers
+        )
+        elapsed = timeit.default_timer() - start
+        print(f"workers: {max_workers}, time: {elapsed}")
+        results.append(
+            BenchmarkResult(
+                time=elapsed,
+                attempts=calibration_results.smc_step_attempts,
+                max_workers=max_workers,
+            )
+        )
 
-# Defualt printed output is the CalibrationResults object, which includes ESS, acceptance rates, and parameter details
-for result in benchmark_results:
-    print(f"workers: {result['max_workers']}, time: {result['time']}")
+    return results
 
-benchmark_dir = Path("./benchmarks")
-benchmark_dir.mkdir(exist_ok=True)
 
-with open(benchmark_dir / "parallelization_check.json", "w") as fp:
-    json.dump(benchmark_results, fp)
+def write_benchmark_results(
+    results: Sequence[BenchmarkResult],
+    output_path: Path = DEFAULT_BENCHMARK_OUTPUT,
+) -> None:
+    """Write benchmark results as JSON."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps([asdict(result) for result in results]) + "\n",
+        encoding="utf-8",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the benchmark command-line parser."""
+    parser = argparse.ArgumentParser(
+        description="Compare serial and parallel example calibration."
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_BENCHMARK_OUTPUT,
+        help="JSON output path for benchmark results.",
+    )
+    parser.add_argument(
+        "--generation-particle-count",
+        type=int,
+        default=DEFAULT_GENERATION_PARTICLE_COUNT,
+        help="Accepted particles per SMC generation.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_WORKER_COUNTS),
+        help="Parallel worker counts to benchmark.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the example benchmark command."""
+    args = build_parser().parse_args(argv)
+    if args.generation_particle_count < MIN_GENERATION_PARTICLE_COUNT:
+        raise ValueError(
+            "--generation-particle-count must be at least "
+            f"{MIN_GENERATION_PARTICLE_COUNT}"
+        )
+    results = run_benchmark(
+        worker_counts=args.workers,
+        generation_particle_count=args.generation_particle_count,
+    )
+    write_benchmark_results(results, args.output)
+
+
+if __name__ == "__main__":
+    main()

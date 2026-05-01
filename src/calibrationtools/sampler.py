@@ -33,7 +33,65 @@ from .variance_adapter import VarianceAdapter
 
 
 class ABCSampler:
-    """Approximate Bayesian Computation Sequential Monte Carlo sampler."""
+    """Approximate Bayesian Computation Sequential Monte Carlo sampler.
+
+    `ABCSampler` estimates posterior parameter distributions by iteratively
+    proposing particles, running a model for each proposal, scoring simulated
+    outputs against observed data, and accepting particles that satisfy the
+    generation tolerance.
+
+    Args:
+        generation_particle_count (int): Number of particles to accept per
+            generation for a complete population.
+        tolerance_values (list[float]): Tolerance threshold for each SMC
+            generation.
+        priors (PriorDistribution | dict | Path): Parameter priors. Priors can
+            be supplied as a distribution object, a priors-schema dictionary,
+            or a path to a priors JSON file.
+        particles_to_params (Callable[..., dict] | None): Optional function
+            that maps a `Particle` into model parameters. When omitted,
+            particle values are read directly through `ParticleReader`.
+        outputs_to_distance (Callable[..., float] | None): Function that
+            scores model outputs against `target_data`.
+        target_data (Any): Observed data used by `outputs_to_distance`.
+        model_runner (object | None): Runner object defining `simulate()`,
+            `simulate_async()`, or both.
+        perturbation_kernel (PerturbationKernel | None): Initial kernel used
+            to perturb accepted particles across SMC generations.
+        variance_adapter (VarianceAdapter | None): Adapter that updates the
+            perturbation scale from accepted populations.
+        default_parameters (dict[str, Any] | None): Optional nested defaults
+            merged with particle values before model execution.
+        max_attempts_per_proposal (int): Maximum sample-and-perturb attempts
+            used to produce one valid proposal.
+        max_proposals_per_batch (int): Maximum proposed particles generated in
+            one batch when using batched parallel execution.
+        parallel_worker_count (int): Default worker count for parallel runs.
+        max_concurrent_simulations (int | None): Alias for
+            `parallel_worker_count` used by runner-oriented callers.
+        entropy (int | None): Entropy used to initialize sampler randomness.
+        seed (int | None): Alias for `entropy`; when both are supplied they
+            must match.
+        verbose (bool): Whether to print run summaries.
+        print_generation_progress (bool): Whether to print generation-level
+            progress even when `verbose` is false.
+        keep_previous_population_data (bool): Whether to retain previous
+            populations in the per-run archive.
+        drop_previous_population_data (bool | None): Deprecated inverse of
+            `keep_previous_population_data`.
+        results_inherit_entropy_only (bool): Whether posterior result sampling
+            reuses only the sampler entropy or spawns from the sampler seed
+            sequence.
+        seed_parameter_name (str | None): Name of the seed parameter to add
+            when loading priors from dictionaries or JSON. Set to `None` to
+            skip adding a seed parameter.
+        artifacts_dir (Path | str | None): Optional directory for staged model
+            inputs and outputs.
+
+    Raises:
+        TypeError: If required callbacks or runner objects are omitted.
+        ValueError: If worker-count or seed aliases conflict.
+    """
 
     def __init__(
         self,
@@ -228,11 +286,28 @@ class ABCSampler:
 
     @particle_population.setter
     def particle_population(self, population: ParticlePopulation) -> None:
+        """Set the current particle population without altering bookkeeping.
+
+        This setter updates the population stored on the updater while leaving
+        archive and generation counters untouched.
+
+        Args:
+            population (ParticlePopulation): Population to store as the current
+                sampler population.
+        """
+
         self._updater.particle_population = population
 
     def _replace_particle_population(
         self, population: ParticlePopulation
     ) -> None:
+        """Archive the current population in run state, then store the new one.
+
+        Args:
+            population (ParticlePopulation): New population to store on the
+                sampler.
+        """
+
         self._run_state.archive_population(self.particle_population)
         self.particle_population = population
 
@@ -241,9 +316,18 @@ class ABCSampler:
         return self._updater.perturbation_kernel
 
     def _init_random(self) -> None:
+        """Initialize the sampler seed sequence from sampler entropy."""
+
         self._seed_sequence = SeedSequence(self.entropy)
 
     def set_updater(self, perturbation_kernel: PerturbationKernel) -> None:
+        """Initialize the particle updater for a new sampler run.
+
+        Args:
+            perturbation_kernel (PerturbationKernel): Kernel used to perturb
+                particles across generations.
+        """
+
         self._updater = _ParticleUpdater(
             perturbation_kernel,
             self._priors,
@@ -261,6 +345,17 @@ class ABCSampler:
         n: int = 1,
         seed_sequence: SeedSequence | None = None,
     ) -> Sequence[dict[str, Any]]:
+        """Return states sampled from the prior distribution.
+
+        Args:
+            n (int): Number of prior samples to draw.
+            seed_sequence (SeedSequence | None): Seed sequence for random
+                generation. When omitted, the sampler seed sequence is used.
+
+        Returns:
+            Sequence[dict[str, Any]]: Sampled prior states.
+        """
+
         return self._priors.sample(
             n, self._resolve_seed_sequence(seed_sequence)
         )
@@ -268,6 +363,16 @@ class ABCSampler:
     def sample_particle_from_priors(
         self, seed_sequence: SeedSequence | None = None
     ) -> Particle:
+        """Return one particle sampled directly from the prior distribution.
+
+        Args:
+            seed_sequence (SeedSequence | None): Seed sequence for random
+                generation. When omitted, the sampler seed sequence is used.
+
+        Returns:
+            Particle: Particle initialized from one prior sample.
+        """
+
         return Particle(
             self.sample_priors(
                 n=1,
@@ -278,6 +383,17 @@ class ABCSampler:
     def sample_particle(
         self, seed_sequence: SeedSequence | None = None
     ) -> Particle:
+        """Return one particle sampled from the current population.
+
+        Args:
+            seed_sequence (SeedSequence | None): Seed sequence for weighted
+                population sampling. When omitted, the sampler seed sequence is
+                used.
+
+        Returns:
+            Particle: Particle sampled from the current population.
+        """
+
         return self._updater.sample_particle(
             self._resolve_seed_sequence(seed_sequence)
         )
@@ -285,12 +401,40 @@ class ABCSampler:
     def sample_and_perturb_particle(
         self, seed_sequence: SeedSequence | None = None
     ) -> Particle:
+        """Sample and perturb one particle from the current population.
+
+        Sampling retries until the perturbed particle satisfies the prior
+        density constraints or `max_attempts_per_proposal` is exhausted.
+
+        Args:
+            seed_sequence (SeedSequence | None): Seed sequence for sampling and
+                perturbation. When omitted, the sampler seed sequence is used.
+
+        Returns:
+            Particle: Valid perturbed particle.
+        """
+
         return self._updater.sample_and_perturb_particle(
             max_attempts=self.max_attempts_per_proposal,
             seed_sequence=self._resolve_seed_sequence(seed_sequence),
         )
 
     def particle_to_distance(self, particle: Particle, **kwargs: Any) -> float:
+        """Compute the distance for one proposed particle.
+
+        This keeps `ABCSampler` as the public particle-evaluation entry point
+        while delegating parameter conversion, model execution, artifact
+        staging, and scoring to `ParticleEvaluator`.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            **kwargs (Any): Additional keyword arguments forwarded to the
+                particle reader.
+
+        Returns:
+            float: Distance between simulated outputs and target data.
+        """
+
         return self._particle_evaluator.distance(particle, **kwargs)
 
     async def particle_to_distance_async(
@@ -298,11 +442,32 @@ class ABCSampler:
         particle: Particle,
         **kwargs: Any,
     ) -> float:
+        """Asynchronously compute the distance for one proposed particle.
+
+        Args:
+            particle (Particle): Particle to evaluate.
+            **kwargs (Any): Additional keyword arguments forwarded to the
+                particle reader.
+
+        Returns:
+            float: Distance between simulated outputs and target data.
+        """
+
         return await self._particle_evaluator.distance_async(
             particle, **kwargs
         )
 
     def calculate_weight(self, particle: Particle) -> float:
+        """Calculate the importance weight for one accepted particle.
+
+        Args:
+            particle (Particle): Particle for which to calculate a weight.
+
+        Returns:
+            float: Importance weight under the current population and
+                perturbation kernel.
+        """
+
         return self._updater.calculate_weight(particle)
 
     def get_posterior_particles(self) -> ParticlePopulation:
@@ -320,6 +485,16 @@ class ABCSampler:
     def get_results_and_reset(
         self, perturbation_kernel: PerturbationKernel
     ) -> CalibrationResults:
+        """Build calibration results and reset mutable sampler state.
+
+        Args:
+            perturbation_kernel (PerturbationKernel): Perturbation kernel to
+                restore after result construction.
+
+        Returns:
+            CalibrationResults: Immutable snapshot for the completed run.
+        """
+
         results = self._build_results()
         self._last_results = results
         self._reset_after_run(perturbation_kernel)
@@ -328,11 +503,33 @@ class ABCSampler:
     def run_parallel(
         self, max_workers: int | None = None, **kwargs: Any
     ) -> CalibrationResults:
+        """Run the ABC-SMC sampler with parallel particle evaluation.
+
+        Args:
+            max_workers (int | None): Worker-count override. When omitted, the
+                sampler's configured `parallel_worker_count` is used.
+            **kwargs (Any): Additional keyword arguments forwarded to particle
+                evaluation. These must not conflict with sampler attributes.
+
+        Returns:
+            CalibrationResults: Results for the completed calibration run.
+        """
+
         return self.run(
             execution="parallel", max_workers=max_workers, **kwargs
         )
 
     def run_serial(self, **kwargs: Any) -> CalibrationResults:
+        """Run the ABC-SMC sampler with serial particle evaluation.
+
+        Args:
+            **kwargs (Any): Additional keyword arguments forwarded to particle
+                evaluation. These must not conflict with sampler attributes.
+
+        Returns:
+            CalibrationResults: Results for the completed calibration run.
+        """
+
         return self.run(execution="serial", **kwargs)
 
     async def run_async(
@@ -341,6 +538,21 @@ class ABCSampler:
         max_workers: int | None = None,
         **kwargs: Any,
     ) -> CalibrationResults:
+        """Run the sampler from async code without blocking the event loop.
+
+        The synchronous sampler run is moved to a worker thread. Model runners
+        that prefer native async simulation are still honored inside the run.
+
+        Args:
+            execution (Literal["serial", "parallel"]): Execution mode.
+            max_workers (int | None): Worker-count override for parallel mode.
+            **kwargs (Any): Additional keyword arguments forwarded to particle
+                evaluation.
+
+        Returns:
+            CalibrationResults: Results for the completed calibration run.
+        """
+
         return await asyncio.to_thread(
             lambda: self.run(
                 execution=execution,
@@ -350,6 +562,18 @@ class ABCSampler:
         )
 
     def _resolve_worker_count(self, max_workers: int | None) -> int:
+        """Resolve and validate the worker count for a parallel run.
+
+        Args:
+            max_workers (int | None): Optional worker-count override.
+
+        Returns:
+            int: Positive worker count.
+
+        Raises:
+            ValueError: If the resolved worker count is not positive.
+        """
+
         worker_count = (
             max_workers
             if max_workers is not None
@@ -360,6 +584,13 @@ class ABCSampler:
         return worker_count
 
     def _build_reporter(self) -> SamplerReporter:
+        """Create the reporter used for one sampler run.
+
+        Returns:
+            SamplerReporter: Reporter configured for summary and progress
+                output.
+        """
+
         return SamplerReporter(
             verbose=self.verbose or self.print_generation_progress
         )
@@ -368,6 +599,17 @@ class ABCSampler:
         self,
         reporter: SamplerReporter,
     ) -> ParticlewiseGenerationRunner:
+        """Create the particlewise execution engine for the active run.
+
+        Args:
+            reporter (SamplerReporter): Reporter used for progress and summary
+                output.
+
+        Returns:
+            ParticlewiseGenerationRunner: Runner configured for the current
+                sampler state.
+        """
+
         return ParticlewiseGenerationRunner(
             config=ParticlewiseGenerationConfig(
                 generation_particle_count=self.generation_particle_count,
@@ -393,6 +635,17 @@ class ABCSampler:
         self,
         reporter: SamplerReporter,
     ) -> BatchGenerationRunner:
+        """Create the batched execution engine for the active run.
+
+        Args:
+            reporter (SamplerReporter): Reporter used for progress and summary
+                output.
+
+        Returns:
+            BatchGenerationRunner: Runner configured for the current sampler
+                state.
+        """
+
         return BatchGenerationRunner(
             config=BatchGenerationConfig(
                 generation_particle_count=self.generation_particle_count,
@@ -410,6 +663,15 @@ class ABCSampler:
         )
 
     def _validate_run_kwargs(self, kwargs: dict[str, Any]) -> None:
+        """Validate keyword arguments forwarded into particle evaluation.
+
+        Args:
+            kwargs (dict[str, Any]): Keyword arguments supplied to a run method.
+
+        Raises:
+            ValueError: If a keyword collides with a sampler attribute.
+        """
+
         for key in kwargs:
             if key in self.__class__.__dict__:
                 raise ValueError(
@@ -444,6 +706,17 @@ class ABCSampler:
             return None
 
     def _build_results(self) -> CalibrationResults:
+        """Build the immutable results snapshot for the completed run.
+
+        Returns:
+            CalibrationResults: Snapshot containing the final posterior,
+                generation history, archive data, and success statistics.
+
+        Raises:
+            UserWarning: If any generation finished with fewer accepted
+                particles than `generation_particle_count`.
+        """
+
         if any(
             count < self.generation_particle_count
             for count in self.step_successes
@@ -473,6 +746,13 @@ class ABCSampler:
         self,
         perturbation_kernel: PerturbationKernel,
     ) -> None:
+        """Reset mutable sampler state after a completed run.
+
+        Args:
+            perturbation_kernel (PerturbationKernel): Perturbation kernel to
+                restore on the sampler.
+        """
+
         self._init_random()
         self.set_updater(perturbation_kernel)
         self._run_state.reset()
@@ -483,6 +763,19 @@ class ABCSampler:
         max_workers: int | None = None,
         **kwargs: Any,
     ) -> CalibrationResults:
+        """Execute the ABC-SMC sampling process.
+
+        Args:
+            execution (Literal["serial", "parallel"]): Whether to evaluate
+                particles serially or in parallel.
+            max_workers (int | None): Worker-count override for parallel mode.
+            **kwargs (Any): Additional keyword arguments forwarded to particle
+                evaluation. These must not conflict with sampler attributes.
+
+        Returns:
+            CalibrationResults: Results for the completed calibration run.
+        """
+
         self._validate_run_kwargs(kwargs)
         originator_perturbation_kernel = copy.deepcopy(
             self.perturbation_kernel
@@ -532,6 +825,23 @@ class ABCSampler:
         max_workers: int | None = None,
         **kwargs: Any,
     ) -> CalibrationResults:
+        """Run the ABC-SMC sampler with batched parallel evaluation.
+
+        Args:
+            chunksize (int): Approximate number of parameter sets processed in
+                each serial chunk inside a worker.
+            batchsize (int | None): Number of proposed particles generated per
+                batch. When omitted, the batch runner chooses a default from
+                sampler settings.
+            max_workers (int | None): Worker-count override. When omitted, the
+                sampler's configured `parallel_worker_count` is used.
+            **kwargs (Any): Additional keyword arguments forwarded to particle
+                evaluation. These must not conflict with sampler attributes.
+
+        Returns:
+            CalibrationResults: Results for the completed calibration run.
+        """
+
         self._validate_run_kwargs(kwargs)
         actual_workers = self._resolve_worker_count(max_workers)
         reporter = self._build_reporter()

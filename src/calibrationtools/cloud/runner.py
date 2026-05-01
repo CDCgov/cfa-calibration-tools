@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import Future as ThreadFuture
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any, Callable, Sequence
@@ -21,11 +21,13 @@ from calibrationtools.exceptions import (
 )
 from calibrationtools.json_utils import dumps_json, to_jsonable
 
+from ..mrp_csv_runner import make_csv_output_dir_reader
 from .artifacts import download_blob_to_path_atomic, read_task_log_excerpts
 from .backend import DEFAULT_CLOUD_RUNNER_BACKEND, CloudRunnerBackend
 from .config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     CloudRuntimeSettings,
+    load_cloud_model_config,
 )
 from .formatting import append_task_log_excerpts
 from .session import CloudSession
@@ -126,6 +128,117 @@ def create_cloud_mrp_runner(
     )
 
 
+def _require_simulation_mrp_config_path(config_path: Path | None) -> Path:
+    """Return the MRP config required for cloud simulation execution."""
+    if config_path is None:
+        raise ValueError(
+            "cloud.simulation_mrp_config_path is required for cloud "
+            "simulation runners"
+        )
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"cloud.simulation_mrp_config_path not found: {config_path}"
+        )
+    return config_path
+
+
+def create_cloud_mrp_runner_from_config(
+    config_path: str | Path,
+    *,
+    generation_count: int,
+    max_concurrent_simulations: int,
+    read_output_dir: Callable[[Path], Any],
+    output_filename: str | None = None,
+    task_slots_per_node_override: int | None = None,
+    print_task_durations: bool | None = None,
+    backend: CloudRunnerBackend | None = None,
+    poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    mrp_run_func: Callable[..., Any] = mrp_run,
+    auto_size_summary: Any | None = None,
+) -> "CloudMRPRunner":
+    """Create a cloud MRP runner from a model-facing cloud config file."""
+    model_config = load_cloud_model_config(config_path)
+    runtime_settings = model_config.runtime_settings
+    if task_slots_per_node_override is not None:
+        runtime_settings = replace(
+            runtime_settings,
+            task_slots_per_node=task_slots_per_node_override,
+        )
+    if print_task_durations is not None:
+        runtime_settings = replace(
+            runtime_settings,
+            print_task_durations=print_task_durations,
+        )
+    return CloudMRPRunner(
+        config_path,
+        simulation_mrp_config_path=_require_simulation_mrp_config_path(
+            model_config.simulation_mrp_config_path
+        ),
+        generation_count=generation_count,
+        max_concurrent_simulations=max_concurrent_simulations,
+        repo_root=model_config.build_context,
+        dockerfile=model_config.dockerfile,
+        runtime_settings=runtime_settings,
+        read_output_dir=read_output_dir,
+        output_filename=output_filename or model_config.output.filename,
+        print_task_durations=runtime_settings.print_task_durations,
+        backend=backend,
+        poll_interval_seconds=poll_interval_seconds,
+        mrp_run_func=mrp_run_func,
+        auto_size_summary=auto_size_summary,
+    )
+
+
+def create_csv_cloud_mrp_runner_from_config(
+    config_path: str | Path,
+    *,
+    generation_count: int,
+    max_concurrent_simulations: int,
+    task_slots_per_node_override: int | None = None,
+    print_task_durations: bool | None = None,
+    backend: CloudRunnerBackend | None = None,
+    poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    mrp_run_func: Callable[..., Any] = mrp_run,
+    auto_size_summary: Any | None = None,
+) -> "CloudMRPRunner":
+    """Create a CSV-reading cloud runner from a cloud config output contract."""
+    model_config = load_cloud_model_config(config_path)
+    read_output_dir = make_csv_output_dir_reader(
+        output_filename=model_config.output.filename,
+        value_column=model_config.output.csv_value_column,
+        value_parser=model_config.output.csv_value_type.parser(),
+    )
+    runtime_settings = model_config.runtime_settings
+    if task_slots_per_node_override is not None:
+        runtime_settings = replace(
+            runtime_settings,
+            task_slots_per_node=task_slots_per_node_override,
+        )
+    if print_task_durations is not None:
+        runtime_settings = replace(
+            runtime_settings,
+            print_task_durations=print_task_durations,
+        )
+    return CloudMRPRunner(
+        config_path,
+        simulation_mrp_config_path=_require_simulation_mrp_config_path(
+            model_config.simulation_mrp_config_path
+        ),
+        generation_count=generation_count,
+        max_concurrent_simulations=max_concurrent_simulations,
+        repo_root=model_config.build_context,
+        dockerfile=model_config.dockerfile,
+        runtime_settings=runtime_settings,
+        read_output_dir=read_output_dir,
+        output_filename=model_config.output.filename,
+        print_task_durations=runtime_settings.print_task_durations,
+        backend=backend,
+        poll_interval_seconds=poll_interval_seconds,
+        mrp_run_func=mrp_run_func,
+        auto_size_summary=auto_size_summary,
+    )
+
+
 class CloudMRPRunner:
     """Run one MRP-backed model through the shared cloud execution path."""
 
@@ -135,12 +248,15 @@ class CloudMRPRunner:
         self,
         config_path: str | Path,
         *,
+        simulation_mrp_config_path: str | Path | None = None,
         generation_count: int,
         max_concurrent_simulations: int,
         repo_root: Path,
         dockerfile: Path,
-        settings_loader: Callable[[str | Path], CloudRuntimeSettings],
         read_output_dir: Callable[[Path], Any],
+        settings_loader: Callable[[str | Path], CloudRuntimeSettings]
+        | None = None,
+        runtime_settings: CloudRuntimeSettings | None = None,
         output_filename: str = "output.csv",
         print_task_durations: bool = False,
         backend: CloudRunnerBackend | None = None,
@@ -193,6 +309,11 @@ class CloudMRPRunner:
         auto_size_summary: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path)
+        self.simulation_mrp_config_path = (
+            Path(simulation_mrp_config_path)
+            if simulation_mrp_config_path is not None
+            else self.config_path
+        )
         self.repo_root = Path(repo_root)
         self.dockerfile = Path(dockerfile)
         # Fail fast on a missing Dockerfile so that a wheel-installed caller
@@ -214,6 +335,10 @@ class CloudMRPRunner:
                 f"(got {max_concurrent_simulations})"
             )
         self.max_concurrent_simulations = max_concurrent_simulations
+        if (settings_loader is None) == (runtime_settings is None):
+            raise TypeError(
+                "Pass exactly one of settings_loader or runtime_settings."
+            )
         self._load_cloud_runtime_settings = settings_loader
         self._read_output_dir_callback = read_output_dir
         self._output_filename = output_filename
@@ -282,7 +407,11 @@ class CloudMRPRunner:
         self._mrp_run = mrp_run_func
         self.auto_size_summary = auto_size_summary
 
-        self.settings = self._load_cloud_runtime_settings(self.config_path)
+        if runtime_settings is not None:
+            self.settings = runtime_settings
+        else:
+            assert self._load_cloud_runtime_settings is not None
+            self.settings = self._load_cloud_runtime_settings(self.config_path)
         if self.settings.jobs_per_session < 1:
             raise ValueError("jobs_per_session must be at least 1")
         if self.settings.task_slots_per_node < 1:
@@ -346,7 +475,7 @@ class CloudMRPRunner:
             overrides["input"] = jsonable_params
 
         result = self._mrp_run(
-            self.config_path,
+            self.simulation_mrp_config_path,
             overrides,
             output_dir=str(output_dir),
         )

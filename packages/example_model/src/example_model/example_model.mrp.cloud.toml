@@ -1,4 +1,4 @@
-input = "packages/example_model/defaults.json"
+input = "defaults.json"
 
 [model]
 spec = "example_model"
@@ -6,13 +6,13 @@ version = "0.0.1"
 
 [runtime]
 spec = "inline"
-callable = "example_model.cloud_mrp_executor:execute_cloud_run"
+callable = "calibrationtools.cloud.executor:execute_cloud_run"
 
 [runtime.cloud]
 keyvault = "cfa-predict"
 local_image = "cfa-calibration-tools-example-model-python"
 repository = "cfa-calibration-tools-example-model"
-task_mrp_config_path = "/app/example_model.mrp.task.toml"
+task_mrp_config_path = "/app/example_model.mrp.toml"
 pool_prefix = "example-model-cloud"
 job_prefix = "example-model-cloud"
 input_container_prefix = "example-model-cloud-input"

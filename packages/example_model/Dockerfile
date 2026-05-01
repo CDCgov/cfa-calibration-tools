@@ -66,8 +66,8 @@ RUN groupadd --system --gid 1000 app \
 WORKDIR /work
 # Install the application and its dependencies
 COPY --from=builder /wheels /wheels
-COPY --chown=app:app example_model.mrp.task.toml /app/example_model.mrp.task.toml
-COPY --chown=app:app packages/example_model/defaults.json /app/defaults.json
+COPY --chown=app:app packages/example_model/src/example_model/example_model.mrp.toml /app/example_model.mrp.toml
+COPY --chown=app:app packages/example_model/src/example_model/defaults.json /app/defaults.json
 RUN pip install --no-cache-dir --no-index --find-links /wheels calibrationtools example-model \
     && rm -rf /wheels
 

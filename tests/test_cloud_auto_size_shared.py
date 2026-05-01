@@ -5,6 +5,7 @@ import pytest
 from calibrationtools.cloud.auto_size import (
     resolve_cloud_auto_size,
     run_local_memory_probe,
+    run_local_mrp_memory_probe,
 )
 
 
@@ -31,7 +32,7 @@ def test_run_local_memory_probe_returns_child_peak_rss(monkeypatch):
 
     assert (
         run_local_memory_probe(
-            "example_model.cloud_auto_size",
+            "some_model.probe",
             {"seed": 1},
             run_id="probe-1",
         )
@@ -39,7 +40,7 @@ def test_run_local_memory_probe_returns_child_peak_rss(monkeypatch):
     )
     assert captured["cmd"][-3:] == [
         "-m",
-        "example_model.cloud_auto_size",
+        "some_model.probe",
         "--child",
     ]
     assert '"run_id": "probe-1"' in captured["input"]
@@ -63,7 +64,7 @@ def test_run_local_memory_probe_raises_with_child_stderr(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="probe exploded"):
-        run_local_memory_probe("example_model.cloud_auto_size", {"seed": 1})
+        run_local_memory_probe("some_model.probe", {"seed": 1})
 
 
 def test_run_local_memory_probe_rejects_malformed_child_output(monkeypatch):
@@ -81,7 +82,42 @@ def test_run_local_memory_probe_rejects_malformed_child_output(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="peak_rss_bytes"):
-        run_local_memory_probe("example_model.cloud_auto_size", {"seed": 1})
+        run_local_memory_probe("some_model.probe", {"seed": 1})
+
+
+def test_run_local_mrp_memory_probe_uses_shared_probe_module(monkeypatch):
+    captured = {}
+
+    def fake_probe(probe_module, base_inputs, *, run_id, python_executable):
+        captured["probe_module"] = probe_module
+        captured["base_inputs"] = base_inputs
+        captured["run_id"] = run_id
+        captured["python_executable"] = python_executable
+        return 123
+
+    monkeypatch.setattr(
+        "calibrationtools.cloud.auto_size.run_local_memory_probe",
+        fake_probe,
+    )
+
+    assert (
+        run_local_mrp_memory_probe(
+            "model.mrp.toml",
+            {"seed": 1},
+            run_id="probe-1",
+            python_executable="/usr/bin/python",
+        )
+        == 123
+    )
+    assert captured == {
+        "probe_module": "calibrationtools.cloud.auto_size",
+        "base_inputs": {
+            "mrp_config_path": "model.mrp.toml",
+            "input": {"seed": 1},
+        },
+        "run_id": "probe-1",
+        "python_executable": "/usr/bin/python",
+    }
 
 
 def test_resolve_cloud_auto_size_rejects_auto_size_without_cloud():

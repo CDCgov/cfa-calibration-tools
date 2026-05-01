@@ -12,7 +12,6 @@ dependencies = ["numpy>=2.3.4", "cfa-mrp", "calibrationtools"]
 
 [project.scripts]
 example_model = "example_model.example_model:main"
-example_model_cloud_cleanup = "example_model.cloud_cleanup:main"
 
 [tool.uv.sources]
 calibrationtools = { workspace = true }

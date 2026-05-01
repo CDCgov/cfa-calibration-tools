@@ -21,10 +21,10 @@ model in the current Python process.
 
 ```bash
 # Default parameters
-uv run mrp run example_model.mrp.toml
+uv run mrp run packages/example_model/src/example_model/example_model.mrp.toml
 
 ## Override parameters
-uv run --package example-model mrp run example_model.mrp.toml --input seed=42 --input max_gen=10
+uv run --package example-model mrp run packages/example_model/src/example_model/example_model.mrp.toml --input seed=42 --input max_gen=10
 ```
 
 You can run `uv tool install cfa-mrp` to omit the `uv run`.
@@ -38,7 +38,7 @@ docker build -t cfa-calibration-tools-example-model-python:latest -f packages/ex
 Then run:
 
 ```bash
-uv run --package example-model mrp run example_model.mrp.docker.toml
+uv run --package example-model mrp run packages/example_model/src/example_model/example_model.mrp.docker.toml
 ```
 
 The Docker-backed config runs the container as your current host UID/GID so the bind-mounted `./output` directory stays writable. If you have a stale `output/` from an older run with different ownership, remove it before retrying.

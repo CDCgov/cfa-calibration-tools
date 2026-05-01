@@ -5,7 +5,10 @@ from numpy.random import default_rng
 
 
 class Binom_BP_Model(MRPModel):
+    """Binomial branching-process MRP model."""
+
     def run(self):
+        """Run the model from the MRP environment and write CSV output."""
         print("Running Binomial Branching Process Model...")
         results = self.simulate(self.input)
         self.write_csv(
@@ -27,7 +30,15 @@ class Binom_BP_Model(MRPModel):
 
         Args:
             model_inputs (dict[str, Any]): Dictionary containing model
-                parameters: seed, max_gen, n, p, and max_infect.
+                parameters:
+                seed (int, optional): Random seed for reproducibility. If not
+                    provided, a random seed is used.
+                max_gen (int): Maximum number of generations to simulate.
+                n (int): Number of trials in the binomial distribution,
+                    equivalent to the maximum offspring per individual.
+                p (float): Success probability in the binomial distribution.
+                max_infect (int): Population threshold used to stop simulation
+                    early.
 
         Returns:
             list[int]: Population size at each generation, starting from generation 0
@@ -59,8 +70,10 @@ class Binom_BP_Model(MRPModel):
 
 
 def main():
+    """Run the example model as an MRP command-line entrypoint."""
     Binom_BP_Model().run()
 
 
 def run_inline(run_json: dict[str, Any]) -> None:
+    """Run the example model from an inline MRP run JSON payload."""
     Binom_BP_Model(env=Environment(run_json)).run()

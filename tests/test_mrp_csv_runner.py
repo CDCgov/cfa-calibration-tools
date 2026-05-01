@@ -127,6 +127,43 @@ def test_csv_output_mrp_runner_uses_staged_input_and_output_dirs(tmp_path):
     ) == [1, 2]
 
 
+def test_csv_output_mrp_runner_absolutizes_staged_input(tmp_path, monkeypatch):
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    config_path = config_dir / "example_model.mrp.toml"
+    config_path.write_text("")
+    input_path = Path("artifacts/input.json")
+    resolved_input_path = tmp_path / input_path
+    resolved_input_path.parent.mkdir()
+    resolved_input_path.write_text('{"seed": 123}')
+    staged_output_dir = Path("artifacts/output")
+
+    def fake_mrp_run(config_path_arg, overrides, output_dir=None):
+        assert config_path_arg == config_path
+        assert overrides["input"] == str(resolved_input_path)
+        assert output_dir == str(staged_output_dir)
+        (tmp_path / staged_output_dir).mkdir(parents=True, exist_ok=True)
+        (tmp_path / staged_output_dir / "output.csv").write_text(
+            "generation,population\n0,1\n"
+        )
+        return RunResult(exit_code=0, stdout=b"", stderr=b"")
+
+    monkeypatch.chdir(tmp_path)
+    runner = CSVOutputMRPRunner(
+        config_path,
+        output_filename="output.csv",
+        value_column="population",
+        value_parser=int,
+        mrp_run_func=fake_mrp_run,
+    )
+
+    assert runner.simulate(
+        {"seed": 123},
+        input_path=input_path,
+        output_dir=staged_output_dir,
+    ) == [1]
+
+
 def test_make_csv_output_dir_reader_reads_expected_column(tmp_path):
     output_dir = tmp_path / "output"
     output_dir.mkdir()

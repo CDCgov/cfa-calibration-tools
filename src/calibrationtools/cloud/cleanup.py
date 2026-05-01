@@ -4,13 +4,14 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import CloudRuntimeSettings
+from .config import CloudRuntimeSettings, load_cloud_model_config
 from .naming import parse_image_tag_from_session_slug, sanitize_name
-from .tooling import require_tool
+from .tooling import create_cloud_client, require_tool
 
 # Module-level identity cache used by the default login callable.
 #
@@ -127,10 +128,12 @@ def build_parser(
     )
     parser.add_argument(
         "--config",
+        "--cloud-config",
+        dest="config",
         type=Path,
         default=default_config_path,
         help=(
-            "Cloud MRP config used to derive the project-specific Batch, Blob, "
+            "Cloud config used to derive the project-specific Batch, Blob, "
             "and ACR naming scope. Default: %(default)s"
         ),
     )
@@ -185,6 +188,66 @@ def parse_args(
     if not args.list and not args.session_slug:
         raise SystemExit("--session-slug is required unless --list is used.")
     return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the shared cloud cleanup command-line interface."""
+    args = parse_args(argv, default_config_path=Path("cloud_config.toml"))
+    config_path = Path(args.config)
+    model_config = load_cloud_model_config(config_path)
+    settings = model_config.runtime_settings
+    client = create_cloud_client(keyvault=settings.keyvault)
+    include_acr = not args.skip_acr
+
+    if args.list:
+        listing = discover_cleanup_listing(
+            client,
+            settings,
+            config_path=config_path,
+            session_slug=args.session_slug,
+            image_tag=args.image_tag,
+            include_acr=include_acr,
+            allow_acr_errors=True,
+        )
+        print(format_cleanup_listing(listing, include_acr=include_acr))
+        return 0
+
+    plan = discover_cleanup_plan(
+        client,
+        settings,
+        config_path=config_path,
+        session_slug=args.session_slug,
+        image_tag=args.image_tag,
+        include_acr=include_acr,
+    )
+    print(format_cleanup_plan(plan, include_acr=include_acr))
+
+    if not args.yes:
+        print(
+            "\nDry run only. Re-run with --yes to delete the resources above."
+        )
+        return 0
+
+    if plan.is_empty:
+        print("\nNo matching Azure resources were found.")
+        return 0
+
+    result = execute_cleanup(client, plan, include_acr=include_acr)
+    print("\nDeleted resources:")
+    if result.deleted:
+        for item in result.deleted:
+            print(f"  - {item}")
+    else:
+        print("  - none")
+
+    if result.failures:
+        print("\nCleanup finished with errors:", file=sys.stderr)
+        for failure in result.failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 1
+
+    print("\nCleanup finished successfully.")
+    return 0
 
 
 def discover_cleanup_listing(
@@ -789,3 +852,7 @@ def _is_not_found_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == "ResourceNotFoundError" or (
         _is_not_found_message(str(exc))
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

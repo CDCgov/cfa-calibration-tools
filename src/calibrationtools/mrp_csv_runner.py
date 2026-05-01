@@ -101,7 +101,7 @@ class CSVOutputMRPRunner(Generic[_ValueT]):
     ) -> list[_ValueT]:
         overrides: dict[str, Any]
         if input_path is not None:
-            overrides = {"input": str(input_path)}
+            overrides = {"input": str(Path(input_path).resolve())}
             if output_dir is None:
                 overrides["output"] = {"spec": "stdout"}
         else:

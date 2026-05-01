@@ -23,7 +23,7 @@ An equivalent approach is to read the model input from `defaults.json`. (The cod
 ```python
 import json
 from example_model import Binom_BP_Model
-model_inputs = json.load(open("./packages/example_model/defaults.json"))
+model_inputs = json.load(open("./packages/example_model/src/example_model/defaults.json"))
 Binom_BP_Model.simulate(model_inputs)
 ```
 To use the MRP functionality, create an environment that specifies the inputs and use the `.run()` method:
@@ -39,10 +39,10 @@ The above examples are very similar to those included in `example_model/direct_r
 uv sync --all-packages
 uv run python -m example_model.direct_runner
 ```
-Additionally, as described in the repo-level README, the model can be run as specified in the `example_model.mrp.toml`, which can be run as follows:
+Additionally, as described in the repo-level README, the model can be run as specified in the packaged `example_model.mrp.toml`, which can be run as follows:
 ```bash
 uv sync --all-packages
-uv run mrp run example_model.mrp.toml
+uv run mrp run packages/example_model/src/example_model/example_model.mrp.toml
 ```
 That config uses the MRP inline runtime, so it calls the example model in the
 current Python process instead of spawning `python -m example_model`.

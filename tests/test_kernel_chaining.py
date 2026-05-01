@@ -32,7 +32,7 @@ def test_kernels_chain_sequentially() -> None:
             self.received_type: Any | None = None
 
         def perturb(
-            self, from_particle: Particle, seed_sequence: SeedSequence | None
+            self, from_particle: Particle, seed_sequence: SeedSequence
         ) -> Particle:
             self.received_type = type(from_particle.get("x"))
             to_particle = copy.deepcopy(from_particle)

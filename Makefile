@@ -9,16 +9,15 @@ EXAMPLE_PACKAGE ?= example-model
 DOCKER_IMAGE ?= cfa-calibration-tools-example-model-python:latest
 DOCKERFILE ?= packages/example_model/Dockerfile
 
-MRP_CONFIG ?= example_model.mrp.toml
-MRP_DOCKER_CONFIG ?= example_model.mrp.docker.toml
-MRP_CLOUD_CONFIG ?= example_model.mrp.cloud.toml
+MRP_CONFIG ?= packages/example_model/src/example_model/example_model.mrp.toml
+MRP_DOCKER_CONFIG ?= packages/example_model/src/example_model/example_model.mrp.docker.toml
+MRP_CLOUD_CONFIG ?= packages/example_model/src/example_model/example_model.mrp.cloud.toml
+CLOUD_CONFIG ?= packages/example_model/src/example_model/example_model.cloud_config.toml
 
-ARTIFACTS_DIR ?= ./artifacts
-MAX_CONCURRENT_SIMULATIONS ?= 25
-
+# Passthrough variables append raw CLI arguments after target-owned defaults.
+# Example: make calibrate-cloud CALIBRATE_ARGS='--artifacts-dir /tmp/run'
 MRP_ARGS ?=
 CALIBRATE_ARGS ?=
-CLOUD_ARGS ?=
 TEST_ARGS ?=
 RUFF_ARGS ?=
 TY_ARGS ?=
@@ -102,20 +101,20 @@ mrp-cloud: ## Run the cloud executor MRP config locally. Usually use calibrate-c
 	$(UV) run --group cloudops --package $(EXAMPLE_PACKAGE) mrp run $(MRP_CLOUD_CONFIG) $(MRP_ARGS)
 
 .PHONY: calibrate
-calibrate: ## Run the local in-process example calibration.
+calibrate: ## Run local calibration. Pass CALIBRATE_ARGS='...'.
 	$(UV) run $(PYTHON) -m example_model.calibrate $(CALIBRATE_ARGS)
 
 .PHONY: calibrate-docker
-calibrate-docker: docker-build ## Run example calibration through the Docker-backed MRP config.
+calibrate-docker: docker-build ## Run Docker-backed calibration. Pass CALIBRATE_ARGS='...'.
 	$(UV) run $(PYTHON) -m example_model.calibrate --docker $(CALIBRATE_ARGS)
 
 .PHONY: calibrate-cloud
-calibrate-cloud: ## Run cloud-backed example calibration. Pass CLOUD_ARGS='...'.
-	$(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud $(CLOUD_ARGS)
+calibrate-cloud: ## Run cloud-backed calibration. Pass CALIBRATE_ARGS='...'.
+	$(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud --cloud-config $(CLOUD_CONFIG) $(CALIBRATE_ARGS)
 
 .PHONY: calibrate-cloud-auto
-calibrate-cloud-auto: ## Run cloud calibration with auto-size and progress output.
-	$(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud --auto-size --print-task-progress --artifacts-dir $(ARTIFACTS_DIR) $(CLOUD_ARGS)
+calibrate-cloud-auto: ## Run cloud calibration with auto-size/progress. Pass CALIBRATE_ARGS='...'.
+	$(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud --cloud-config $(CLOUD_CONFIG) --auto-size --print-task-progress --print-task-durations $(CALIBRATE_ARGS)
 
 .PHONY: benchmark
 benchmark: ## Compare serial and parallel example calibration execution.
@@ -123,14 +122,14 @@ benchmark: ## Compare serial and parallel example calibration execution.
 
 .PHONY: cloud-list
 cloud-list: ## List cloud resources. Optional: SESSION_SLUG=... IMAGE_TAG=...
-	$(UV) run --group cloudops $(PYTHON) -m example_model.cloud_cleanup --config $(MRP_CLOUD_CONFIG) --list $(SESSION_FLAG) $(IMAGE_TAG_FLAG)
+	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) --list $(SESSION_FLAG) $(IMAGE_TAG_FLAG)
 
 .PHONY: cloud-cleanup-plan
 cloud-cleanup-plan: ## Show the cleanup plan for SESSION_SLUG=... without deleting.
 	@test -n "$(SESSION_SLUG)" || (echo "SESSION_SLUG is required"; exit 1)
-	$(UV) run --group cloudops $(PYTHON) -m example_model.cloud_cleanup --config $(MRP_CLOUD_CONFIG) $(SESSION_FLAG) $(IMAGE_TAG_FLAG)
+	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) $(SESSION_FLAG) $(IMAGE_TAG_FLAG)
 
 .PHONY: cloud-cleanup-delete
 cloud-cleanup-delete: ## Delete cloud resources for SESSION_SLUG=... Optional: IMAGE_TAG=...
 	@test -n "$(SESSION_SLUG)" || (echo "SESSION_SLUG is required"; exit 1)
-	$(UV) run --group cloudops $(PYTHON) -m example_model.cloud_cleanup --config $(MRP_CLOUD_CONFIG) $(SESSION_FLAG) $(IMAGE_TAG_FLAG) --yes
+	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) $(SESSION_FLAG) $(IMAGE_TAG_FLAG) --yes
