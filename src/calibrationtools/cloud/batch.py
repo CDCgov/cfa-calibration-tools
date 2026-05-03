@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import time
-from typing import Any
+from typing import Any, cast
 
 from .config import DEFAULT_POLL_INTERVAL_SECONDS
 from .naming import (
@@ -239,11 +239,14 @@ def _resolve_task_container_image_name(
 
     from cfa.cloudops import batch_helpers
 
-    pool_info = batch_helpers.get_pool_full_info(
-        client.cred.azure_resource_group_name,
-        client.cred.azure_batch_account,
-        pool_name,
-        client.batch_mgmt_client,
+    pool_info = cast(
+        Any,
+        batch_helpers.get_pool_full_info(
+            client.cred.azure_resource_group_name,
+            client.cred.azure_batch_account,
+            pool_name,
+            client.batch_mgmt_client,
+        ),
     )
     vm_config = (
         pool_info.deployment_configuration.virtual_machine_configuration

@@ -10,7 +10,26 @@ For the bundled example model, the main cloud config is:
 packages/example_model/src/example_model/example_model.cloud_config.toml
 ```
 
-Run cloud calibration with:
+Start with the Makefile cloud workflow:
+
+```bash
+make setup-cloud
+make cloud-run-auto
+make cloud-list
+```
+
+Cleanup targets make preview/delete intent explicit:
+
+```bash
+make cloud-cleanup-preview SESSION_ID=...
+make cloud-cleanup-session SESSION_ID=...
+make cloud-cleanup-user-preview
+make cloud-cleanup-user-delete
+```
+
+Run `make help-cloud` for cloud-specific examples and cleanup safety notes.
+
+The equivalent raw command for cloud calibration is:
 
 ```bash
 uv run --group cloudops python -m example_model.calibrate \
@@ -29,11 +48,20 @@ uv run --group cloudops python -m calibrationtools.cloud.cleanup \
 Cleanup prints the deletion plan before acting. Pass `--dry-run` to preview
 without deleting anything.
 
+The preferred Makefile cleanup commands separate preview from delete:
+
+```bash
+make cloud-cleanup-preview SESSION_ID=...
+make cloud-cleanup-session SESSION_ID=...
+make cloud-cleanup-user-preview
+make cloud-cleanup-user-delete
+```
+
 The Makefile cleanup helpers intentionally default `CLOUD_USER` to the current
-shell user. For example, `make cloud-cleanup-user DRY_RUN=1` previews cleanup
-for your own sessions, and `make cloud-cleanup-user` deletes your own sessions
-after printing the plan. Pass `CLOUD_USER=other-user` only when you intend to
-list or clean that user's project-scoped sessions.
+shell user. `make cloud-cleanup-user-preview` previews cleanup for your own
+sessions, and `make cloud-cleanup-user-delete` deletes your own sessions after
+printing the plan. Pass `CLOUD_USER=other-user` only when you intend to list or
+clean that user's project-scoped sessions.
 
 Preview or delete one session:
 

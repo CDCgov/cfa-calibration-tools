@@ -7,13 +7,12 @@ from typing import Any
 
 import pytest
 
-from calibrationtools.cloud.config import CloudRuntimeSettings
 from calibrationtools.cloud.cleanup import (
     discover_cleanup_listing,
     discover_cleanup_plans_for_user,
     execute_cleanup_plans,
 )
-
+from calibrationtools.cloud.config import CloudRuntimeSettings
 
 SESSION_ID = "20260101000000-alice-abc-123456abcdef"
 OTHER_SESSION_ID = "20260101000000-bob-def-fedcba654321"
