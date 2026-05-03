@@ -13,6 +13,17 @@ class CSVDirectRunner:
     The runner adapts a pure simulation callable to the runner protocol used by
     ``ParticleEvaluator``. It can read staged JSON inputs, attach the sampler
     run id, call the model directly, and write a CSV output artifact.
+
+    Args:
+        simulate_func (Callable[[dict[str, Any]], list[Any]]): In-process
+            model simulation callable.
+        output_filename (str): Name of the CSV file written under
+            ``output_dir``.
+        fieldnames (tuple[str, ...]): CSV header fields.
+        row_builder (Callable[[int, Any], dict[str, Any]]): Callable that maps
+            ``(index, value)`` to a CSV row.
+        input_error_message (str): Error raised when staged input JSON is not
+            an object.
     """
 
     def __init__(
@@ -24,16 +35,6 @@ class CSVDirectRunner:
         row_builder: Callable[[int, Any], dict[str, Any]],
         input_error_message: str = "Runner input JSON must be an object.",
     ) -> None:
-        """Initialize the direct CSV runner.
-
-        Args:
-            simulate_func: In-process model simulation callable.
-            output_filename: Name of the CSV file written under ``output_dir``.
-            fieldnames: CSV header fields.
-            row_builder: Callable that maps ``(index, value)`` to a CSV row.
-            input_error_message: Error raised when staged input JSON is not an
-                object.
-        """
         self._simulate_func = simulate_func
         self._output_filename = output_filename
         self._fieldnames = fieldnames

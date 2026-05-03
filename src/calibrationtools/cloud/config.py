@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable
 
 DEFAULT_INPUT_MOUNT_PATH = "/cloud-input"
 DEFAULT_OUTPUT_MOUNT_PATH = "/cloud-output"
@@ -24,10 +24,6 @@ DEFAULT_POOL_READY_TIMEOUT_MINUTES = 20
 DEFAULT_POOL_AUTO_SCALE_EVALUATION_INTERVAL_MINUTES = 5
 DEFAULT_DISPATCH_BUFFER = 0
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
-
-_CloudRuntimeSettingsT = TypeVar(
-    "_CloudRuntimeSettingsT", bound="CloudRuntimeSettings"
-)
 
 
 def _install_jobs_per_generation_compat_init(cls: type[Any]) -> None:
@@ -167,7 +163,6 @@ class CloudModelConfig:
     runtime_settings: CloudRuntimeSettings
     output: CloudOutputSettings
     auto_size: CloudAutoSizeSettings
-    simulation_mrp_config_path: Path | None = None
 
 
 def _require_mapping(value: Any, context: str) -> dict[str, Any]:
@@ -341,103 +336,9 @@ def _load_model_cloud_runtime_settings(
     )
 
 
-def _load_legacy_runtime_settings(
-    cloud: dict[str, Any],
-) -> CloudRuntimeSettings:
-    """Build runtime settings from a legacy ``[runtime.cloud]`` table."""
-    required_context = "runtime.cloud"
-    return CloudRuntimeSettings(
-        keyvault=_required_str(cloud, "keyvault", required_context),
-        local_image=_required_str(cloud, "local_image", required_context),
-        repository=_required_str(cloud, "repository", required_context),
-        task_mrp_config_path=_required_str(
-            cloud,
-            "task_mrp_config_path",
-            required_context,
-        ),
-        pool_prefix=_required_str(cloud, "pool_prefix", required_context),
-        job_prefix=_required_str(cloud, "job_prefix", required_context),
-        input_container_prefix=_required_str(
-            cloud,
-            "input_container_prefix",
-            required_context,
-        ),
-        output_container_prefix=_required_str(
-            cloud,
-            "output_container_prefix",
-            required_context,
-        ),
-        logs_container_prefix=_required_str(
-            cloud,
-            "logs_container_prefix",
-            required_context,
-        ),
-        input_mount_path=str(
-            cloud.get("input_mount_path", DEFAULT_INPUT_MOUNT_PATH)
-        ),
-        output_mount_path=str(
-            cloud.get("output_mount_path", DEFAULT_OUTPUT_MOUNT_PATH)
-        ),
-        logs_mount_path=str(
-            cloud.get("logs_mount_path", DEFAULT_LOGS_MOUNT_PATH)
-        ),
-        vm_size=str(cloud.get("vm_size", DEFAULT_VM_SIZE)),
-        jobs_per_session=_load_jobs_per_session(
-            cloud,
-            CloudRuntimeSettings(
-                keyvault="unused",
-                local_image="unused",
-                repository="unused",
-                task_mrp_config_path="unused",
-                pool_prefix="unused",
-                job_prefix="unused",
-                input_container_prefix="unused",
-                output_container_prefix="unused",
-                logs_container_prefix="unused",
-            ),
-        ),
-        task_slots_per_node=int(
-            cloud.get("task_slots_per_node", DEFAULT_TASK_SLOTS_PER_NODE)
-        ),
-        pool_max_nodes=int(
-            cloud.get("pool_max_nodes", DEFAULT_POOL_MAX_NODES)
-        ),
-        task_timeout_minutes=_optional_int(
-            cloud,
-            "task_timeout_minutes",
-            DEFAULT_TASK_TIMEOUT_MINUTES,
-        ),
-        pool_ready_timeout_minutes=_optional_int(
-            cloud,
-            "pool_ready_timeout_minutes",
-            DEFAULT_POOL_READY_TIMEOUT_MINUTES,
-        ),
-        pool_auto_scale_evaluation_interval_minutes=int(
-            cloud.get(
-                "pool_auto_scale_evaluation_interval_minutes",
-                DEFAULT_POOL_AUTO_SCALE_EVALUATION_INTERVAL_MINUTES,
-            )
-        ),
-        dispatch_buffer=int(
-            cloud.get("dispatch_buffer", DEFAULT_DISPATCH_BUFFER)
-        ),
-        print_task_durations=bool(cloud.get("print_task_durations", False)),
-    )
-
-
-def _load_output_settings(
-    cloud: dict[str, Any],
-    *,
-    legacy: bool,
-) -> CloudOutputSettings:
-    """Read the CSV output contract from TOML, with legacy defaults."""
+def _load_output_settings(cloud: dict[str, Any]) -> CloudOutputSettings:
+    """Read the CSV output contract from the top-level ``[cloud]`` table."""
     output = cloud.get("output", {})
-    if not output and legacy:
-        output = {
-            "filename": "output.csv",
-            "csv_value_column": "population",
-            "csv_value_type": "int",
-        }
     output = _require_mapping(output, "cloud.output")
     csv_value_type = str(output.get("csv_value_type", "int"))
     try:
@@ -491,92 +392,37 @@ def _load_auto_size_settings(
     )
 
 
-def _load_simulation_mrp_config_path(
-    cloud: dict[str, Any],
-    *,
-    config_dir: Path,
-    build_context: Path,
-) -> Path | None:
-    """Read the optional MRP config used only for simulation execution."""
-    value = cloud.get("simulation_mrp_config_path")
-    if value is None:
-        return None
-    raw_path = Path(value)
-    if raw_path.is_absolute():
-        return raw_path
-    build_context_candidate = build_context / raw_path
-    if build_context_candidate.is_file():
-        return build_context_candidate.resolve()
-    config_dir_candidate = config_dir / raw_path
-    if config_dir_candidate.is_file():
-        return config_dir_candidate.resolve()
-    return build_context_candidate.resolve()
-
-
-def load_cloud_model_config(
-    config_path: str | Path,
-    *,
-    default_build_context: str | Path | None = None,
-    default_dockerfile: str | Path | None = None,
-) -> CloudModelConfig:
-    """Load model-facing cloud settings from new or legacy TOML configs.
-
-    New configs use a top-level ``[cloud]`` table. Legacy MRP cloud configs
-    with ``[runtime.cloud]`` remain supported when callers provide build
-    context and Dockerfile defaults, because those fields did not exist in the
-    old format.
-    """
+def load_cloud_model_config(config_path: str | Path) -> CloudModelConfig:
+    """Load model-facing cloud settings from a TOML config with ``[cloud]``."""
     resolved_config_path = Path(config_path)
     with resolved_config_path.open("rb") as f:
         config = tomllib.load(f)
 
     config_dir = resolved_config_path.parent.resolve()
-    if "cloud" in config:
-        cloud = _require_mapping(config["cloud"], "cloud")
-        image = _require_mapping(cloud.get("image"), "cloud.image")
-        build_context = _resolve_dir(
-            config_dir,
-            image.get("build_context", "."),
+    if "cloud" not in config:
+        raise ValueError(
+            f"{resolved_config_path} must contain a top-level [cloud] table"
         )
-        dockerfile = _resolve_existing_file(
-            config_dir=config_dir,
-            build_context=build_context,
-            value=_required_str(image, "dockerfile", "cloud.image"),
-            field_name="cloud.image.dockerfile",
-        )
-        runtime_settings = _load_model_cloud_runtime_settings(cloud)
-        output_settings = _load_output_settings(cloud, legacy=False)
-        auto_size_settings = _load_auto_size_settings(
-            cloud,
-            config_dir=config_dir,
-            build_context=build_context,
-        )
-        simulation_mrp_config_path = _load_simulation_mrp_config_path(
-            cloud,
-            config_dir=config_dir,
-            build_context=build_context,
-        )
-    else:
-        runtime = _require_mapping(config.get("runtime", {}), "runtime")
-        cloud = _require_mapping(runtime.get("cloud", {}), "runtime.cloud")
-        build_context = (
-            _resolve_dir(config_dir, default_build_context)
-            if default_build_context is not None
-            else config_dir
-        )
-        if default_dockerfile is None:
-            dockerfile = (build_context / "Dockerfile").resolve()
-        else:
-            dockerfile = _resolve_existing_file(
-                config_dir=config_dir,
-                build_context=build_context,
-                value=default_dockerfile,
-                field_name="cloud.image.dockerfile",
-            )
-        runtime_settings = _load_legacy_runtime_settings(cloud)
-        output_settings = _load_output_settings({}, legacy=True)
-        auto_size_settings = CloudAutoSizeSettings()
-        simulation_mrp_config_path = resolved_config_path
+
+    cloud = _require_mapping(config["cloud"], "cloud")
+    image = _require_mapping(cloud.get("image"), "cloud.image")
+    build_context = _resolve_dir(
+        config_dir,
+        image.get("build_context", "."),
+    )
+    dockerfile = _resolve_existing_file(
+        config_dir=config_dir,
+        build_context=build_context,
+        value=_required_str(image, "dockerfile", "cloud.image"),
+        field_name="cloud.image.dockerfile",
+    )
+    runtime_settings = _load_model_cloud_runtime_settings(cloud)
+    output_settings = _load_output_settings(cloud)
+    auto_size_settings = _load_auto_size_settings(
+        cloud,
+        config_dir=config_dir,
+        build_context=build_context,
+    )
 
     return CloudModelConfig(
         config_path=resolved_config_path,
@@ -585,7 +431,6 @@ def load_cloud_model_config(
         runtime_settings=runtime_settings,
         output=output_settings,
         auto_size=auto_size_settings,
-        simulation_mrp_config_path=simulation_mrp_config_path,
     )
 
 
@@ -616,85 +461,3 @@ def _load_jobs_per_session(
         )
         return int(cloud["jobs_per_generation"])
     return int(defaults.jobs_per_session)
-
-
-def load_cloud_runtime_settings(
-    config_path: str | Path,
-    *,
-    defaults: _CloudRuntimeSettingsT,
-) -> _CloudRuntimeSettingsT:
-    """Load low-level cloud runtime settings with caller-provided defaults."""
-    with Path(config_path).open("rb") as f:
-        config = tomllib.load(f)
-    if "cloud" in config:
-        model_config = load_cloud_model_config(
-            config_path,
-            default_build_context=Path(config_path).parent,
-            default_dockerfile=Path(config_path).parent / "Dockerfile",
-        )
-        runtime_settings = model_config.runtime_settings
-        settings_type = type(defaults)
-        return settings_type(**runtime_settings.__dict__)
-
-    cloud = config.get("runtime", {}).get("cloud", {})
-    settings_type = type(defaults)
-    return settings_type(
-        keyvault=cloud.get("keyvault", defaults.keyvault),
-        local_image=cloud.get("local_image", defaults.local_image),
-        repository=cloud.get("repository", defaults.repository),
-        task_mrp_config_path=cloud.get(
-            "task_mrp_config_path",
-            defaults.task_mrp_config_path,
-        ),
-        pool_prefix=cloud.get("pool_prefix", defaults.pool_prefix),
-        job_prefix=cloud.get("job_prefix", defaults.job_prefix),
-        input_container_prefix=cloud.get(
-            "input_container_prefix",
-            defaults.input_container_prefix,
-        ),
-        output_container_prefix=cloud.get(
-            "output_container_prefix",
-            defaults.output_container_prefix,
-        ),
-        logs_container_prefix=cloud.get(
-            "logs_container_prefix",
-            defaults.logs_container_prefix,
-        ),
-        input_mount_path=cloud.get(
-            "input_mount_path",
-            defaults.input_mount_path,
-        ),
-        output_mount_path=cloud.get(
-            "output_mount_path",
-            defaults.output_mount_path,
-        ),
-        logs_mount_path=cloud.get("logs_mount_path", defaults.logs_mount_path),
-        vm_size=cloud.get("vm_size", defaults.vm_size),
-        jobs_per_session=_load_jobs_per_session(cloud, defaults),
-        task_slots_per_node=int(
-            cloud.get("task_slots_per_node", defaults.task_slots_per_node)
-        ),
-        pool_max_nodes=int(
-            cloud.get("pool_max_nodes", defaults.pool_max_nodes)
-        ),
-        task_timeout_minutes=cloud.get(
-            "task_timeout_minutes",
-            defaults.task_timeout_minutes,
-        ),
-        pool_ready_timeout_minutes=cloud.get(
-            "pool_ready_timeout_minutes",
-            defaults.pool_ready_timeout_minutes,
-        ),
-        pool_auto_scale_evaluation_interval_minutes=int(
-            cloud.get(
-                "pool_auto_scale_evaluation_interval_minutes",
-                defaults.pool_auto_scale_evaluation_interval_minutes,
-            )
-        ),
-        dispatch_buffer=int(
-            cloud.get("dispatch_buffer", defaults.dispatch_buffer)
-        ),
-        print_task_durations=bool(
-            cloud.get("print_task_durations", defaults.print_task_durations)
-        ),
-    )

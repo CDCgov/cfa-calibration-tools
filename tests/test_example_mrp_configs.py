@@ -11,7 +11,6 @@ EXAMPLE_MODEL_ROOT = (
     REPO_ROOT / "packages" / "example_model" / "src" / "example_model"
 )
 INLINE_MODEL_CALLABLE = "example_model.example_model:run_inline"
-INLINE_CLOUD_CALLABLE = "calibrationtools.cloud.executor:execute_cloud_run"
 
 
 def _load_example_config(filename: str) -> dict:
@@ -21,19 +20,14 @@ def _load_example_config(filename: str) -> dict:
 
 
 def test_non_docker_mrp_configs_use_inline_runtime():
-    """Validate local, task, and legacy cloud MRP configs use inline runtime."""
-    expected_callables = {
-        "example_model.mrp.toml": INLINE_MODEL_CALLABLE,
-        "example_model.mrp.cloud.toml": INLINE_CLOUD_CALLABLE,
-    }
+    """Validate the local example MRP config uses inline runtime."""
+    config = _load_example_config("example_model.mrp.toml")
 
-    for filename, callable_path in expected_callables.items():
-        config = _load_example_config(filename)
-        assert config["runtime"]["spec"] == "inline"
-        assert config["runtime"]["callable"] == callable_path
-        assert "command" not in config["runtime"]
-        assert "args" not in config["runtime"]
-        assert "env" not in config["runtime"]
+    assert config["runtime"]["spec"] == "inline"
+    assert config["runtime"]["callable"] == INLINE_MODEL_CALLABLE
+    assert "command" not in config["runtime"]
+    assert "args" not in config["runtime"]
+    assert "env" not in config["runtime"]
 
 
 def test_docker_mrp_config_remains_process_backed():

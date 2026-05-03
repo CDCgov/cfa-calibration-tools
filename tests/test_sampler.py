@@ -98,6 +98,11 @@ class AsyncPreferredModelRunner:
             self.active -= 1
 
 
+class BufferedAsyncPreferredModelRunner(AsyncPreferredModelRunner):
+    def dispatch_buffer_size(self):
+        return 3
+
+
 def particles_to_params(particle):
     return particle
 
@@ -436,6 +441,129 @@ def test_sampler_max_concurrent_simulations_alias_sets_default_worker_count(
     assert sampler.max_concurrent_simulations == 2
 
 
+def test_sampler_seed_and_entropy_conflict_raises(K, P, Vnorm):
+    with pytest.raises(ValueError, match="seed and entropy must match"):
+        ABCSampler(
+            generation_particle_count=4,
+            tolerance_values=[0.5],
+            priors=P,
+            perturbation_kernel=K,
+            variance_adapter=Vnorm,
+            particles_to_params=particles_to_params,
+            outputs_to_distance=outputs_to_distance,
+            target_data=0.75,
+            model_runner=DummyModelRunner(),
+            seed=123,
+            entropy=456,
+            verbose=False,
+        )
+
+
+def test_sampler_rejects_conflicting_worker_count_aliases(K, P, Vnorm):
+    with pytest.raises(
+        ValueError,
+        match="parallel_worker_count and max_concurrent_simulations",
+    ):
+        ABCSampler(
+            generation_particle_count=4,
+            tolerance_values=[0.5],
+            priors=P,
+            perturbation_kernel=K,
+            variance_adapter=Vnorm,
+            particles_to_params=particles_to_params,
+            outputs_to_distance=outputs_to_distance,
+            target_data=0.75,
+            model_runner=DummyModelRunner(),
+            parallel_worker_count=3,
+            max_concurrent_simulations=2,
+            entropy=123,
+            verbose=False,
+        )
+
+
+def test_sampler_drop_previous_population_data_inverts_keep_flag(K, P, Vnorm):
+    sampler = ABCSampler(
+        generation_particle_count=4,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        keep_previous_population_data=True,
+        drop_previous_population_data=True,
+        entropy=123,
+        verbose=False,
+    )
+
+    assert sampler.keep_previous_population_data is False
+    assert sampler._run_state.keep_previous_population_data is False
+
+
+def test_sampler_dict_priors_preserve_seed_parameter_setting(K, Vnorm):
+    sampler = ABCSampler(
+        generation_particle_count=4,
+        tolerance_values=[0.5],
+        priors={
+            "priors": {
+                "p": {
+                    "distribution": "uniform",
+                    "parameters": {"min": 0, "max": 1},
+                }
+            }
+        },
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        seed_parameter_name=None,
+        entropy=123,
+        verbose=False,
+    )
+
+    assert sampler._priors.params == ["p"]
+
+
+def test_sampler_path_priors_preserve_existing_seed_behavior(
+    tmp_path, K, Vnorm
+):
+    priors_path = tmp_path / "priors.json"
+    priors_path.write_text(
+        json.dumps(
+            {
+                "priors": {
+                    "p": {
+                        "distribution": "uniform",
+                        "parameters": {"min": 0, "max": 1},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sampler = ABCSampler(
+        generation_particle_count=4,
+        tolerance_values=[0.5],
+        priors=priors_path,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=DummyModelRunner(),
+        seed_parameter_name=None,
+        entropy=123,
+        verbose=False,
+    )
+
+    assert sampler._priors.params == ["p", "seed"]
+
+
 def test_sampler_async_preferred_runner_avoids_thread_pool_fanout(
     K, P, Vnorm, monkeypatch
 ):
@@ -464,6 +592,29 @@ def test_sampler_async_preferred_runner_avoids_thread_pool_fanout(
 
     assert runner.calls == 5
     assert runner.max_active <= 2
+
+
+def test_sampler_async_preferred_runner_uses_dispatch_buffer(K, P, Vnorm):
+    runner = BufferedAsyncPreferredModelRunner()
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=runner,
+        max_concurrent_simulations=2,
+        entropy=123,
+        verbose=False,
+    )
+
+    sampler.run_parallel()
+
+    assert runner.calls == 5
+    assert runner.max_active == 5
 
 
 def test_sampler_rejects_invalid_max_concurrent_simulations(K, P, Vnorm):

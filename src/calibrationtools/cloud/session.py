@@ -19,7 +19,7 @@ def _normalize_job_name_list(value: str | list[str]) -> list[str]:
 @dataclass(frozen=True)
 class CloudSession:
     keyvault: str
-    session_slug: str
+    session_id: str
     image_tag: str
     remote_image_ref: str
     pool_name: str
@@ -37,7 +37,7 @@ class CloudSession:
     def to_runtime_cloud(self) -> dict[str, Any]:
         return {
             "keyvault": self.keyvault,
-            "session_slug": self.session_slug,
+            "session_id": self.session_id,
             "image_tag": self.image_tag,
             "remote_image_ref": self.remote_image_ref,
             "pool_name": self.pool_name,
@@ -59,7 +59,7 @@ class CloudSession:
     def from_runtime_cloud(cls, cloud: dict[str, Any]) -> "CloudSession":
         return cls(
             keyvault=cloud["keyvault"],
-            session_slug=cloud["session_slug"],
+            session_id=cloud["session_id"],
             image_tag=cloud["image_tag"],
             remote_image_ref=cloud["remote_image_ref"],
             pool_name=cloud["pool_name"],
@@ -95,8 +95,8 @@ class CloudSession:
         self, job_name: str, run_id: str | None = None
     ) -> str:
         if run_id is None:
-            return f"{self.session_slug}/{job_name}"
-        return f"{self.session_slug}/{job_name}/{run_id}"
+            return f"{self.session_id}/{job_name}"
+        return f"{self.session_id}/{job_name}/{run_id}"
 
     def mount_pairs(self) -> list[dict[str, str]]:
         return [
@@ -118,10 +118,10 @@ class CloudSession:
         generation_name = format_generation_name(
             parse_generation_from_run_id(run_id)
         )
-        return f"input/{self.session_slug}/{generation_name}/{run_id}"
+        return f"input/{self.session_id}/{generation_name}/{run_id}"
 
     def remote_output_dir(self, run_id: str) -> str:
         generation_name = format_generation_name(
             parse_generation_from_run_id(run_id)
         )
-        return f"output/{self.session_slug}/{generation_name}/{run_id}"
+        return f"output/{self.session_id}/{generation_name}/{run_id}"

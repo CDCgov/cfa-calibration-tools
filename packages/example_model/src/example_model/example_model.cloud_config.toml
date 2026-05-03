@@ -1,38 +1,68 @@
 [cloud]
+# Azure Key Vault name used to look up cloud credentials and account settings.
 keyvault = "cfa-predict"
-simulation_mrp_config_path = "example_model.mrp.cloud.toml"
+# Batch VM size preset used for pool node sizing.
 vm_size = "large"
+# Number of shared Azure Batch jobs created for each cloud session.
 jobs_per_session = 1
+# Maximum number of Batch task slots to schedule on each pool node.
 task_slots_per_node = 50
+# Maximum number of nodes the cloud pool can scale out to.
 pool_max_nodes = 5
+# Per-task timeout, in minutes, before Batch stops a model run.
 task_timeout_minutes = 60
+# Maximum wait, in minutes, for the Batch pool to become ready.
 pool_ready_timeout_minutes = 20
+# Azure Batch autoscale formula evaluation interval, in minutes.
 pool_auto_scale_evaluation_interval_minutes = 5
+# Extra Batch tasks to submit beyond current concurrent capacity so autoscale
+# can see queued work.
 dispatch_buffer = 1000
+# Whether to print per-task duration details from task stderr.
 print_task_durations = false
 
 [cloud.image]
+# Local Docker image name built before upload to Azure Container Registry.
 local_image = "cfa-calibration-tools-example-model-python"
+# Azure Container Registry repository that receives the tagged model image.
 repository = "cfa-calibration-tools-example-model"
+# Docker build context, resolved relative to this config file. The example
+# Dockerfile copies repo-root files, so this points from this package config
+# back to the repository root.
 build_context = "../../../.."
+# Dockerfile path, resolved relative to the build context or this config file.
 dockerfile = "packages/example_model/Dockerfile"
+# MRP config path inside the container used by remote Batch tasks.
 task_mrp_config_path = "/app/example_model.mrp.toml"
 
 [cloud.resources]
+# Prefix for Azure Batch pool names created for this model.
 pool_prefix = "example-model-cloud"
+# Prefix for Azure Batch job names created for this model.
 job_prefix = "example-model-cloud"
+# Prefix for Blob containers holding staged model input files.
 input_container_prefix = "example-model-cloud-input"
+# Prefix for Blob containers holding downloaded model output files.
 output_container_prefix = "example-model-cloud-output"
+# Prefix for Blob containers holding task logs.
 logs_container_prefix = "example-model-cloud-logs"
+# Container mount path where tasks read staged input files.
 input_mount_path = "/cloud-input"
+# Container mount path where tasks write model outputs.
 output_mount_path = "/cloud-output"
+# Container mount path where tasks write logs captured by the runner.
 logs_mount_path = "/cloud-logs"
 
 [cloud.output]
+# Output file name the runner downloads from each completed task directory.
 filename = "output.csv"
+# CSV column to read from the output file as the model result series.
 csv_value_column = "population"
+# Scalar parser for values read from the CSV column.
 csv_value_type = "int"
 
 [cloud.auto_size]
+# Built-in auto-size probe type; "mrp" runs the local MRP config once.
 probe = "mrp"
+# Local MRP config used by the auto-size probe, resolved from this file.
 local_mrp_config_path = "example_model.mrp.toml"

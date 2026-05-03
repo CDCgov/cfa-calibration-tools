@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import hashlib
 import re
 from datetime import datetime, timezone
@@ -53,30 +54,45 @@ def make_resource_name(prefix: str, suffix: str, *, max_length: int) -> str:
     return f"{prefix_part}-{suffix_part[-max_suffix_length:]}"
 
 
-def make_session_slug(tag: str) -> str:
+def make_session_id(tag: str, username: str | None = None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    user_part = sanitize_name(username or getpass.getuser()) or "user"
+    tag_part = sanitize_name(tag) or "image"
     unique_suffix = uuid4().hex[:12]
-    return sanitize_name(f"{timestamp}-{tag}-{unique_suffix}")
+    return sanitize_name(f"{timestamp}-{user_part}-{tag_part}-{unique_suffix}")
 
 
-def parse_image_tag_from_session_slug(session_slug: str) -> str | None:
-    normalized = sanitize_name(session_slug)
+def parse_image_tag_from_session_id(session_id: str) -> str | None:
+    parsed = _parse_session_id(session_id)
+    return parsed["image_tag"] if parsed else None
+
+
+def parse_username_from_session_id(session_id: str) -> str | None:
+    parsed = _parse_session_id(session_id)
+    return parsed["username"] if parsed else None
+
+
+def _parse_session_id(session_id: str) -> dict[str, str] | None:
+    normalized = sanitize_name(session_id)
     parts = normalized.split("-")
-    if len(parts) < 2:
+    if len(parts) < 4:
         return None
 
     timestamp = parts[0]
     if len(timestamp) != 14 or not timestamp.isdigit():
         return None
 
-    has_unique_suffix = (
-        len(parts) >= 3
-        and len(parts[-1]) == 12
-        and all(char in "0123456789abcdef" for char in parts[-1])
-    )
-    tag_parts = parts[1:-1] if has_unique_suffix else parts[1:]
-    image_tag = "-".join(tag_parts)
-    return image_tag or None
+    unique_suffix = parts[-1]
+    if len(unique_suffix) != 12 or not all(
+        char in "0123456789abcdef" for char in unique_suffix
+    ):
+        return None
+
+    username = "-".join(parts[1:-2])
+    image_tag = parts[-2]
+    if not username or not image_tag:
+        return None
+    return {"username": username, "image_tag": image_tag}
 
 
 def make_batch_task_name_suffix(value: str, *, max_length: int = 57) -> str:

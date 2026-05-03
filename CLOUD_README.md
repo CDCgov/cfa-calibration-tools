@@ -26,17 +26,41 @@ uv run --group cloudops python -m calibrationtools.cloud.cleanup \
   --list
 ```
 
-Delete one session after reviewing the plan:
+Cleanup prints the deletion plan before acting. Pass `--dry-run` to preview
+without deleting anything.
+
+The Makefile cleanup helpers intentionally default `CLOUD_USER` to the current
+shell user. For example, `make cloud-cleanup-user DRY_RUN=1` previews cleanup
+for your own sessions, and `make cloud-cleanup-user` deletes your own sessions
+after printing the plan. Pass `CLOUD_USER=other-user` only when you intend to
+list or clean that user's project-scoped sessions.
+
+Preview or delete one session:
 
 ```bash
 uv run --group cloudops python -m calibrationtools.cloud.cleanup \
   --cloud-config packages/example_model/src/example_model/example_model.cloud_config.toml \
-  --session-slug 20260412010101-testsha-ab12cd34ef56
+  --session-id 20260412010101-alice-testsha-ab12cd34ef56 \
+  --dry-run
 
 uv run --group cloudops python -m calibrationtools.cloud.cleanup \
   --cloud-config packages/example_model/src/example_model/example_model.cloud_config.toml \
-  --session-slug 20260412010101-testsha-ab12cd34ef56 \
-  --yes
+  --session-id 20260412010101-alice-testsha-ab12cd34ef56
+```
+
+Delete all sessions for one user after previewing the plan:
+
+```bash
+uv run --group cloudops python -m calibrationtools.cloud.cleanup \
+  --cloud-config packages/example_model/src/example_model/example_model.cloud_config.toml \
+  --all-sessions-for-user \
+  --user "$(id -un)" \
+  --dry-run
+
+uv run --group cloudops python -m calibrationtools.cloud.cleanup \
+  --cloud-config packages/example_model/src/example_model/example_model.cloud_config.toml \
+  --all-sessions-for-user \
+  --user "$(id -un)"
 ```
 
 ## Config Shape
@@ -46,7 +70,6 @@ uv run --group cloudops python -m calibrationtools.cloud.cleanup \
 ```toml
 [cloud]
 keyvault = "cfa-predict"
-simulation_mrp_config_path = "example_model.mrp.cloud.toml"
 vm_size = "large"
 jobs_per_session = 1
 task_slots_per_node = 50
@@ -60,7 +83,7 @@ print_task_durations = false
 [cloud.image]
 local_image = "cfa-calibration-tools-example-model-python"
 repository = "cfa-calibration-tools-example-model"
-build_context = "../.."
+build_context = "../../../.."
 dockerfile = "packages/example_model/Dockerfile"
 task_mrp_config_path = "/app/example_model.mrp.toml"
 
@@ -84,13 +107,25 @@ probe = "mrp"
 local_mrp_config_path = "example_model.mrp.toml"
 ```
 
-`simulation_mrp_config_path` is used only by simulation runs, where the shared
-runner still needs an MRP config to invoke the local cloud executor. Other
-commands, such as cleanup and auto-size config loading, use the regular cloud
-TOML directly. `[cloud.image]` tells the shared runner how to build and upload
-the model image. `[cloud.resources]` defines the project naming scope for Batch
-and Blob resources. `[cloud.output]` lets the shared runner parse the downloaded
-CSV without a model-local wrapper.
+The shared runner synthesizes the local MRP executor config that dispatches
+simulations through `calibrationtools.cloud.executor.execute_cloud_run`.
+`[cloud.image]` tells the shared runner how to build and upload the model
+image, and `task_mrp_config_path` is the MRP config path used by remote Batch
+tasks inside that image. `[cloud.resources]` defines the project naming scope
+for Batch and Blob resources. `[cloud.output]` lets the shared runner parse the
+downloaded CSV without a model-local wrapper.
+
+`dispatch_buffer` controls how much extra work the local runner submits to
+Azure Batch beyond `max_concurrent_simulations`. Those extra submitted tasks sit
+pending in Batch, which gives the autoscale formula enough queued work to scale
+the pool out instead of waiting for Python to submit one small wave at a time.
+
+`build_context` is resolved relative to the cloud config file and should point
+at the Docker build context. The bundled example config lives under
+`packages/example_model/src/example_model`, so it uses `../../../..` to point at
+the repository root; that is required because its Dockerfile path is
+`packages/example_model/Dockerfile` and the build copies files from the repo
+root.
 
 ## Auto Size
 
@@ -130,6 +165,4 @@ To make another model cloud-capable:
 5. Use `python -m calibrationtools.cloud.cleanup --cloud-config ...` for
    cleanup.
 
-Legacy MRP cloud configs with `[runtime.cloud]` are still accepted by the
-shared config loader for migration, but new code should prefer the split
-`cloud_config.toml` form.
+Cloud configs must use the top-level `[cloud]` form shown above.

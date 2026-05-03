@@ -163,16 +163,12 @@ def add_batch_task_with_short_id(
     task_id_max_override: int | None = None,
 ) -> str:
     from azure.batch import models as batch_models
-    from cfa.cloudops import batch_helpers, helpers
 
-    job_info = client.batch_service_client.job.get(job_name)
-    pool_name = job_info.as_dict()["execution_info"]["pool_id"]
-    if task_id_max_override is None:
-        task_id_max = _next_job_task_id_max(job_name)
-    else:
-        task_id_max = task_id_max_override
-        _record_job_task_id_max(job_name, task_id_max)
-    task_number = task_id_max + 1
+    pool_name = _resolve_task_pool_name(client, job_name)
+    task_number = _resolve_next_task_number(
+        job_name,
+        task_id_max_override=task_id_max_override,
+    )
     name_suffix = make_batch_task_name_suffix(
         task_name_suffix,
         max_length=_max_batch_task_name_suffix_length(
@@ -180,65 +176,155 @@ def add_batch_task_with_short_id(
             task_number=task_number,
         ),
     )
+    task_id = f"{task_id_base}-{name_suffix}-{task_number}"
+    task_param = _build_task_add_parameter(
+        batch_models=batch_models,
+        job_name=job_name,
+        task_id=task_id,
+        task_number=task_number,
+        command_line=command_line,
+        timeout=timeout,
+        mounts=_resolve_task_mounts(
+            client,
+            pool_name=pool_name,
+            mount_pairs=mount_pairs,
+        ),
+        full_container_name=_resolve_task_container_image_name(
+            client,
+            pool_name=pool_name,
+            container_image_name=container_image_name,
+        ),
+        save_logs_rel_path=_resolve_save_logs_rel_path(
+            client,
+            pool_name=pool_name,
+            save_logs_path=save_logs_path,
+        ),
+        logs_folder=logs_folder
+        or getattr(client, "logs_folder", "stdout_stderr"),
+    )
+    client.batch_service_client.task.add(job_id=job_name, task=task_param)
+    return task_id
 
-    if container_image_name is None:
-        full_container_name = getattr(client, "full_container_name", None)
-        if full_container_name is None:
-            pool_info = batch_helpers.get_pool_full_info(
-                client.cred.azure_resource_group_name,
-                client.cred.azure_batch_account,
-                pool_name,
-                client.batch_mgmt_client,
-            )
-            vm_config = pool_info.deployment_configuration.virtual_machine_configuration
-            pool_container_names = (
-                vm_config.container_configuration.container_image_names
-            )
-            full_container_name = pool_container_names[0].split("://")[-1]
+
+def _resolve_task_pool_name(client: Any, job_name: str) -> str:
+    job_info = client.batch_service_client.job.get(job_name)
+    return job_info.as_dict()["execution_info"]["pool_id"]
+
+
+def _resolve_next_task_number(
+    job_name: str,
+    *,
+    task_id_max_override: int | None,
+) -> int:
+    if task_id_max_override is None:
+        task_id_max = _next_job_task_id_max(job_name)
     else:
-        full_container_name = container_image_name
+        task_id_max = task_id_max_override
+        _record_job_task_id_max(job_name, task_id_max)
+    return task_id_max + 1
+
+
+def _resolve_task_container_image_name(
+    client: Any,
+    *,
+    pool_name: str,
+    container_image_name: str | None,
+) -> str:
+    if container_image_name is not None:
+        return container_image_name
+
+    full_container_name = getattr(client, "full_container_name", None)
+    if full_container_name is not None:
+        return full_container_name
+
+    from cfa.cloudops import batch_helpers
+
+    pool_info = batch_helpers.get_pool_full_info(
+        client.cred.azure_resource_group_name,
+        client.cred.azure_batch_account,
+        pool_name,
+        client.batch_mgmt_client,
+    )
+    vm_config = (
+        pool_info.deployment_configuration.virtual_machine_configuration
+    )
+    pool_container_names = (
+        vm_config.container_configuration.container_image_names
+    )
+    return pool_container_names[0].split("://")[-1]
+
+
+def _resolve_save_logs_rel_path(
+    client: Any,
+    *,
+    pool_name: str,
+    save_logs_path: str | None,
+) -> str | None:
+    from cfa.cloudops import batch_helpers, helpers
 
     if save_logs_path is not None:
-        save_logs_rel_path = "/" + helpers.format_rel_path(save_logs_path)
-    elif getattr(client, "save_logs_to_blob", None):
-        save_logs_rel_path = batch_helpers.get_rel_mnt_path(
-            blob_name=client.save_logs_to_blob,
-            pool_name=pool_name,
-            resource_group_name=client.cred.azure_resource_group_name,
-            account_name=client.cred.azure_batch_account,
-            batch_mgmt_client=client.batch_mgmt_client,
-        )
-        if save_logs_rel_path != "ERROR!":
-            save_logs_rel_path = "/" + helpers.format_rel_path(
-                rel_path=save_logs_rel_path
-            )
-    else:
-        save_logs_rel_path = None
+        return "/" + helpers.format_rel_path(save_logs_path)
+
+    if not getattr(client, "save_logs_to_blob", None):
+        return None
+
+    save_logs_rel_path = batch_helpers.get_rel_mnt_path(
+        blob_name=client.save_logs_to_blob,
+        pool_name=pool_name,
+        resource_group_name=client.cred.azure_resource_group_name,
+        account_name=client.cred.azure_batch_account,
+        batch_mgmt_client=client.batch_mgmt_client,
+    )
+    if save_logs_rel_path == "ERROR!":
+        return save_logs_rel_path
+    return "/" + helpers.format_rel_path(rel_path=save_logs_rel_path)
+
+
+def _resolve_task_mounts(
+    client: Any,
+    *,
+    pool_name: str,
+    mount_pairs: list[dict[str, str]] | None,
+) -> list[dict[str, str]] | None:
+    from cfa.cloudops import batch_helpers, helpers
 
     if mount_pairs is None:
-        mounts = batch_helpers.get_pool_mounts(
+        return batch_helpers.get_pool_mounts(
             pool_name,
             client.cred.azure_resource_group_name,
             client.cred.azure_batch_account,
             client.batch_mgmt_client,
         )
-    else:
-        mounts = [
-            {
-                "source": helpers.format_rel_path(mount["target"]),
-                "target": helpers.format_rel_path(mount["target"]),
-            }
-            for mount in mount_pairs
-        ]
+    return [
+        {
+            "source": helpers.format_rel_path(mount["target"]),
+            "target": helpers.format_rel_path(mount["target"]),
+        }
+        for mount in mount_pairs
+    ]
 
-    task_id = f"{task_id_base}-{name_suffix}-{task_number}"
+
+def _build_task_add_parameter(
+    *,
+    batch_models: Any,
+    job_name: str,
+    task_id: str,
+    task_number: int,
+    command_line: str,
+    timeout: int | None,
+    mounts: list[dict[str, str]] | None,
+    full_container_name: str,
+    save_logs_rel_path: str | None,
+    logs_folder: str,
+) -> Any:
+    from cfa.cloudops import batch_helpers
+
     full_command_line = _build_task_command_line(
         command_line=command_line,
         job_name=job_name,
         task_id=task_id,
         save_logs_rel_path=save_logs_rel_path,
-        logs_folder=logs_folder
-        or getattr(client, "logs_folder", "stdout_stderr"),
+        logs_folder=logs_folder,
     )
     task_constraints = batch_models.TaskConstraints(
         max_wall_clock_time=(
@@ -265,8 +351,7 @@ def add_batch_task_with_short_id(
         run_dependent_tasks_on_failure=False,
         exit_conditions=batch_helpers._generate_exit_conditions(False),
     )
-    client.batch_service_client.task.add(job_id=job_name, task=task_param)
-    return task_id
+    return task_param
 
 
 def _build_task_command_line(
@@ -338,7 +423,6 @@ def create_pool_with_blob_mounts(
 ) -> None:
     from azure.mgmt.batch import models
     from cfa.cloudops import defaults as d
-    from cfa.cloudops.batch_helpers import get_vm_size
 
     if auto_scale_evaluation_interval_minutes < 5:
         raise ValueError(
@@ -346,6 +430,52 @@ def create_pool_with_blob_mounts(
         )
 
     cred = client.cred
+    _validate_pool_credentials(cred)
+    identity_reference, mount_configuration = _build_blob_mount_configurations(
+        models,
+        cred,
+        mounts,
+        cache_blobfuse=cache_blobfuse,
+    )
+
+    pool_config = d.get_default_pool_config(
+        pool_name=pool_name,
+        subnet_id=cred.azure_subnet_id,
+        user_assigned_identity=cred.azure_user_assigned_identity,
+        mount_configuration=mount_configuration,
+        vm_size=_resolve_pool_vm_size(vm_size),
+    )
+    pool_config.scale_settings = _build_pool_scale_settings(
+        models,
+        target_dedicated_nodes=target_dedicated_nodes,
+        task_slots_per_node=task_slots_per_node,
+        evaluation_interval_minutes=auto_scale_evaluation_interval_minutes,
+    )
+    pool_config.task_slots_per_node = task_slots_per_node
+
+    container_config = _build_container_configuration(
+        models,
+        cred,
+        container_image_name,
+        identity_reference,
+    )
+    d.assign_container_config(pool_config, container_config)
+
+    vm_config = (
+        pool_config.deployment_configuration.virtual_machine_configuration
+    )
+    _apply_node_placement(models, vm_config, availability_zones)
+
+    client.batch_mgmt_client.pool.create(
+        resource_group_name=cred.azure_resource_group_name,
+        account_name=cred.azure_batch_account,
+        pool_name=pool_name,
+        parameters=pool_config,
+    )
+    client.pool_name = pool_name
+
+
+def _validate_pool_credentials(cred: Any) -> None:
     if not cred.azure_resource_group_name:
         raise ValueError("AZURE_RESOURCE_GROUP_NAME must be configured.")
     if not cred.azure_batch_account:
@@ -361,9 +491,22 @@ def create_pool_with_blob_mounts(
             "AZURE_CONTAINER_REGISTRY_ACCOUNT must be configured."
         )
 
-    if vm_size in {"xsmall", "small", "medium", "large", "xlarge"}:
-        vm_size = get_vm_size(vm_size)
 
+def _resolve_pool_vm_size(vm_size: str) -> str:
+    from cfa.cloudops.batch_helpers import get_vm_size
+
+    if vm_size in {"xsmall", "small", "medium", "large", "xlarge"}:
+        return get_vm_size(vm_size)
+    return vm_size
+
+
+def _build_blob_mount_configurations(
+    models: Any,
+    cred: Any,
+    mounts: list[dict[str, str]],
+    *,
+    cache_blobfuse: bool,
+) -> tuple[Any, list[Any]]:
     identity_reference = models.ComputeNodeIdentityReference(
         resource_id=cred.azure_user_assigned_identity
     )
@@ -382,28 +525,36 @@ def create_pool_with_blob_mounts(
         )
         for mount in mounts
     ]
+    return identity_reference, mount_configuration
 
-    pool_config = d.get_default_pool_config(
-        pool_name=pool_name,
-        subnet_id=cred.azure_subnet_id,
-        user_assigned_identity=cred.azure_user_assigned_identity,
-        mount_configuration=mount_configuration,
-        vm_size=vm_size,
-    )
-    pool_config.scale_settings = models.ScaleSettings(
+
+def _build_pool_scale_settings(
+    models: Any,
+    *,
+    target_dedicated_nodes: int,
+    task_slots_per_node: int,
+    evaluation_interval_minutes: int,
+) -> Any:
+    return models.ScaleSettings(
         auto_scale=models.AutoScaleSettings(
             formula=build_pool_autoscale_formula(
                 max_dedicated_nodes=target_dedicated_nodes,
                 task_slots_per_node=task_slots_per_node,
             ),
             evaluation_interval=datetime.timedelta(
-                minutes=auto_scale_evaluation_interval_minutes
+                minutes=evaluation_interval_minutes
             ),
         )
     )
-    pool_config.task_slots_per_node = task_slots_per_node
 
-    container_config = models.ContainerConfiguration(
+
+def _build_container_configuration(
+    models: Any,
+    cred: Any,
+    container_image_name: str,
+    identity_reference: Any,
+) -> Any:
+    return models.ContainerConfiguration(
         type="dockerCompatible",
         container_image_names=[container_image_name],
         container_registries=[
@@ -416,32 +567,23 @@ def create_pool_with_blob_mounts(
             )
         ],
     )
-    d.assign_container_config(pool_config, container_config)
 
-    vm_config = (
-        pool_config.deployment_configuration.virtual_machine_configuration
-    )
-    if availability_zones.lower() == "regional":
-        vm_config.node_placement_configuration = (
-            models.NodePlacementConfiguration(
-                policy=models.NodePlacementPolicyType.regional
-            )
-        )
-    elif availability_zones.lower() == "zonal":
-        vm_config.node_placement_configuration = (
-            models.NodePlacementConfiguration(
-                policy=models.NodePlacementPolicyType.zonal
-            )
-        )
+
+def _apply_node_placement(
+    models: Any,
+    vm_config: Any,
+    availability_zones: str,
+) -> None:
+    availability_zone = availability_zones.lower()
+    if availability_zone == "regional":
+        policy = models.NodePlacementPolicyType.regional
+    elif availability_zone == "zonal":
+        policy = models.NodePlacementPolicyType.zonal
     else:
         raise ValueError(
             "Availability zone needs to be 'zonal' or 'regional'."
         )
 
-    client.batch_mgmt_client.pool.create(
-        resource_group_name=cred.azure_resource_group_name,
-        account_name=cred.azure_batch_account,
-        pool_name=pool_name,
-        parameters=pool_config,
+    vm_config.node_placement_configuration = models.NodePlacementConfiguration(
+        policy=policy
     )
-    client.pool_name = pool_name

@@ -32,6 +32,102 @@ from .sampler_types import GeneratorSlot
 from .variance_adapter import VarianceAdapter
 
 
+def _resolve_sampler_entropy(
+    *,
+    seed: int | None,
+    entropy: int | None,
+) -> int | None:
+    if seed is None:
+        return entropy
+    if entropy is not None and entropy != seed:
+        raise ValueError("seed and entropy must match when both are set")
+    return seed
+
+
+def _resolve_parallel_worker_count(
+    *,
+    parallel_worker_count: int,
+    max_concurrent_simulations: int | None,
+) -> int:
+    if max_concurrent_simulations is not None:
+        if max_concurrent_simulations < 1:
+            raise ValueError("max_concurrent_simulations must be at least 1")
+        if (
+            parallel_worker_count != 10
+            and parallel_worker_count != max_concurrent_simulations
+        ):
+            raise ValueError(
+                "parallel_worker_count and max_concurrent_simulations must match when both are provided"
+            )
+        parallel_worker_count = max_concurrent_simulations
+
+    if parallel_worker_count <= 0:
+        raise ValueError("parallel_worker_count must be positive")
+    return parallel_worker_count
+
+
+def _resolve_population_archive_flag(
+    *,
+    keep_previous_population_data: bool,
+    drop_previous_population_data: bool | None,
+) -> bool:
+    if drop_previous_population_data is None:
+        return keep_previous_population_data
+    return not drop_previous_population_data
+
+
+def _load_prior_distribution(
+    priors: PriorDistribution | dict[str, Any] | Path | str,
+    *,
+    seed_parameter_name: str | None,
+) -> PriorDistribution:
+    if isinstance(priors, PriorDistribution):
+        return priors
+    if isinstance(priors, dict):
+        from .load_priors import independent_priors_from_dict
+
+        return independent_priors_from_dict(
+            priors,
+            incl_seed_parameter=seed_parameter_name is not None,
+            seed_parameter_name=seed_parameter_name,
+        )
+    if isinstance(priors, Path) or isinstance(priors, str):
+        from .load_priors import load_priors_from_json
+
+        return load_priors_from_json(priors)
+    raise TypeError("Unsupported priors type")
+
+
+def _build_particle_reader(
+    priors: PriorDistribution,
+    *,
+    default_parameters: dict[str, Any] | None,
+    particles_to_params: Callable[..., dict] | None,
+) -> ParticleReader:
+    return ParticleReader(
+        particle_param_names=priors.params,
+        default_params=default_parameters,
+        read_fn=particles_to_params,
+    )
+
+
+def _build_particle_evaluator(
+    *,
+    particle_reader: ParticleReader,
+    outputs_to_distance: Callable[..., float],
+    target_data: Any,
+    model_runner: object,
+    artifacts_dir: Path | None,
+) -> ParticleEvaluator:
+    return ParticleEvaluator(
+        particle_reader=particle_reader,
+        outputs_to_distance=outputs_to_distance,
+        target_data=target_data,
+        model_runner=model_runner,
+        artifacts_dir=artifacts_dir,
+    )
+
+
 class ABCSampler:
     """Approximate Bayesian Computation Sequential Monte Carlo sampler.
 
@@ -128,32 +224,17 @@ class ABCSampler:
         if variance_adapter is None:
             raise TypeError("variance_adapter is required")
 
-        if seed is not None:
-            if entropy is not None and entropy != seed:
-                raise ValueError(
-                    "seed and entropy must match when both are set"
-                )
-            entropy = seed
-
-        if max_concurrent_simulations is not None:
-            if max_concurrent_simulations < 1:
-                raise ValueError(
-                    "max_concurrent_simulations must be at least 1"
-                )
-            if (
-                parallel_worker_count != 10
-                and parallel_worker_count != max_concurrent_simulations
-            ):
-                raise ValueError(
-                    "parallel_worker_count and max_concurrent_simulations must match when both are provided"
-                )
-            parallel_worker_count = max_concurrent_simulations
-
-        if parallel_worker_count <= 0:
-            raise ValueError("parallel_worker_count must be positive")
-
-        if drop_previous_population_data is not None:
-            keep_previous_population_data = not drop_previous_population_data
+        if seed is not None and entropy is not None and entropy != seed:
+            raise ValueError("seed and entropy must match when both are set")
+        entropy = _resolve_sampler_entropy(seed=seed, entropy=entropy)
+        parallel_worker_count = _resolve_parallel_worker_count(
+            parallel_worker_count=parallel_worker_count,
+            max_concurrent_simulations=max_concurrent_simulations,
+        )
+        keep_previous_population_data = _resolve_population_archive_flag(
+            keep_previous_population_data=keep_previous_population_data,
+            drop_previous_population_data=drop_previous_population_data,
+        )
 
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
@@ -177,30 +258,16 @@ class ABCSampler:
         )
         self._last_results: CalibrationResults | None = None
 
-        if isinstance(priors, PriorDistribution):
-            self._priors = priors
-        elif isinstance(priors, dict):
-            from .load_priors import independent_priors_from_dict
-
-            self._priors = independent_priors_from_dict(
-                priors,
-                incl_seed_parameter=seed_parameter_name is not None,
-                seed_parameter_name=seed_parameter_name,
-            )
-        elif isinstance(priors, Path) or isinstance(priors, str):
-            from .load_priors import load_priors_from_json
-
-            self._priors = load_priors_from_json(priors)
-        else:  # pragma: no cover - defensive typing
-            raise TypeError("Unsupported priors type")
-
-        self.particle_reader = ParticleReader(
-            particle_param_names=self._priors.params,
-            default_params=default_parameters,
-            read_fn=self.particles_to_params,
+        self._priors = _load_prior_distribution(
+            priors,
+            seed_parameter_name=seed_parameter_name,
         )
-
-        self._particle_evaluator = ParticleEvaluator(
+        self.particle_reader = _build_particle_reader(
+            self._priors,
+            default_parameters=default_parameters,
+            particles_to_params=self.particles_to_params,
+        )
+        self._particle_evaluator = _build_particle_evaluator(
             particle_reader=self.particle_reader,
             outputs_to_distance=outputs_to_distance,
             target_data=target_data,
@@ -684,6 +751,28 @@ class ABCSampler:
             and callable(getattr(self.model_runner, "simulate_async", None))
         )
 
+    def _resolve_native_async_worker_count(self, worker_count: int) -> int:
+        """Return native-async submission width, including runner buffer."""
+
+        dispatch_buffer_size = getattr(
+            self.model_runner,
+            "dispatch_buffer_size",
+            None,
+        )
+        if dispatch_buffer_size is None:
+            return worker_count
+        buffer_size = (
+            dispatch_buffer_size()
+            if callable(dispatch_buffer_size)
+            else dispatch_buffer_size
+        )
+        if buffer_size is None:
+            return worker_count
+        buffer_size = int(buffer_size)
+        if buffer_size < 0:
+            raise ValueError("dispatch_buffer_size must be non-negative")
+        return worker_count + buffer_size
+
     def _build_executor(
         self, max_workers: int = 1
     ) -> ThreadPoolExecutor | None:
@@ -790,6 +879,11 @@ class ABCSampler:
         use_native_async = (
             execution == "parallel" and self._uses_native_async_collection()
         )
+        collection_workers = (
+            self._resolve_native_async_worker_count(n_workers)
+            if use_native_async
+            else n_workers
+        )
         particlewise_runner = self._build_particlewise_generation_runner(
             reporter=reporter
         )
@@ -804,7 +898,7 @@ class ABCSampler:
                 generation_stats = particlewise_runner.run_generation(
                     ParticlewiseGenerationRequest(
                         generation=generation,
-                        n_workers=n_workers,
+                        n_workers=collection_workers,
                         parallel_executor=parallel_executor,
                         overall_start_time=overall_start_time,
                         generation_start_time=time.time(),

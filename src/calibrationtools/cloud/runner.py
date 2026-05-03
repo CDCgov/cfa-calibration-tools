@@ -33,6 +33,32 @@ from .formatting import append_task_log_excerpts
 from .session import CloudSession
 from .tooling import upload_files_quietly
 
+_D_CREATE_CLIENT = DEFAULT_CLOUD_RUNNER_BACKEND.create_cloud_client
+_D_GIT_SHA = DEFAULT_CLOUD_RUNNER_BACKEND.git_short_sha
+_D_SESSION_ID = DEFAULT_CLOUD_RUNNER_BACKEND.make_session_id
+_D_BUILD_IMAGE = DEFAULT_CLOUD_RUNNER_BACKEND.build_local_image
+_D_UPLOAD_IMAGE = DEFAULT_CLOUD_RUNNER_BACKEND.upload_local_image
+_D_CREATE_POOL = DEFAULT_CLOUD_RUNNER_BACKEND.create_pool_with_blob_mounts
+_D_WAIT_POOL = DEFAULT_CLOUD_RUNNER_BACKEND.wait_for_pool_ready
+_D_ADD_TASK = DEFAULT_CLOUD_RUNNER_BACKEND.add_batch_task_with_short_id
+_D_CANCEL_TASK = DEFAULT_CLOUD_RUNNER_BACKEND.cancel_batch_task
+_D_FMT_FAILURE = DEFAULT_CLOUD_RUNNER_BACKEND.format_task_failure_message
+_D_FMT_TIMING = DEFAULT_CLOUD_RUNNER_BACKEND.format_task_timing_summary
+_D_RESOURCE_NAME = DEFAULT_CLOUD_RUNNER_BACKEND.make_resource_name
+_D_PARSE_GEN = DEFAULT_CLOUD_RUNNER_BACKEND.parse_generation_from_run_id
+_D_SUPPRESS_INFO = DEFAULT_CLOUD_RUNNER_BACKEND.suppress_cloudops_info_output
+
+
+def make_cloud_executor_mrp_config() -> dict[str, Any]:
+    """Return the local MRP config that dispatches one run to cloud Batch."""
+    return {
+        "runtime": {
+            "spec": "inline",
+            "callable": "calibrationtools.cloud.executor:execute_cloud_run",
+        },
+        "output": {"spec": "filesystem", "dir": "./output"},
+    }
+
 
 @dataclass
 class _ActiveCloudRun:
@@ -53,6 +79,20 @@ class _ActiveCloudRun:
     controller_task: asyncio.Task[Any] | None = None
     submission_future: ThreadFuture[None] | None = None
     admission_acquired: bool = False
+
+
+@dataclass(frozen=True)
+class _SessionResourceNames:
+    input_container: str
+    output_container: str
+    logs_container: str
+    pool_name: str
+
+
+@dataclass(frozen=True)
+class _CompletedRunTask:
+    output_dir: Path
+    cancelled: bool
 
 
 def resolve_cloud_build_context(
@@ -128,20 +168,6 @@ def create_cloud_mrp_runner(
     )
 
 
-def _require_simulation_mrp_config_path(config_path: Path | None) -> Path:
-    """Return the MRP config required for cloud simulation execution."""
-    if config_path is None:
-        raise ValueError(
-            "cloud.simulation_mrp_config_path is required for cloud "
-            "simulation runners"
-        )
-    if not config_path.is_file():
-        raise FileNotFoundError(
-            f"cloud.simulation_mrp_config_path not found: {config_path}"
-        )
-    return config_path
-
-
 def create_cloud_mrp_runner_from_config(
     config_path: str | Path,
     *,
@@ -171,9 +197,6 @@ def create_cloud_mrp_runner_from_config(
         )
     return CloudMRPRunner(
         config_path,
-        simulation_mrp_config_path=_require_simulation_mrp_config_path(
-            model_config.simulation_mrp_config_path
-        ),
         generation_count=generation_count,
         max_concurrent_simulations=max_concurrent_simulations,
         repo_root=model_config.build_context,
@@ -221,9 +244,6 @@ def create_csv_cloud_mrp_runner_from_config(
         )
     return CloudMRPRunner(
         config_path,
-        simulation_mrp_config_path=_require_simulation_mrp_config_path(
-            model_config.simulation_mrp_config_path
-        ),
         generation_count=generation_count,
         max_concurrent_simulations=max_concurrent_simulations,
         repo_root=model_config.build_context,
@@ -239,6 +259,83 @@ def create_csv_cloud_mrp_runner_from_config(
     )
 
 
+def _validate_cloud_runner_inputs(
+    *,
+    dockerfile: Path,
+    max_concurrent_simulations: int,
+    settings_loader: Callable[[str | Path], CloudRuntimeSettings] | None,
+    runtime_settings: CloudRuntimeSettings | None,
+) -> None:
+    if not dockerfile.is_file():
+        raise FileNotFoundError(
+            f"Dockerfile not found at {dockerfile}. "
+            "Pass an explicit `dockerfile` (and matching `repo_root`) "
+            "when constructing the cloud runner."
+        )
+    if max_concurrent_simulations < 1:
+        raise ValueError(
+            "max_concurrent_simulations must be at least 1 "
+            f"(got {max_concurrent_simulations})"
+        )
+    if (settings_loader is None) == (runtime_settings is None):
+        raise TypeError(
+            "Pass exactly one of settings_loader or runtime_settings."
+        )
+
+
+def _resolve_cloud_runner_backend(
+    *,
+    backend: CloudRunnerBackend | None,
+    create_cloud_client_func: Callable[..., Any],
+    git_short_sha_func: Callable[[Path], str],
+    make_session_id_func: Callable[[str], str],
+    build_local_image_func: Callable[..., str],
+    upload_local_image_func: Callable[..., str],
+    create_pool_with_blob_mounts_func: Callable[..., None],
+    wait_for_pool_ready_func: Callable[..., Any],
+    add_batch_task_with_short_id_func: Callable[..., str],
+    cancel_batch_task_func: Callable[..., None],
+    format_task_failure_message_func: Callable[..., str],
+    format_task_timing_summary_func: Callable[..., str],
+    make_resource_name_func: Callable[..., str],
+    parse_generation_from_run_id_func: Callable[[str], int],
+    suppress_cloudops_info_output_func: Callable[[], Any],
+) -> CloudRunnerBackend:
+    if backend is not None:
+        return backend
+    return CloudRunnerBackend(
+        create_cloud_client=create_cloud_client_func,
+        git_short_sha=git_short_sha_func,
+        make_session_id=make_session_id_func,
+        build_local_image=build_local_image_func,
+        upload_local_image=upload_local_image_func,
+        create_pool_with_blob_mounts=create_pool_with_blob_mounts_func,
+        wait_for_pool_ready=wait_for_pool_ready_func,
+        add_batch_task_with_short_id=add_batch_task_with_short_id_func,
+        cancel_batch_task=cancel_batch_task_func,
+        format_task_failure_message=format_task_failure_message_func,
+        format_task_timing_summary=format_task_timing_summary_func,
+        make_resource_name=make_resource_name_func,
+        parse_generation_from_run_id=parse_generation_from_run_id_func,
+        suppress_cloudops_info_output=suppress_cloudops_info_output_func,
+    )
+
+
+def _validate_cloud_runtime_settings(settings: CloudRuntimeSettings) -> None:
+    if settings.jobs_per_session < 1:
+        raise ValueError("jobs_per_session must be at least 1")
+    if settings.task_slots_per_node < 1:
+        raise ValueError("task_slots_per_node must be at least 1")
+    if settings.pool_max_nodes < 1:
+        raise ValueError("pool_max_nodes must be at least 1")
+    if settings.pool_auto_scale_evaluation_interval_minutes < 5:
+        raise ValueError(
+            "pool_auto_scale_evaluation_interval_minutes must be at least 5"
+        )
+    if settings.dispatch_buffer < 0:
+        raise ValueError("dispatch_buffer must be at least 0")
+
+
 class CloudMRPRunner:
     """Run one MRP-backed model through the shared cloud execution path."""
 
@@ -248,7 +345,6 @@ class CloudMRPRunner:
         self,
         config_path: str | Path,
         *,
-        simulation_mrp_config_path: str | Path | None = None,
         generation_count: int,
         max_concurrent_simulations: int,
         repo_root: Path,
@@ -260,48 +356,24 @@ class CloudMRPRunner:
         output_filename: str = "output.csv",
         print_task_durations: bool = False,
         backend: CloudRunnerBackend | None = None,
-        create_cloud_client_func: Callable[..., Any] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.create_cloud_client
-        ),
-        git_short_sha_func: Callable[[Path], str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.git_short_sha
-        ),
-        make_session_slug_func: Callable[[str], str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.make_session_slug
-        ),
-        build_local_image_func: Callable[..., str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.build_local_image
-        ),
-        upload_local_image_func: Callable[..., str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.upload_local_image
-        ),
-        create_pool_with_blob_mounts_func: Callable[..., None] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.create_pool_with_blob_mounts
-        ),
-        wait_for_pool_ready_func: Callable[..., Any] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.wait_for_pool_ready
-        ),
-        add_batch_task_with_short_id_func: Callable[..., str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.add_batch_task_with_short_id
-        ),
-        cancel_batch_task_func: Callable[..., None] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.cancel_batch_task
-        ),
-        format_task_failure_message_func: Callable[..., str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.format_task_failure_message
-        ),
-        format_task_timing_summary_func: Callable[..., str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.format_task_timing_summary
-        ),
-        make_resource_name_func: Callable[..., str] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.make_resource_name
-        ),
-        parse_generation_from_run_id_func: Callable[[str], int] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.parse_generation_from_run_id
-        ),
-        suppress_cloudops_info_output_func: Callable[[], Any] = (
-            DEFAULT_CLOUD_RUNNER_BACKEND.suppress_cloudops_info_output
-        ),
+        create_cloud_client_func: Callable[..., Any] = _D_CREATE_CLIENT,
+        git_short_sha_func: Callable[[Path], str] = _D_GIT_SHA,
+        make_session_id_func: Callable[[str], str] = _D_SESSION_ID,
+        build_local_image_func: Callable[..., str] = _D_BUILD_IMAGE,
+        upload_local_image_func: Callable[..., str] = _D_UPLOAD_IMAGE,
+        create_pool_with_blob_mounts_func: Callable[
+            ..., None
+        ] = _D_CREATE_POOL,
+        wait_for_pool_ready_func: Callable[..., Any] = _D_WAIT_POOL,
+        add_batch_task_with_short_id_func: Callable[..., str] = _D_ADD_TASK,
+        cancel_batch_task_func: Callable[..., None] = _D_CANCEL_TASK,
+        format_task_failure_message_func: Callable[..., str] = _D_FMT_FAILURE,
+        format_task_timing_summary_func: Callable[..., str] = _D_FMT_TIMING,
+        make_resource_name_func: Callable[..., str] = _D_RESOURCE_NAME,
+        parse_generation_from_run_id_func: Callable[[str], int] = _D_PARSE_GEN,
+        suppress_cloudops_info_output_func: Callable[
+            [], Any
+        ] = _D_SUPPRESS_INFO,
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         progress_refresh_interval_seconds: float | None = None,
         controller_start_timeout_seconds: float | None = 10.0,
@@ -309,124 +381,115 @@ class CloudMRPRunner:
         auto_size_summary: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path)
-        self.simulation_mrp_config_path = (
-            Path(simulation_mrp_config_path)
-            if simulation_mrp_config_path is not None
-            else self.config_path
-        )
+        self.executor_mrp_config = make_cloud_executor_mrp_config()
         self.repo_root = Path(repo_root)
         self.dockerfile = Path(dockerfile)
-        # Fail fast on a missing Dockerfile so that a wheel-installed caller
-        # gets a clear error here instead of an obscure failure deep in
-        # ``docker build`` after the cloud client has been initialized.
-        if not self.dockerfile.is_file():
-            raise FileNotFoundError(
-                f"Dockerfile not found at {self.dockerfile}. "
-                "Pass an explicit `dockerfile` (and matching `repo_root`) "
-                "when constructing the cloud runner."
-            )
+        _validate_cloud_runner_inputs(
+            dockerfile=self.dockerfile,
+            max_concurrent_simulations=max_concurrent_simulations,
+            settings_loader=settings_loader,
+            runtime_settings=runtime_settings,
+        )
         self.generation_count = generation_count
-        # Validate concurrency before touching any cloud APIs so a
-        # misconfigured CLI invocation cannot provision Azure resources
-        # it will never be able to use.
-        if max_concurrent_simulations < 1:
-            raise ValueError(
-                "max_concurrent_simulations must be at least 1 "
-                f"(got {max_concurrent_simulations})"
-            )
         self.max_concurrent_simulations = max_concurrent_simulations
-        if (settings_loader is None) == (runtime_settings is None):
-            raise TypeError(
-                "Pass exactly one of settings_loader or runtime_settings."
-            )
-        self._load_cloud_runtime_settings = settings_loader
+        self._load_runtime_settings = settings_loader
         self._read_output_dir_callback = read_output_dir
         self._output_filename = output_filename
         self.print_task_durations = print_task_durations
 
-        self._backend = backend or CloudRunnerBackend(
-            create_cloud_client=create_cloud_client_func,
-            git_short_sha=git_short_sha_func,
-            make_session_slug=make_session_slug_func,
-            build_local_image=build_local_image_func,
-            upload_local_image=upload_local_image_func,
-            create_pool_with_blob_mounts=create_pool_with_blob_mounts_func,
-            wait_for_pool_ready=wait_for_pool_ready_func,
-            add_batch_task_with_short_id=add_batch_task_with_short_id_func,
-            cancel_batch_task=cancel_batch_task_func,
-            format_task_failure_message=format_task_failure_message_func,
-            format_task_timing_summary=format_task_timing_summary_func,
-            make_resource_name=make_resource_name_func,
-            parse_generation_from_run_id=parse_generation_from_run_id_func,
-            suppress_cloudops_info_output=suppress_cloudops_info_output_func,
+        self._backend = _resolve_cloud_runner_backend(
+            backend=backend,
+            create_cloud_client_func=create_cloud_client_func,
+            git_short_sha_func=git_short_sha_func,
+            make_session_id_func=make_session_id_func,
+            build_local_image_func=build_local_image_func,
+            upload_local_image_func=upload_local_image_func,
+            create_pool_with_blob_mounts_func=create_pool_with_blob_mounts_func,
+            wait_for_pool_ready_func=wait_for_pool_ready_func,
+            add_batch_task_with_short_id_func=add_batch_task_with_short_id_func,
+            cancel_batch_task_func=cancel_batch_task_func,
+            format_task_failure_message_func=format_task_failure_message_func,
+            format_task_timing_summary_func=format_task_timing_summary_func,
+            make_resource_name_func=make_resource_name_func,
+            parse_generation_from_run_id_func=parse_generation_from_run_id_func,
+            suppress_cloudops_info_output_func=(
+                suppress_cloudops_info_output_func
+            ),
         )
-        self._create_cloud_client = self._backend.create_cloud_client
-        self._git_short_sha = self._backend.git_short_sha
-        self._make_session_slug = self._backend.make_session_slug
-        self._build_local_image = self._backend.build_local_image
-        self._upload_local_image = self._backend.upload_local_image
+        self._bind_cloud_runner_backend(self._backend)
+        self._initialize_controller_state(
+            poll_interval_seconds=poll_interval_seconds,
+            progress_refresh_interval_seconds=(
+                progress_refresh_interval_seconds
+            ),
+            controller_start_timeout_seconds=(
+                controller_start_timeout_seconds
+            ),
+        )
+        self._mrp_run = mrp_run_func
+        self.auto_size_summary = auto_size_summary
+        self.settings = self._load_and_validate_runtime_settings(
+            runtime_settings
+        )
+        self.client = self._create_cloud_client(
+            keyvault=self.settings.keyvault
+        )
+        self.session = self._initialize_cloud_session()
+
+    def _bind_cloud_runner_backend(
+        self,
+        backend: CloudRunnerBackend,
+    ) -> None:
+        self._create_cloud_client = backend.create_cloud_client
+        self._git_short_sha = backend.git_short_sha
+        self._make_session_id = backend.make_session_id
+        self._build_local_image = backend.build_local_image
+        self._upload_local_image = backend.upload_local_image
         self._create_pool_with_blob_mounts = (
-            self._backend.create_pool_with_blob_mounts
+            backend.create_pool_with_blob_mounts
         )
-        self._wait_for_pool_ready = self._backend.wait_for_pool_ready
+        self._wait_for_pool_ready = backend.wait_for_pool_ready
         self._add_batch_task_with_short_id = (
-            self._backend.add_batch_task_with_short_id
+            backend.add_batch_task_with_short_id
         )
-        self._cancel_batch_task = self._backend.cancel_batch_task
-        self._format_task_failure_message = (
-            self._backend.format_task_failure_message
-        )
-        self._format_task_timing_summary = (
-            self._backend.format_task_timing_summary
-        )
-        self._make_resource_name = self._backend.make_resource_name
+        self._cancel_batch_task = backend.cancel_batch_task
+        self._format_task_failure_message = backend.format_task_failure_message
+        self._format_task_timing_summary = backend.format_task_timing_summary
+        self._make_resource_name = backend.make_resource_name
         self._parse_generation_from_run_id = (
-            self._backend.parse_generation_from_run_id
+            backend.parse_generation_from_run_id
         )
         self._suppress_cloudops_info_output = (
-            self._backend.suppress_cloudops_info_output
+            backend.suppress_cloudops_info_output
         )
+
+    def _load_and_validate_runtime_settings(
+        self,
+        runtime_settings: CloudRuntimeSettings | None,
+    ) -> CloudRuntimeSettings:
+        if runtime_settings is not None:
+            settings = runtime_settings
+        else:
+            assert self._load_runtime_settings is not None
+            settings = self._load_runtime_settings(self.config_path)
+        _validate_cloud_runtime_settings(settings)
+        return settings
+
+    def _initialize_controller_state(
+        self,
+        *,
+        poll_interval_seconds: float,
+        progress_refresh_interval_seconds: float | None,
+        controller_start_timeout_seconds: float | None,
+    ) -> None:
         self._poll_interval_seconds = poll_interval_seconds
-        # The progress cache is refreshed in a single bulk call per unique
-        # job rather than one ``task.get`` per active run, so we can poll
-        # less aggressively than the per-task wait loop without losing
-        # responsiveness in ``describe_progress``. Default to 4x the per-
-        # task poll interval; callers can override.
         self._progress_refresh_interval_seconds = (
             progress_refresh_interval_seconds
             if progress_refresh_interval_seconds is not None
             else max(poll_interval_seconds * 4.0, 1.0)
         )
-        # ``None`` disables the bootstrap timeout and falls back to the
-        # controller thread's own failure propagation; otherwise we wait
-        # up to this many seconds for the controller event loop to come
-        # up before assuming the thread is stuck.
         self._controller_start_timeout_seconds = (
             controller_start_timeout_seconds
-        )
-        self._mrp_run = mrp_run_func
-        self.auto_size_summary = auto_size_summary
-
-        if runtime_settings is not None:
-            self.settings = runtime_settings
-        else:
-            assert self._load_cloud_runtime_settings is not None
-            self.settings = self._load_cloud_runtime_settings(self.config_path)
-        if self.settings.jobs_per_session < 1:
-            raise ValueError("jobs_per_session must be at least 1")
-        if self.settings.task_slots_per_node < 1:
-            raise ValueError("task_slots_per_node must be at least 1")
-        if self.settings.pool_max_nodes < 1:
-            raise ValueError("pool_max_nodes must be at least 1")
-        if self.settings.pool_auto_scale_evaluation_interval_minutes < 5:
-            raise ValueError(
-                "pool_auto_scale_evaluation_interval_minutes must be at least 5"
-            )
-        if self.settings.dispatch_buffer < 0:
-            raise ValueError("dispatch_buffer must be at least 0")
-
-        self.client = self._create_cloud_client(
-            keyvault=self.settings.keyvault
         )
         self._run_state_lock = Lock()
         self._active_runs: dict[str, _ActiveCloudRun] = {}
@@ -440,7 +503,6 @@ class CloudMRPRunner:
         self._admission_semaphore: asyncio.Semaphore | None = None
         self._inflight_semaphore: asyncio.Semaphore | None = None
         self._closed = False
-        self.session = self._initialize_cloud_session()
 
     def simulate(
         self,
@@ -475,7 +537,7 @@ class CloudMRPRunner:
             overrides["input"] = jsonable_params
 
         result = self._mrp_run(
-            self.simulation_mrp_config_path,
+            self.executor_mrp_config,
             overrides,
             output_dir=str(output_dir),
         )
@@ -776,7 +838,7 @@ class CloudMRPRunner:
     def _rollback_partial_session(
         self,
         *,
-        session_slug: str,
+        session_id: str,
         pool_name: str | None,
         container_names: Sequence[str],
         job_names: Sequence[str],
@@ -809,7 +871,7 @@ class CloudMRPRunner:
                 failures.append(f"container:{container_name}: {exc}")
         print(
             (
-                f"[cloud-run] rolled back partial session {session_slug}: "
+                f"[cloud-run] rolled back partial session {session_id}: "
                 f"jobs={list(job_names)}, pool={pool_name}, "
                 f"containers={list(container_names)}"
             ),
@@ -822,7 +884,7 @@ class CloudMRPRunner:
         self,
         *,
         exc: BaseException,
-        session_slug: str,
+        session_id: str,
         pool_name: str,
         created_pool: bool,
         created_containers: Sequence[str],
@@ -831,13 +893,13 @@ class CloudMRPRunner:
     ) -> RuntimeError | None:
         """Rollback partial resources and preserve control-flow exceptions."""
         rollback_failures = self._rollback_partial_session(
-            session_slug=session_slug,
+            session_id=session_id,
             pool_name=pool_name if created_pool else None,
             container_names=created_containers,
             job_names=created_jobs,
         )
         detail = (
-            f"session_slug={session_slug}, "
+            f"session_id={session_id}, "
             f"pool={pool_name if created_pool else 'not-created'}, "
             f"containers={list(created_containers)}, "
             f"jobs={list(created_jobs)}, "
@@ -864,112 +926,36 @@ class CloudMRPRunner:
 
     def _initialize_cloud_session(self) -> CloudSession:
         tag = self._git_short_sha(self.repo_root)
-        session_slug = self._make_session_slug(tag)
-        local_image_ref = self._build_local_image(
-            repo_root=self.repo_root,
-            dockerfile=self.dockerfile,
-            local_image=self.settings.local_image,
-            tag=tag,
-        )
-        remote_image_ref = self._upload_local_image(
-            client=self.client,
-            local_image_ref=local_image_ref,
-            repository=self.settings.repository,
-            tag=tag,
-        )
-
-        input_container = self._make_resource_name(
-            self.settings.input_container_prefix,
-            session_slug,
-            max_length=63,
-        )
-        output_container = self._make_resource_name(
-            self.settings.output_container_prefix,
-            session_slug,
-            max_length=63,
-        )
-        logs_container = self._make_resource_name(
-            self.settings.logs_container_prefix,
-            session_slug,
-            max_length=63,
-        )
-        pool_name = self._make_resource_name(
-            self.settings.pool_prefix,
-            session_slug,
-            max_length=64,
-        )
-
-        # Track resources that have actually been created so that a
-        # failure partway through setup can roll them back and avoid
-        # orphaning real Azure resources. We preserve creation order so
-        # teardown can happen in reverse (jobs -> pool -> containers).
+        session_id = self._make_session_id(tag)
+        remote_image_ref = self._build_cloud_image(tag)
+        resource_names = self._make_session_resource_names(session_id)
         created_containers: list[str] = []
         created_pool = False
         created_jobs: list[str] = []
 
         try:
-            for container_name in (
-                input_container,
-                output_container,
-                logs_container,
-            ):
-                self.client.create_blob_container(container_name)
-                created_containers.append(container_name)
-
-            mounts = [
-                {
-                    "source": input_container,
-                    "target": self.settings.input_mount_path.lstrip("/"),
-                },
-                {
-                    "source": output_container,
-                    "target": self.settings.output_mount_path.lstrip("/"),
-                },
-                {
-                    "source": logs_container,
-                    "target": self.settings.logs_mount_path.lstrip("/"),
-                },
-            ]
-            self._create_pool_with_blob_mounts(
-                client=self.client,
-                pool_name=pool_name,
-                mounts=mounts,
-                container_image_name=remote_image_ref,
-                vm_size=self.settings.vm_size,
-                target_dedicated_nodes=self.settings.pool_max_nodes,
-                task_slots_per_node=self.settings.task_slots_per_node,
-                auto_scale_evaluation_interval_minutes=(
-                    self.settings.pool_auto_scale_evaluation_interval_minutes
-                ),
+            self._create_session_containers(
+                resource_names,
+                created_containers=created_containers,
+            )
+            self._create_session_pool(
+                resource_names.pool_name,
+                self._build_session_mounts(resource_names),
+                remote_image_ref,
             )
             created_pool = True
-            self._last_pool_snapshot = self._wait_for_pool_ready(
-                batch_client=self.client.batch_service_client,
-                pool_name=pool_name,
-                timeout_minutes=self.settings.pool_ready_timeout_minutes,
+            self._wait_for_session_pool(resource_names.pool_name)
+            shared_job_names = self._create_session_jobs(
+                session_id,
+                resource_names.pool_name,
+                resource_names.logs_container,
+                created_jobs=created_jobs,
             )
-
-            shared_job_names: list[str] = []
-            for job_index in range(1, self.settings.jobs_per_session + 1):
-                job_name = self._make_resource_name(
-                    self.settings.job_prefix,
-                    f"{session_slug}-j{job_index}",
-                    max_length=64,
-                )
-                self.client.create_job(
-                    job_name=job_name,
-                    pool_name=pool_name,
-                    save_logs_to_blob=logs_container,
-                    logs_folder=f"{session_slug}/{job_name}",
-                    verify_pool=False,
-                )
-                created_jobs.append(job_name)
-                shared_job_names.append(job_name)
         except BaseException as exc:
             wrapped_error = self._handle_partial_session_failure(
                 exc=exc,
-                session_slug=session_slug,
-                pool_name=pool_name,
+                session_id=session_id,
+                pool_name=resource_names.pool_name,
                 created_pool=created_pool,
                 created_containers=created_containers,
                 created_jobs=created_jobs,
@@ -979,27 +965,174 @@ class CloudMRPRunner:
                 raise
             raise wrapped_error from exc
 
-        job_names = {
+        job_names = self._build_generation_job_map(shared_job_names)
+        self._print_session_startup_summary(
+            pool_name=resource_names.pool_name,
+            job_names=job_names,
+            remote_image_ref=remote_image_ref,
+        )
+        return self._build_cloud_session(
+            tag=tag,
+            session_id=session_id,
+            resource_names=resource_names,
+            remote_image_ref=remote_image_ref,
+            job_names=job_names,
+        )
+
+    def _build_cloud_image(self, tag: str) -> str:
+        local_image_ref = self._build_local_image(
+            repo_root=self.repo_root,
+            dockerfile=self.dockerfile,
+            local_image=self.settings.local_image,
+            tag=tag,
+        )
+        return self._upload_local_image(
+            client=self.client,
+            local_image_ref=local_image_ref,
+            repository=self.settings.repository,
+            tag=tag,
+        )
+
+    def _make_session_resource_names(
+        self,
+        session_id: str,
+    ) -> _SessionResourceNames:
+        return _SessionResourceNames(
+            input_container=self._make_resource_name(
+                self.settings.input_container_prefix,
+                session_id,
+                max_length=63,
+            ),
+            output_container=self._make_resource_name(
+                self.settings.output_container_prefix,
+                session_id,
+                max_length=63,
+            ),
+            logs_container=self._make_resource_name(
+                self.settings.logs_container_prefix,
+                session_id,
+                max_length=63,
+            ),
+            pool_name=self._make_resource_name(
+                self.settings.pool_prefix,
+                session_id,
+                max_length=64,
+            ),
+        )
+
+    def _create_session_containers(
+        self,
+        resource_names: _SessionResourceNames,
+        *,
+        created_containers: list[str],
+    ) -> None:
+        for container_name in (
+            resource_names.input_container,
+            resource_names.output_container,
+            resource_names.logs_container,
+        ):
+            self.client.create_blob_container(container_name)
+            created_containers.append(container_name)
+
+    def _build_session_mounts(
+        self,
+        resource_names: _SessionResourceNames,
+    ) -> list[dict[str, str]]:
+        return [
+            {
+                "source": resource_names.input_container,
+                "target": self.settings.input_mount_path.lstrip("/"),
+            },
+            {
+                "source": resource_names.output_container,
+                "target": self.settings.output_mount_path.lstrip("/"),
+            },
+            {
+                "source": resource_names.logs_container,
+                "target": self.settings.logs_mount_path.lstrip("/"),
+            },
+        ]
+
+    def _create_session_pool(
+        self,
+        pool_name: str,
+        mounts: list[dict[str, str]],
+        remote_image_ref: str,
+    ) -> None:
+        self._create_pool_with_blob_mounts(
+            client=self.client,
+            pool_name=pool_name,
+            mounts=mounts,
+            container_image_name=remote_image_ref,
+            vm_size=self.settings.vm_size,
+            target_dedicated_nodes=self.settings.pool_max_nodes,
+            task_slots_per_node=self.settings.task_slots_per_node,
+            auto_scale_evaluation_interval_minutes=(
+                self.settings.pool_auto_scale_evaluation_interval_minutes
+            ),
+        )
+
+    def _wait_for_session_pool(self, pool_name: str) -> None:
+        self._last_pool_snapshot = self._wait_for_pool_ready(
+            batch_client=self.client.batch_service_client,
+            pool_name=pool_name,
+            timeout_minutes=self.settings.pool_ready_timeout_minutes,
+        )
+
+    def _create_session_jobs(
+        self,
+        session_id: str,
+        pool_name: str,
+        logs_container: str,
+        *,
+        created_jobs: list[str],
+    ) -> list[str]:
+        shared_job_names: list[str] = []
+        for job_index in range(1, self.settings.jobs_per_session + 1):
+            job_name = self._make_resource_name(
+                self.settings.job_prefix,
+                f"{session_id}-j{job_index}",
+                max_length=64,
+            )
+            self.client.create_job(
+                job_name=job_name,
+                pool_name=pool_name,
+                save_logs_to_blob=logs_container,
+                logs_folder=f"{session_id}/{job_name}",
+                verify_pool=False,
+            )
+            created_jobs.append(job_name)
+            shared_job_names.append(job_name)
+        return shared_job_names
+
+    def _build_generation_job_map(
+        self,
+        shared_job_names: list[str],
+    ) -> dict[str, list[str]]:
+        return {
             str(generation): list(shared_job_names)
             for generation in range(self.generation_count)
         }
 
-        self._print_session_startup_summary(
-            pool_name=pool_name,
-            job_names=job_names,
-            remote_image_ref=remote_image_ref,
-        )
-
+    def _build_cloud_session(
+        self,
+        *,
+        tag: str,
+        session_id: str,
+        resource_names: _SessionResourceNames,
+        remote_image_ref: str,
+        job_names: dict[str, list[str]],
+    ) -> CloudSession:
         return CloudSession(
             keyvault=self.settings.keyvault,
-            session_slug=session_slug,
+            session_id=session_id,
             image_tag=tag,
             remote_image_ref=remote_image_ref,
-            pool_name=pool_name,
+            pool_name=resource_names.pool_name,
             job_names=job_names,
-            input_container=input_container,
-            output_container=output_container,
-            logs_container=logs_container,
+            input_container=resource_names.input_container,
+            output_container=resource_names.output_container,
+            logs_container=resource_names.logs_container,
             task_mrp_config_path=self.settings.task_mrp_config_path,
             input_mount_path=self.settings.input_mount_path,
             output_mount_path=self.settings.output_mount_path,
@@ -1446,88 +1579,36 @@ class CloudMRPRunner:
         raise RuntimeError("Cloud runner controller failed.")
 
     async def _execute_run(self, run_id: str) -> None:
-        inflight_semaphore = self._inflight_semaphore
+        inflight_semaphore = self._get_inflight_semaphore_or_resolve(run_id)
         if inflight_semaphore is None:
-            self._resolve_run_exception(
-                run_id,
-                RuntimeError("Cloud runner controller is unavailable."),
-            )
             return
 
         inflight_acquired = False
         try:
+            submission = await self._submit_active_run(run_id)
+            if submission is None:
+                return
+
             await inflight_semaphore.acquire()
             inflight_acquired = True
-            if not self._mark_run_submitting(run_id):
-                return
-            if self._is_run_cancelled(run_id):
-                raise SimulationCancelledError(run_id)
-            submission = await self._run_in_io_executor(
-                self._submit_run_blocking,
+            task_status = await self._wait_for_submitted_task(
                 run_id,
+                submission,
             )
-            submission_state = self._set_task_id(
-                run_id,
-                task_id=submission["task_id"],
-                upload_elapsed_seconds=submission["upload_elapsed_seconds"],
-                submitted_at=submission["submitted_at"],
-            )
-            if submission_state != "active":
-                self._cancel_batch_task(
-                    batch_client=self.client.batch_service_client,
-                    job_name=submission["job_name"],
-                    task_id=submission["task_id"],
-                )
-                if submission_state == "cancelled":
-                    self._resolve_run_cancelled(run_id)
+            completed_task = self._mark_task_completed(run_id, task_status)
+            if completed_task is None:
                 return
-
-            client = self.client
-            try:
-                task_status = await self._wait_for_task_completion_async(
-                    client=client,
-                    job_name=submission["job_name"],
-                    task_id=submission["task_id"],
-                    run_id=run_id,
-                )
-            except BaseException:
-                # Best-effort cancel the remote Batch task so a local
-                # wait-path timeout or polling failure does not leave
-                # the submitted task running in Azure.
-                try:
-                    self._cancel_batch_task(
-                        batch_client=self.client.batch_service_client,
-                        job_name=submission["job_name"],
-                        task_id=submission["task_id"],
-                    )
-                except Exception:
-                    pass
-                raise
-
-            with self._run_state_lock:
-                current = self._active_runs.get(run_id)
-                if current is None:
-                    return
-                current.last_known_state = "completed"
-                current.task_status = task_status
-                current.completion_seen_at = time.monotonic()
-                current.phase = "collecting"
-                output_dir = current.output_dir
-                cancelled = current.cancelled
-
-            download_elapsed = None
-            if not cancelled and task_status.get("result") == "success":
-                download_elapsed = await self._run_in_io_executor(
-                    self._download_output_blocking,
-                    run_id,
-                    output_dir,
-                )
-
-            with self._run_state_lock:
-                current = self._active_runs.get(run_id)
-                if current is None:
-                    return
-                current.download_elapsed_seconds = download_elapsed
+            download_elapsed = await self._download_successful_run_output(
+                run_id,
+                output_dir=completed_task.output_dir,
+                task_status=task_status,
+                cancelled=completed_task.cancelled,
+            )
+            if not self._store_run_download_elapsed(
+                run_id,
+                download_elapsed,
+            ):
+                return
 
             self._emit_task_timing_summary(run_id)
 
@@ -1536,37 +1617,12 @@ class CloudMRPRunner:
                 return
 
             if task_status.get("result") != "success":
-                failure_message = self._format_task_failure_message(
-                    run_id=run_id,
-                    job_name=submission["job_name"],
-                    task_id=submission["task_id"],
-                    task_status=task_status,
-                    logs_container=self.session.logs_container,
-                    logs_folder=self.session.logs_folder_for_job(
-                        submission["job_name"],
-                        run_id,
-                    ),
-                )
-                failure_message = append_task_log_excerpts(
-                    failure_message,
-                    task_log_excerpts=read_task_log_excerpts(
-                        client,
-                        container_name=self.session.logs_container,
-                        logs_folder=self.session.logs_folder_for_job(
-                            submission["job_name"],
-                            run_id,
-                        ),
-                    ),
-                )
-                self._resolve_run_exception(
-                    run_id,
-                    RuntimeError(failure_message),
-                )
+                self._resolve_failed_task(run_id, submission, task_status)
                 return
 
             outputs = await self._run_in_io_executor(
                 self._read_output_dir,
-                output_dir,
+                completed_task.output_dir,
             )
             self._resolve_run_success(run_id, outputs)
         except asyncio.CancelledError:
@@ -1581,6 +1637,152 @@ class CloudMRPRunner:
         finally:
             if inflight_acquired:
                 inflight_semaphore.release()
+
+    def _get_inflight_semaphore_or_resolve(
+        self,
+        run_id: str,
+    ) -> asyncio.Semaphore | None:
+        inflight_semaphore = self._inflight_semaphore
+        if inflight_semaphore is not None:
+            return inflight_semaphore
+        self._resolve_run_exception(
+            run_id,
+            RuntimeError("Cloud runner controller is unavailable."),
+        )
+        return None
+
+    async def _submit_active_run(
+        self,
+        run_id: str,
+    ) -> dict[str, Any] | None:
+        if not self._mark_run_submitting(run_id):
+            return None
+        if self._is_run_cancelled(run_id):
+            raise SimulationCancelledError(run_id)
+
+        submission = await self._run_in_io_executor(
+            self._submit_run_blocking,
+            run_id,
+        )
+        submission_state = self._set_task_id(
+            run_id,
+            task_id=submission["task_id"],
+            upload_elapsed_seconds=submission["upload_elapsed_seconds"],
+            submitted_at=submission["submitted_at"],
+        )
+        if submission_state == "active":
+            return submission
+
+        self._cancel_submitted_task(
+            submission["job_name"],
+            submission["task_id"],
+        )
+        if submission_state == "cancelled":
+            self._resolve_run_cancelled(run_id)
+        return None
+
+    def _cancel_submitted_task(self, job_name: str, task_id: str) -> None:
+        self._cancel_batch_task(
+            batch_client=self.client.batch_service_client,
+            job_name=job_name,
+            task_id=task_id,
+        )
+
+    async def _wait_for_submitted_task(
+        self,
+        run_id: str,
+        submission: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return await self._wait_for_task_completion_async(
+                client=self.client,
+                job_name=submission["job_name"],
+                task_id=submission["task_id"],
+                run_id=run_id,
+            )
+        except BaseException:
+            try:
+                self._cancel_submitted_task(
+                    submission["job_name"],
+                    submission["task_id"],
+                )
+            except Exception:
+                pass
+            raise
+
+    def _mark_task_completed(
+        self,
+        run_id: str,
+        task_status: dict[str, Any],
+    ) -> _CompletedRunTask | None:
+        with self._run_state_lock:
+            current = self._active_runs.get(run_id)
+            if current is None:
+                return None
+            current.last_known_state = "completed"
+            current.task_status = task_status
+            current.completion_seen_at = time.monotonic()
+            current.phase = "collecting"
+            return _CompletedRunTask(
+                output_dir=current.output_dir,
+                cancelled=current.cancelled,
+            )
+
+    async def _download_successful_run_output(
+        self,
+        run_id: str,
+        *,
+        output_dir: Path,
+        task_status: dict[str, Any],
+        cancelled: bool,
+    ) -> float | None:
+        if cancelled or task_status.get("result") != "success":
+            return None
+        return await self._run_in_io_executor(
+            self._download_output_blocking,
+            run_id,
+            output_dir,
+        )
+
+    def _store_run_download_elapsed(
+        self,
+        run_id: str,
+        download_elapsed: float | None,
+    ) -> bool:
+        with self._run_state_lock:
+            current = self._active_runs.get(run_id)
+            if current is None:
+                return False
+            current.download_elapsed_seconds = download_elapsed
+            return True
+
+    def _resolve_failed_task(
+        self,
+        run_id: str,
+        submission: dict[str, Any],
+        task_status: dict[str, Any],
+    ) -> None:
+        logs_folder = self.session.logs_folder_for_job(
+            submission["job_name"],
+            run_id,
+        )
+        failure_message = self._format_task_failure_message(
+            run_id=run_id,
+            job_name=submission["job_name"],
+            task_id=submission["task_id"],
+            task_status=task_status,
+            logs_container=self.session.logs_container,
+            logs_folder=logs_folder,
+        )
+        failure_message = append_task_log_excerpts(
+            failure_message,
+            task_log_excerpts=read_task_log_excerpts(
+                self.client,
+                container_name=self.session.logs_container,
+                logs_folder=logs_folder,
+            ),
+        )
+        self._resolve_run_exception(run_id, RuntimeError(failure_message))
 
     def _submit_run_blocking(self, run_id: str) -> dict[str, Any]:
         with self._run_state_lock:

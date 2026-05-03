@@ -17,7 +17,7 @@ from .formatting import (
 )
 from .naming import (
     make_resource_name,
-    make_session_slug,
+    make_session_id,
     parse_generation_from_run_id,
 )
 from .tooling import (
@@ -44,7 +44,7 @@ class CloudExecutorBackend:
 class CloudRunnerBackend:
     create_cloud_client: Callable[..., Any]
     git_short_sha: Callable[[Path], str]
-    make_session_slug: Callable[[str], str]
+    make_session_id: Callable[[str], str]
     build_local_image: Callable[..., str]
     upload_local_image: Callable[..., str]
     create_pool_with_blob_mounts: Callable[..., None]
@@ -72,7 +72,7 @@ DEFAULT_CLOUD_EXECUTOR_BACKEND = CloudExecutorBackend(
 DEFAULT_CLOUD_RUNNER_BACKEND = CloudRunnerBackend(
     create_cloud_client=create_cloud_client,
     git_short_sha=git_short_sha,
-    make_session_slug=make_session_slug,
+    make_session_id=make_session_id,
     build_local_image=build_local_image,
     upload_local_image=upload_local_image,
     create_pool_with_blob_mounts=create_pool_with_blob_mounts,

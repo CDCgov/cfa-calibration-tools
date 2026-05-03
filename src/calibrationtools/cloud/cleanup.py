@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import CloudRuntimeSettings, load_cloud_model_config
-from .naming import parse_image_tag_from_session_slug, sanitize_name
+from .naming import (
+    parse_image_tag_from_session_id,
+    parse_username_from_session_id,
+    sanitize_name,
+)
 from .tooling import create_cloud_client, require_tool
 
 # Module-level identity cache used by the default login callable.
@@ -45,7 +49,7 @@ def _default_ensure_az_login_with_identity(
 @dataclass(frozen=True)
 class CleanupPlan:
     config_path: Path
-    session_slug: str
+    session_id: str
     keyvault: str
     registry_name: str | None
     repository_name: str
@@ -67,7 +71,7 @@ class CleanupPlan:
     def to_dict(self) -> dict[str, object]:
         return {
             "config_path": str(self.config_path),
-            "session_slug": self.session_slug,
+            "session_id": self.session_id,
             "keyvault": self.keyvault,
             "registry_name": self.registry_name,
             "repository_name": self.repository_name,
@@ -82,7 +86,8 @@ class CleanupPlan:
 @dataclass(frozen=True)
 class CleanupListing:
     config_path: Path
-    session_slug: str | None
+    session_id: str | None
+    user: str | None
     image_tag: str | None
     keyvault: str
     registry_name: str | None
@@ -123,7 +128,7 @@ def build_parser(
         or (
             "Clean cloud resources created by one calibration session. "
             "Use --list for read-only discovery across the project naming "
-            "scope, or pass --session-slug to inspect or delete one session."
+            "scope, or pass --session-id to inspect or delete one session."
         )
     )
     parser.add_argument(
@@ -138,11 +143,23 @@ def build_parser(
         ),
     )
     parser.add_argument(
-        "--session-slug",
+        "--session-id",
         help=(
-            "Exact session slug to inspect or clean up. This is printed by "
+            "Exact session ID to inspect or clean up. This is printed by "
             "the cloud runner and embedded in the Batch, Blob, and log paths."
         ),
+    )
+    parser.add_argument(
+        "--user",
+        help=(
+            "Filter sessions to the sanitized username segment embedded in "
+            "the session ID."
+        ),
+    )
+    parser.add_argument(
+        "--all-sessions-for-user",
+        action="store_true",
+        help="Delete every project-scoped session for --user.",
     )
     parser.add_argument(
         "--image-tag",
@@ -161,16 +178,14 @@ def build_parser(
         action="store_true",
         help=(
             "list all project-scoped "
-            "resources; with --session-slug and/or --image-tag, narrow the output."
+            "resources; with --session-id, --user, and/or --image-tag, "
+            "narrow the output."
         ),
     )
     parser.add_argument(
-        "--yes",
+        "--dry-run",
         action="store_true",
-        help=(
-            "Actually delete the discovered Azure resources. Without this flag, "
-            "the command only prints a dry-run plan."
-        ),
+        help=("Print the cleanup plan without deleting any Azure resources."),
     )
     return parser
 
@@ -185,8 +200,25 @@ def parse_args(
         default_config_path=default_config_path,
         description=description,
     ).parse_args(argv)
-    if not args.list and not args.session_slug:
-        raise SystemExit("--session-slug is required unless --list is used.")
+    if args.list:
+        return args
+    if args.session_id and args.all_sessions_for_user:
+        raise SystemExit(
+            "--session-id and --all-sessions-for-user are mutually exclusive."
+        )
+    if args.all_sessions_for_user:
+        if not args.user:
+            raise SystemExit("--all-sessions-for-user requires --user.")
+        return args
+    if args.user and not args.session_id:
+        raise SystemExit(
+            "Deleting all sessions for a user requires "
+            "--all-sessions-for-user --user."
+        )
+    if not args.session_id:
+        raise SystemExit(
+            "Cleanup requires --session-id or --all-sessions-for-user --user."
+        )
     return args
 
 
@@ -204,7 +236,8 @@ def main(argv: list[str] | None = None) -> int:
             client,
             settings,
             config_path=config_path,
-            session_slug=args.session_slug,
+            session_id=args.session_id,
+            user=args.user,
             image_tag=args.image_tag,
             include_acr=include_acr,
             allow_acr_errors=True,
@@ -212,19 +245,46 @@ def main(argv: list[str] | None = None) -> int:
         print(format_cleanup_listing(listing, include_acr=include_acr))
         return 0
 
+    if args.all_sessions_for_user:
+        plans = discover_cleanup_plans_for_user(
+            client,
+            settings,
+            config_path=config_path,
+            user=args.user,
+            image_tag=args.image_tag,
+            include_acr=include_acr,
+        )
+        print(format_cleanup_plans(plans, include_acr=include_acr))
+
+        if args.dry_run:
+            print(
+                "\nDry run only. Re-run without --dry-run to delete the "
+                "resources above."
+            )
+            return 0
+
+        result = execute_cleanup_plans(
+            client,
+            plans,
+            include_acr=include_acr,
+        )
+        _print_cleanup_result(result)
+        return 0 if result.ok else 1
+
     plan = discover_cleanup_plan(
         client,
         settings,
         config_path=config_path,
-        session_slug=args.session_slug,
+        session_id=args.session_id,
         image_tag=args.image_tag,
         include_acr=include_acr,
     )
     print(format_cleanup_plan(plan, include_acr=include_acr))
 
-    if not args.yes:
+    if args.dry_run:
         print(
-            "\nDry run only. Re-run with --yes to delete the resources above."
+            "\nDry run only. Re-run without --dry-run to delete the "
+            "resources above."
         )
         return 0
 
@@ -233,6 +293,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     result = execute_cleanup(client, plan, include_acr=include_acr)
+    _print_cleanup_result(result)
+    return 0 if result.ok else 1
+
+
+def _print_cleanup_result(result: CleanupResult) -> None:
     print("\nDeleted resources:")
     if result.deleted:
         for item in result.deleted:
@@ -244,10 +309,9 @@ def main(argv: list[str] | None = None) -> int:
         print("\nCleanup finished with errors:", file=sys.stderr)
         for failure in result.failures:
             print(f"  - {failure}", file=sys.stderr)
-        return 1
+        return
 
     print("\nCleanup finished successfully.")
-    return 0
 
 
 def discover_cleanup_listing(
@@ -255,7 +319,8 @@ def discover_cleanup_listing(
     settings: CloudRuntimeSettings,
     *,
     config_path: Path,
-    session_slug: str | None,
+    session_id: str | None,
+    user: str | None,
     image_tag: str | None,
     include_acr: bool,
     allow_acr_errors: bool = False,
@@ -265,96 +330,32 @@ def discover_cleanup_listing(
         list_acr_repository_tags_fn = list_acr_repository_tags
 
     cred = client.cred
-    if not cred.azure_resource_group_name:
-        raise SystemExit("AZURE_RESOURCE_GROUP_NAME must be configured.")
-    if not cred.azure_batch_account:
-        raise SystemExit("AZURE_BATCH_ACCOUNT must be configured.")
-
-    pool_prefixes = (settings.pool_prefix,)
-    job_prefixes = (settings.job_prefix,)
-    container_prefixes = (
-        settings.input_container_prefix,
-        settings.output_container_prefix,
-        settings.logs_container_prefix,
+    _require_cleanup_listing_credentials(cred)
+    job_names, pool_names, container_names = _discover_cleanup_batch_resources(
+        client,
+        settings,
+        session_id=session_id,
+        user=user,
     )
-
-    if session_slug is None:
-        pool_names = _matching_project_resource_names(
-            _list_pool_names(client),
-            pool_prefixes,
-        )
-        job_names = _matching_project_resource_names(
-            _list_job_names(client),
-            job_prefixes,
-        )
-        container_names = _matching_project_resource_names(
-            _list_container_names(client),
-            container_prefixes,
-        )
-    else:
-        pool_names = _filter_names_for_session_slug(
-            _list_pool_names(client),
-            session_slug,
-            _session_slugs_for_resource_name,
-            pool_prefixes,
-        )
-        job_names = _filter_names_for_session_slug(
-            _list_job_names(client),
-            session_slug,
-            _session_slugs_for_job_name,
-            job_prefixes,
-        )
-        container_names = _filter_names_for_session_slug(
-            _list_container_names(client),
-            session_slug,
-            _session_slugs_for_resource_name,
-            container_prefixes,
-        )
 
     registry_name = getattr(cred, "azure_container_registry_account", None)
     managed_identity_resource_id = getattr(
         cred, "azure_user_assigned_identity", None
     )
-    acr_image_tags: tuple[str, ...] = ()
-    acr_image_tags_warning: str | None = None
-    if include_acr:
-        if not registry_name:
-            if allow_acr_errors:
-                acr_image_tags_warning = (
-                    "AZURE_CONTAINER_REGISTRY_ACCOUNT must be configured."
-                )
-            else:
-                raise SystemExit(
-                    "AZURE_CONTAINER_REGISTRY_ACCOUNT must be configured."
-                )
-        else:
-            try:
-                discovered_tags = tuple(
-                    sorted(
-                        list_acr_repository_tags_fn(
-                            registry_name,
-                            settings.repository,
-                            managed_identity_resource_id=(
-                                managed_identity_resource_id
-                            ),
-                        )
-                    )
-                )
-            except Exception as exc:
-                if not allow_acr_errors:
-                    raise
-                acr_image_tags_warning = _summarize_error_message(exc)
-            else:
-                if image_tag is None:
-                    acr_image_tags = discovered_tags
-                else:
-                    acr_image_tags = tuple(
-                        tag for tag in discovered_tags if tag == image_tag
-                    )
+    discovered_tags, acr_image_tags_warning = _discover_cleanup_acr_tags(
+        registry_name=registry_name,
+        repository_name=settings.repository,
+        managed_identity_resource_id=managed_identity_resource_id,
+        include_acr=include_acr,
+        allow_acr_errors=allow_acr_errors,
+        list_acr_repository_tags_fn=list_acr_repository_tags_fn,
+    )
+    acr_image_tags = _filter_acr_tags(discovered_tags, image_tag)
 
     return CleanupListing(
         config_path=config_path,
-        session_slug=session_slug,
+        session_id=session_id,
+        user=user,
         image_tag=image_tag,
         keyvault=settings.keyvault,
         registry_name=registry_name,
@@ -367,12 +368,138 @@ def discover_cleanup_listing(
     )
 
 
+def _require_cleanup_listing_credentials(cred: Any) -> None:
+    if not cred.azure_resource_group_name:
+        raise SystemExit("AZURE_RESOURCE_GROUP_NAME must be configured.")
+    if not cred.azure_batch_account:
+        raise SystemExit("AZURE_BATCH_ACCOUNT must be configured.")
+
+
+def _discover_cleanup_batch_resources(
+    client: Any,
+    settings: CloudRuntimeSettings,
+    *,
+    session_id: str | None,
+    user: str | None,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    pool_prefixes = (settings.pool_prefix,)
+    job_prefixes = (settings.job_prefix,)
+    container_prefixes = (
+        settings.input_container_prefix,
+        settings.output_container_prefix,
+        settings.logs_container_prefix,
+    )
+
+    job_names = _matching_project_resource_names(
+        _list_job_names(client), job_prefixes
+    )
+    pool_names = _matching_project_resource_names(
+        _list_pool_names(client),
+        pool_prefixes,
+    )
+    container_names = _matching_project_resource_names(
+        _list_container_names(client),
+        container_prefixes,
+    )
+
+    if session_id is not None:
+        job_names = _filter_names_for_session_id(
+            list(job_names),
+            session_id,
+            _session_ids_for_job_name,
+            job_prefixes,
+        )
+        pool_names = _filter_names_for_session_id(
+            list(pool_names),
+            session_id,
+            _session_ids_for_resource_name,
+            pool_prefixes,
+        )
+        container_names = _filter_names_for_session_id(
+            list(container_names),
+            session_id,
+            _session_ids_for_resource_name,
+            container_prefixes,
+        )
+
+    if user is not None:
+        normalized_user = sanitize_name(user)
+        job_names = _filter_names_for_session_user(
+            list(job_names),
+            normalized_user,
+            _session_ids_for_job_name,
+        )
+        pool_names = _filter_names_for_session_user(
+            list(pool_names),
+            normalized_user,
+            _session_ids_for_resource_name,
+        )
+        container_names = _filter_names_for_session_user(
+            list(container_names),
+            normalized_user,
+            _session_ids_for_resource_name,
+        )
+
+    return (
+        tuple(job_names),
+        tuple(pool_names),
+        tuple(container_names),
+    )
+
+
+def _discover_cleanup_acr_tags(
+    *,
+    registry_name: str | None,
+    repository_name: str,
+    managed_identity_resource_id: str | None,
+    include_acr: bool,
+    allow_acr_errors: bool,
+    list_acr_repository_tags_fn: Callable[..., list[str]],
+) -> tuple[tuple[str, ...], str | None]:
+    if not include_acr:
+        return (), None
+    if not registry_name:
+        message = "AZURE_CONTAINER_REGISTRY_ACCOUNT must be configured."
+        if allow_acr_errors:
+            return (), message
+        raise SystemExit(message)
+
+    try:
+        return (
+            tuple(
+                sorted(
+                    list_acr_repository_tags_fn(
+                        registry_name,
+                        repository_name,
+                        managed_identity_resource_id=(
+                            managed_identity_resource_id
+                        ),
+                    )
+                )
+            ),
+            None,
+        )
+    except Exception as exc:
+        if not allow_acr_errors:
+            raise
+        return (), _summarize_error_message(exc)
+
+
+def _filter_acr_tags(
+    discovered_tags: tuple[str, ...],
+    image_tag: str | None,
+) -> tuple[str, ...]:
+    if image_tag is None:
+        return discovered_tags
+    return tuple(tag for tag in discovered_tags if tag == image_tag)
+
+
 def discover_cleanup_plan(
     client,
     settings: CloudRuntimeSettings,
     *,
     config_path: Path,
-    session_slug: str,
+    session_id: str,
     image_tag: str | None,
     include_acr: bool,
     list_acr_repository_tags_fn: Callable[..., list[str]] | None = None,
@@ -381,7 +508,8 @@ def discover_cleanup_plan(
         client,
         settings,
         config_path=config_path,
-        session_slug=session_slug,
+        session_id=session_id,
+        user=None,
         image_tag=image_tag,
         include_acr=include_acr and image_tag is not None,
         list_acr_repository_tags_fn=list_acr_repository_tags_fn,
@@ -389,7 +517,7 @@ def discover_cleanup_plan(
 
     return CleanupPlan(
         config_path=config_path,
-        session_slug=session_slug,
+        session_id=session_id,
         keyvault=listing.keyvault,
         registry_name=listing.registry_name,
         repository_name=listing.repository_name,
@@ -403,6 +531,62 @@ def discover_cleanup_plan(
     )
 
 
+def discover_cleanup_plans_for_user(
+    client,
+    settings: CloudRuntimeSettings,
+    *,
+    config_path: Path,
+    user: str,
+    image_tag: str | None,
+    include_acr: bool,
+    list_acr_repository_tags_fn: Callable[..., list[str]] | None = None,
+) -> tuple[CleanupPlan, ...]:
+    listing = discover_cleanup_listing(
+        client,
+        settings,
+        config_path=config_path,
+        session_id=None,
+        user=user,
+        image_tag=image_tag,
+        include_acr=include_acr and image_tag is not None,
+        list_acr_repository_tags_fn=list_acr_repository_tags_fn,
+    )
+    session_ids = _session_ids_from_listing(listing)
+    acr_image_exists = (
+        image_tag is not None and image_tag in listing.acr_image_tags
+    )
+
+    plans: list[CleanupPlan] = []
+    for index, session_id in enumerate(session_ids):
+        plans.append(
+            CleanupPlan(
+                config_path=config_path,
+                session_id=session_id,
+                keyvault=listing.keyvault,
+                registry_name=listing.registry_name,
+                repository_name=listing.repository_name,
+                image_tag=image_tag,
+                job_names=_names_for_session_id(
+                    listing.job_names,
+                    session_id,
+                    _session_ids_for_job_name,
+                ),
+                pool_names=_names_for_session_id(
+                    listing.pool_names,
+                    session_id,
+                    _session_ids_for_resource_name,
+                ),
+                container_names=_names_for_session_id(
+                    listing.container_names,
+                    session_id,
+                    _session_ids_for_resource_name,
+                ),
+                acr_image_exists=acr_image_exists and index == 0,
+            )
+        )
+    return tuple(plans)
+
+
 def execute_cleanup(
     client,
     plan: CleanupPlan,
@@ -413,11 +597,11 @@ def execute_cleanup(
     if delete_acr_image_tag_fn is None:
         delete_acr_image_tag_fn = delete_acr_image_tag
 
-    if not plan.session_slug and (
+    if not plan.session_id and (
         plan.job_names or plan.pool_names or plan.container_names
     ):
         raise ValueError(
-            "Cleanup requires a session_slug to delete Batch or Blob resources."
+            "Cleanup requires a session_id to delete Batch or Blob resources."
         )
 
     deleted: list[str] = []
@@ -485,6 +669,27 @@ def execute_cleanup(
                     f"{exc}"
                 )
 
+    return CleanupResult(deleted=tuple(deleted), failures=tuple(failures))
+
+
+def execute_cleanup_plans(
+    client,
+    plans: tuple[CleanupPlan, ...],
+    *,
+    include_acr: bool,
+    delete_acr_image_tag_fn: Callable[..., None] | None = None,
+) -> CleanupResult:
+    deleted: list[str] = []
+    failures: list[str] = []
+    for plan in plans:
+        result = execute_cleanup(
+            client,
+            plan,
+            include_acr=include_acr,
+            delete_acr_image_tag_fn=delete_acr_image_tag_fn,
+        )
+        deleted.extend(result.deleted)
+        failures.extend(result.failures)
     return CleanupResult(deleted=tuple(deleted), failures=tuple(failures))
 
 
@@ -609,7 +814,7 @@ def format_cleanup_plan(plan: CleanupPlan, *, include_acr: bool) -> str:
     lines = [
         "Cloud cleanup plan",
         f"  config: {plan.config_path}",
-        f"  session: {plan.session_slug}",
+        f"  session: {plan.session_id}",
         f"  keyvault: {plan.keyvault}",
         f"  batch jobs: {len(plan.job_names)}",
     ]
@@ -635,16 +840,35 @@ def format_cleanup_plan(plan: CleanupPlan, *, include_acr: bool) -> str:
     return "\n".join(lines)
 
 
+def format_cleanup_plans(
+    plans: tuple[CleanupPlan, ...],
+    *,
+    include_acr: bool,
+) -> str:
+    if not plans:
+        return "Cloud cleanup plan\n  sessions: 0"
+
+    lines = [
+        "Cloud cleanup plan",
+        f"  sessions: {len(plans)}",
+    ]
+    for plan in plans:
+        lines.append("")
+        lines.append(format_cleanup_plan(plan, include_acr=include_acr))
+    return "\n".join(lines)
+
+
 def format_cleanup_listing(
     listing: CleanupListing,
     *,
     include_acr: bool,
 ) -> str:
-    session_slugs_by_tag = _session_slugs_by_image_tag(listing)
+    session_ids_by_tag = _session_ids_by_image_tag(listing)
     lines = [
         "Cloud cleanup inventory",
         f"  config: {listing.config_path}",
-        f"  session filter: {listing.session_slug or '<all sessions>'}",
+        f"  session filter: {listing.session_id or '<all sessions>'}",
+        f"  user filter: {listing.user or '<all users>'}",
         f"  image filter: {listing.image_tag or '<all images>'}",
         f"  keyvault: {listing.keyvault}",
         f"  batch jobs: {len(listing.job_names)}",
@@ -652,7 +876,7 @@ def format_cleanup_listing(
     lines.extend(
         _format_listing_entry(
             name,
-            _session_slugs_for_job_name(name),
+            _session_ids_for_job_name(name),
         )
         for name in listing.job_names
     )
@@ -660,7 +884,7 @@ def format_cleanup_listing(
     lines.extend(
         _format_listing_entry(
             name,
-            _session_slugs_for_resource_name(name),
+            _session_ids_for_resource_name(name),
         )
         for name in listing.pool_names
     )
@@ -668,7 +892,7 @@ def format_cleanup_listing(
     lines.extend(
         _format_listing_entry(
             name,
-            _session_slugs_for_resource_name(name),
+            _session_ids_for_resource_name(name),
         )
         for name in listing.container_names
     )
@@ -692,7 +916,7 @@ def format_cleanup_listing(
             lines.extend(
                 _format_listing_entry(
                     f"{registry}/{listing.repository_name}:{tag}",
-                    session_slugs_by_tag.get(tag, ()),
+                    session_ids_by_tag.get(tag, ()),
                 )
                 for tag in listing.acr_image_tags
             )
@@ -750,18 +974,18 @@ def _matching_project_resource_names(
     )
 
 
-def _filter_names_for_session_slug(
+def _filter_names_for_session_id(
     names: list[str],
-    session_slug: str,
-    session_slug_getter: Callable[[str], tuple[str, ...]],
+    session_id: str,
+    session_id_getter: Callable[[str], tuple[str, ...]],
     allowed_prefixes: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Return names whose session slug matches *and* whose prefix is one of
+    """Return names whose session ID matches *and* whose prefix is one of
     the project's configured prefixes.
 
-    Matching on session slug alone is not safe: another tool sharing the same
-    Azure resource group (e.g. ``other-project-cloud-<slug>-j1``) can embed the
-    same slug suffix. Cleanup must only touch resources that also satisfy the
+    Matching on session ID alone is not safe: another tool sharing the same
+    Azure resource group (e.g. ``other-project-cloud-<id>-j1``) can embed the
+    same ID suffix. Cleanup must only touch resources that also satisfy the
     project prefix contract.
     """
     return tuple(
@@ -769,7 +993,7 @@ def _filter_names_for_session_slug(
             {
                 name
                 for name in names
-                if session_slug in session_slug_getter(name)
+                if session_id in session_id_getter(name)
                 and any(
                     _matches_project_resource_name(name, prefix)
                     for prefix in allowed_prefixes
@@ -779,54 +1003,100 @@ def _filter_names_for_session_slug(
     )
 
 
-def _session_slugs_for_job_name(job_name: str) -> tuple[str, ...]:
-    match = re.search(r"(?P<session>\d{14}-[a-z0-9-]+?)-j\d+$", job_name)
-    session_slug = match.group("session") if match else None
-    return (session_slug,) if session_slug else ()
+def _filter_names_for_session_user(
+    names: list[str],
+    user: str,
+    session_id_getter: Callable[[str], tuple[str, ...]],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                name
+                for name in names
+                if any(
+                    parse_username_from_session_id(session_id) == user
+                    for session_id in session_id_getter(name)
+                )
+            }
+        )
+    )
 
 
-def _session_slugs_for_resource_name(resource_name: str) -> tuple[str, ...]:
-    match = re.search(r"(?P<session>\d{14}-[a-z0-9-]+)$", resource_name)
-    session_slug = match.group("session") if match else None
-    return (session_slug,) if session_slug else ()
+def _session_ids_from_listing(listing: CleanupListing) -> tuple[str, ...]:
+    session_ids: set[str] = set()
+    for name in listing.pool_names:
+        session_ids.update(_session_ids_for_resource_name(name))
+    for name in listing.job_names:
+        session_ids.update(_session_ids_for_job_name(name))
+    for name in listing.container_names:
+        session_ids.update(_session_ids_for_resource_name(name))
+    return tuple(sorted(session_ids))
 
 
-def _session_slugs_by_image_tag(
+def _names_for_session_id(
+    names: tuple[str, ...],
+    session_id: str,
+    session_id_getter: Callable[[str], tuple[str, ...]],
+) -> tuple[str, ...]:
+    return tuple(
+        name for name in names if session_id in session_id_getter(name)
+    )
+
+
+def _session_ids_for_job_name(job_name: str) -> tuple[str, ...]:
+    match = re.search(
+        r"(?P<session>\d{14}-[a-z0-9-]+?-[a-z0-9]+-[0-9a-f]{12})-j\d+$",
+        job_name,
+    )
+    session_id = match.group("session") if match else None
+    return (session_id,) if session_id else ()
+
+
+def _session_ids_for_resource_name(resource_name: str) -> tuple[str, ...]:
+    match = re.search(
+        r"(?P<session>\d{14}-[a-z0-9-]+?-[a-z0-9]+-[0-9a-f]{12})$",
+        resource_name,
+    )
+    session_id = match.group("session") if match else None
+    return (session_id,) if session_id else ()
+
+
+def _session_ids_by_image_tag(
     listing: CleanupListing,
 ) -> dict[str, tuple[str, ...]]:
-    slugs_by_tag: dict[str, set[str]] = {}
+    ids_by_tag: dict[str, set[str]] = {}
 
-    def add_slug(session_slug: str | None) -> None:
-        if not session_slug:
+    def add_slug(session_id: str | None) -> None:
+        if not session_id:
             return
-        image_tag = parse_image_tag_from_session_slug(session_slug)
+        image_tag = parse_image_tag_from_session_id(session_id)
         if not image_tag:
             return
-        slugs_by_tag.setdefault(image_tag, set()).add(session_slug)
+        ids_by_tag.setdefault(image_tag, set()).add(session_id)
 
-    add_slug(listing.session_slug)
+    add_slug(listing.session_id)
     for name in listing.pool_names:
-        for session_slug in _session_slugs_for_resource_name(name):
-            add_slug(session_slug)
+        for session_id in _session_ids_for_resource_name(name):
+            add_slug(session_id)
     for name in listing.job_names:
-        for session_slug in _session_slugs_for_job_name(name):
-            add_slug(session_slug)
+        for session_id in _session_ids_for_job_name(name):
+            add_slug(session_id)
     for name in listing.container_names:
-        for session_slug in _session_slugs_for_resource_name(name):
-            add_slug(session_slug)
+        for session_id in _session_ids_for_resource_name(name):
+            add_slug(session_id)
 
     return {
-        image_tag: tuple(sorted(session_slugs))
-        for image_tag, session_slugs in slugs_by_tag.items()
+        image_tag: tuple(sorted(session_ids))
+        for image_tag, session_ids in ids_by_tag.items()
     }
 
 
-def _format_listing_entry(value: str, session_slugs: tuple[str, ...]) -> str:
-    if not session_slugs:
+def _format_listing_entry(value: str, session_ids: tuple[str, ...]) -> str:
+    if not session_ids:
         return f"    - {value} (session=<unknown>)"
-    if len(session_slugs) == 1:
-        return f"    - {value} (session={session_slugs[0]})"
-    return f"    - {value} (sessions={', '.join(session_slugs)})"
+    if len(session_ids) == 1:
+        return f"    - {value} (session={session_ids[0]})"
+    return f"    - {value} (sessions={', '.join(session_ids)})"
 
 
 def _matches_project_resource_name(name: str, prefix: str) -> bool:

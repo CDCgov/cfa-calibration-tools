@@ -21,10 +21,7 @@ def test_example_cloud_config_matches_docker_image_contract():
 
     assert config.build_context == REPO_ROOT
     assert config.dockerfile == REPO_ROOT / "packages/example_model/Dockerfile"
-    assert (
-        config.simulation_mrp_config_path
-        == EXAMPLE_MODEL_ROOT / "example_model.mrp.cloud.toml"
-    )
+    assert not hasattr(config, "simulation_mrp_config_path")
     assert (
         config.runtime_settings.task_mrp_config_path
         == "/app/example_model.mrp.toml"
