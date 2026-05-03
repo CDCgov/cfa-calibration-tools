@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from example_model import Binom_BP_Model
 from mrp import Environment
 from mrp.api import apply_dict_overrides
 
@@ -12,7 +13,6 @@ from calibrationtools.perturbation_kernel import (
 )
 from calibrationtools.sampler import ABCSampler
 from calibrationtools.variance_adapter import AdaptMultivariateNormalVariance
-from example_model import Binom_BP_Model
 
 
 @pytest.fixture()
