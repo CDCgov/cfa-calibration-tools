@@ -53,7 +53,7 @@ def _install_jobs_per_generation_compat_init(cls: type[Any]) -> None:
         original_init(self, *args, **kwargs)
 
     compat_init.__signature__ = signature  # type: ignore[attr-defined]
-    cls.__init__ = compat_init  # type: ignore[invalid-assignment]
+    cls.__init__ = compat_init
     cls.__signature__ = signature
 
 

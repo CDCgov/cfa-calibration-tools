@@ -15,35 +15,12 @@ from .naming import (
     parse_username_from_session_id,
     sanitize_name,
 )
-from .tooling import create_cloud_client, require_tool
-
-# Module-level identity cache used by the default login callable.
-#
-# `ensure_az_login_with_identity()` is deliberately stateless so that callers
-# can supply their own identity cache in tests or alternative hosts. The
-# shared API, however, still needs *some* default or it would raise on every
-# call. We keep a tiny cache here so the top-level helpers (and their default
-# login wrapper) work out of the box without forcing every caller to thread a
-# sentinel through.
-_AZ_NOT_LOGGED_IN: object = object()
-_AZ_LOGGED_IN_IDENTITY: object | str | None = _AZ_NOT_LOGGED_IN
-
-
-def _default_ensure_az_login_with_identity(
-    *, managed_identity_resource_id: str | None = None
-) -> None:
-    """Default login callable used by the shared cleanup helpers.
-
-    Maintains a module-level identity cache so repeated calls during a single
-    process reuse an existing `az login`.
-    """
-    global _AZ_LOGGED_IN_IDENTITY
-
-    _AZ_LOGGED_IN_IDENTITY = ensure_az_login_with_identity(
-        managed_identity_resource_id=managed_identity_resource_id,
-        current_identity=_AZ_LOGGED_IN_IDENTITY,
-        not_logged_in_sentinel=_AZ_NOT_LOGGED_IN,
-    )
+from .tooling import (
+    _default_ensure_az_login_with_identity,
+    create_cloud_client,
+    ensure_az_login_with_identity,  # noqa: F401
+    require_tool,
+)
 
 
 @dataclass(frozen=True)
@@ -774,40 +751,6 @@ def delete_acr_image_tag(
             f"{registry_name}/{repository_name}:{image_tag}: {stderr} "
             "The managed identity may be authenticated but still lack ACR delete permission."
         )
-
-
-def ensure_az_login_with_identity(
-    *,
-    managed_identity_resource_id: str | None = None,
-    current_identity: object | str | None,
-    not_logged_in_sentinel: object,
-    require_tool_func: Callable[[str], None] = require_tool,
-    subprocess_run: Callable[..., Any] = subprocess.run,
-) -> object | str | None:
-    # Only short-circuit when the caller has already logged in (i.e. the
-    # cache is not the "not yet logged in" sentinel) *and* the cached
-    # identity matches the one the caller now wants. Otherwise `None ==
-    # None` would silently skip `az login` on the very first call when no
-    # managed identity is specified.
-    if (
-        current_identity is not not_logged_in_sentinel
-        and current_identity == managed_identity_resource_id
-    ):
-        return current_identity
-
-    require_tool_func("az")
-    command = ["az", "login", "--identity"]
-    if managed_identity_resource_id:
-        command.extend(["--resource-id", managed_identity_resource_id])
-
-    result = subprocess_run(command, capture_output=True, text=True)
-    if result.returncode == 0:
-        return managed_identity_resource_id
-
-    stderr = result.stderr.strip() or "Unknown error"
-    raise RuntimeError(
-        f"Failed to authenticate Azure CLI with managed identity: {stderr}"
-    )
 
 
 def format_cleanup_plan(plan: CleanupPlan, *, include_acr: bool) -> str:

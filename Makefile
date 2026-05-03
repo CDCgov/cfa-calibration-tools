@@ -25,9 +25,10 @@ TY_ARGS ?=
 # targets therefore operate on the caller's own cloud sessions unless a
 # different CLOUD_USER is provided explicitly.
 SESSION_ID ?=
-CLOUD_USER ?= $(shell id -un 2>/dev/null || $(PYTHON) -c 'import getpass; print(getpass.getuser())')
+CLOUD_USER ?= $(or $(notdir $(lastword $(subst \, ,$(USER)))),$(firstword $(shell id -un 2>/dev/null || whoami 2>/dev/null || printf unknown)))
 DRY_RUN ?=
 IMAGE_TAG ?=
+SKIP_ACR ?=
 
 ifneq ($(strip $(SESSION_ID)),)
 SESSION_ID_FLAG := --session-id $(SESSION_ID)
@@ -43,6 +44,10 @@ endif
 
 ifneq ($(strip $(IMAGE_TAG)),)
 IMAGE_TAG_FLAG := --image-tag $(IMAGE_TAG)
+endif
+
+ifneq ($(strip $(SKIP_ACR)),)
+SKIP_ACR_FLAG := --skip-acr
 endif
 
 .PHONY: help
@@ -173,23 +178,23 @@ calibrate-cloud-auto: ## Run cloud calibration with auto-size/progress. Pass CAL
 
 .PHONY: cloud-cleanup-preview
 cloud-cleanup-preview: ## Preview cleanup for SESSION_ID=... Optional: IMAGE_TAG=...
-	$(MAKE) cloud-cleanup SESSION_ID="$(SESSION_ID)" IMAGE_TAG="$(IMAGE_TAG)" DRY_RUN=1
+	$(MAKE) cloud-cleanup SESSION_ID="$(SESSION_ID)" IMAGE_TAG="$(IMAGE_TAG)" SKIP_ACR="$(SKIP_ACR)" DRY_RUN=1
 
 .PHONY: cloud-cleanup-session
 cloud-cleanup-session: ## Delete cloud resources for SESSION_ID=... Optional: IMAGE_TAG=...
-	$(MAKE) cloud-cleanup SESSION_ID="$(SESSION_ID)" IMAGE_TAG="$(IMAGE_TAG)" DRY_RUN=
+	$(MAKE) cloud-cleanup SESSION_ID="$(SESSION_ID)" IMAGE_TAG="$(IMAGE_TAG)" SKIP_ACR="$(SKIP_ACR)" DRY_RUN=
 
 .PHONY: cloud-cleanup-user-preview
 cloud-cleanup-user-preview: ## Preview cleanup for CLOUD_USER; defaults to current user.
-	$(MAKE) cloud-cleanup-user CLOUD_USER="$(CLOUD_USER)" IMAGE_TAG="$(IMAGE_TAG)" DRY_RUN=1
+	$(MAKE) cloud-cleanup-user CLOUD_USER="$(CLOUD_USER)" IMAGE_TAG="$(IMAGE_TAG)" SKIP_ACR="$(SKIP_ACR)" DRY_RUN=1
 
 .PHONY: cloud-cleanup-user-delete
 cloud-cleanup-user-delete: ## Delete all cloud sessions for CLOUD_USER; defaults to current user.
-	$(MAKE) cloud-cleanup-user CLOUD_USER="$(CLOUD_USER)" IMAGE_TAG="$(IMAGE_TAG)" DRY_RUN=
+	$(MAKE) cloud-cleanup-user CLOUD_USER="$(CLOUD_USER)" IMAGE_TAG="$(IMAGE_TAG)" SKIP_ACR="$(SKIP_ACR)" DRY_RUN=
 
 .PHONY: cloud-list
-cloud-list: ## List cloud resources. Optional: SESSION_ID=... CLOUD_USER=... IMAGE_TAG=...
-	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) --list $(SESSION_ID_FLAG) $(USER_FLAG) $(IMAGE_TAG_FLAG)
+cloud-list: ## List cloud resources. Optional: SESSION_ID=... CLOUD_USER=... IMAGE_TAG=... SKIP_ACR=1
+	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) --list $(SESSION_ID_FLAG) $(USER_FLAG) $(IMAGE_TAG_FLAG) $(SKIP_ACR_FLAG)
 
 .PHONY: cloud-cleanup-plan
 cloud-cleanup-plan: cloud-cleanup-preview
@@ -200,12 +205,12 @@ cloud-cleanup-delete: cloud-cleanup-session
 .PHONY: cloud-cleanup
 cloud-cleanup:
 	@test -n "$(SESSION_ID)" || (echo "SESSION_ID is required"; exit 1)
-	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) $(SESSION_ID_FLAG) $(IMAGE_TAG_FLAG) $(DRY_RUN_FLAG)
+	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) $(SESSION_ID_FLAG) $(IMAGE_TAG_FLAG) $(SKIP_ACR_FLAG) $(DRY_RUN_FLAG)
 
 .PHONY: cloud-cleanup-user
 cloud-cleanup-user:
 	@test -n "$(CLOUD_USER)" || (echo "CLOUD_USER is required"; exit 1)
-	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) --all-sessions-for-user $(USER_FLAG) $(IMAGE_TAG_FLAG) $(DRY_RUN_FLAG)
+	$(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG) --all-sessions-for-user $(USER_FLAG) $(IMAGE_TAG_FLAG) $(SKIP_ACR_FLAG) $(DRY_RUN_FLAG)
 
 .PHONY: help-vars
 help-vars:
@@ -221,6 +226,7 @@ help-vars:
 		'  SESSION_ID=...                         Select one cloud session' \
 		'  CLOUD_USER=...                         Select cloud sessions for one user' \
 		'  IMAGE_TAG=...                          Filter cloud image resources' \
+		'  SKIP_ACR=1                             Skip Azure Container Registry lookup/cleanup' \
 		'  DRY_RUN=1                              Preview cleanup without deletion' \
 		'' \
 		'Tool and path overrides:' \
@@ -261,10 +267,12 @@ help-cloud:
 		'  CLOUD_USER defaults to the current shell user for user-wide list and cleanup commands.' \
 		'  Pass CLOUD_USER=other-user only when you intend to inspect or clean that user.' \
 		'  IMAGE_TAG=... narrows cleanup to matching cloud image resources.' \
+		'  SKIP_ACR=1 skips Azure Container Registry lookup and image tag cleanup.' \
 		'' \
 		'Examples:' \
 		'  make cloud-run-auto' \
 		'  make cloud-list' \
+		'  make cloud-list SKIP_ACR=1' \
 		'  make cloud-list CLOUD_USER=alice' \
 		'  make cloud-cleanup-preview SESSION_ID=20260412010101-alice-testsha-ab12cd34ef56' \
 		'  make cloud-cleanup-session SESSION_ID=20260412010101-alice-testsha-ab12cd34ef56' \

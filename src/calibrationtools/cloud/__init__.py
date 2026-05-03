@@ -24,24 +24,6 @@ from .batch import (
     wait_for_pool_ready,
     wait_for_task_completion,
 )
-from .cleanup import (
-    CleanupListing,
-    CleanupPlan,
-    CleanupResult,
-    build_parser,
-    delete_acr_image_tag,
-    discover_cleanup_listing,
-    discover_cleanup_plan,
-    discover_cleanup_plans_for_user,
-    ensure_az_login_with_identity,
-    execute_cleanup,
-    execute_cleanup_plans,
-    format_cleanup_listing,
-    format_cleanup_plan,
-    format_cleanup_plans,
-    list_acr_repository_tags,
-    parse_args,
-)
 from .config import (
     DEFAULT_DISPATCH_BUFFER,
     DEFAULT_INPUT_MOUNT_PATH,
@@ -93,12 +75,42 @@ from .session import CloudSession
 from .tooling import (
     build_local_image,
     create_cloud_client,
+    ensure_az_login_with_identity,
     git_short_sha,
     require_tool,
     run_command,
     suppress_cloudops_info_output,
     upload_local_image,
 )
+
+_CLEANUP_EXPORTS = {
+    "CleanupListing",
+    "CleanupPlan",
+    "CleanupResult",
+    "build_parser",
+    "delete_acr_image_tag",
+    "discover_cleanup_listing",
+    "discover_cleanup_plan",
+    "discover_cleanup_plans_for_user",
+    "execute_cleanup",
+    "execute_cleanup_plans",
+    "format_cleanup_listing",
+    "format_cleanup_plan",
+    "format_cleanup_plans",
+    "list_acr_repository_tags",
+    "parse_args",
+}
+
+
+def __getattr__(name: str):
+    if name in _CLEANUP_EXPORTS:
+        from . import cleanup
+
+        value = getattr(cleanup, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "CloudExecutorBackend",

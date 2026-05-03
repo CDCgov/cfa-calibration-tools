@@ -7,12 +7,62 @@ import subprocess
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
+
+_AZ_NOT_LOGGED_IN: object = object()
+_AZ_LOGGED_IN_IDENTITY: object | str | None = _AZ_NOT_LOGGED_IN
 
 
 def require_tool(name: str) -> None:
     if shutil.which(name) is None:
         raise SystemExit(f"Required tool not found on PATH: {name}")
+
+
+def _default_ensure_az_login_with_identity(
+    *, managed_identity_resource_id: str | None = None
+) -> None:
+    """Default cached Azure CLI managed-identity login."""
+    global _AZ_LOGGED_IN_IDENTITY
+
+    _AZ_LOGGED_IN_IDENTITY = ensure_az_login_with_identity(
+        managed_identity_resource_id=managed_identity_resource_id,
+        current_identity=_AZ_LOGGED_IN_IDENTITY,
+        not_logged_in_sentinel=_AZ_NOT_LOGGED_IN,
+    )
+
+
+def ensure_az_login_with_identity(
+    *,
+    managed_identity_resource_id: str | None = None,
+    current_identity: object | str | None,
+    not_logged_in_sentinel: object,
+    require_tool_func: Callable[[str], None] = require_tool,
+    subprocess_run: Callable[..., Any] = subprocess.run,
+) -> object | str | None:
+    """Authenticate Azure CLI with the host's managed identity once.
+
+    ``managed_identity_resource_id`` is accepted for compatibility with
+    callers that know which identity Azure resources should use, but the CLI
+    login itself intentionally uses plain ``az login --identity``. That keeps
+    all cloud commands on the same ambient managed identity and avoids a later
+    ACR lookup retrying with a resource ID that the local Azure host rejects.
+    """
+    if current_identity is not not_logged_in_sentinel:
+        return current_identity
+
+    require_tool_func("az")
+    result = subprocess_run(
+        ["az", "login", "--identity"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return managed_identity_resource_id
+
+    stderr = result.stderr.strip() or "Unknown error"
+    raise RuntimeError(
+        f"Failed to authenticate Azure CLI with managed identity: {stderr}"
+    )
 
 
 def run_command(command: list[str], *, cwd: Path) -> None:
@@ -177,7 +227,14 @@ def suppress_cloudops_info_output() -> Iterator[None]:
         logger.setLevel(previous_level)
 
 
-def create_cloud_client(*, keyvault: str) -> Any:
+def create_cloud_client(
+    *,
+    keyvault: str,
+    ensure_az_login_with_identity_func: Callable[..., Any] = (
+        _default_ensure_az_login_with_identity
+    ),
+) -> Any:
+    ensure_az_login_with_identity_func()
     try:
         from cfa.cloudops import CloudClient
     except ImportError as exc:
