@@ -1,39 +1,33 @@
-"""Run the example branching process via Python."""
+"""Direct in-process runner for the example branching process."""
 
-from mrp import Environment
+from __future__ import annotations
 
-from example_model import Binom_BP_Model
+from typing import Any
 
-# This runs the model directly as a static method
-results = Binom_BP_Model.simulate(
-    {
-        "seed": 123,
-        "max_gen": 15,
-        "n": 3,
-        "p": 0.5,
-        "max_infect": 500,
-    },
-)
+from calibrationtools.direct_runner import CSVDirectRunner
 
-print("Generation | Population")
-print("-" * 25)
-for gen, pop in enumerate(results):
-    print(f"{gen:>10} | {pop}")
+from .example_model import Binom_BP_Model
 
 
-# This runs the model via MRP,
-# which generates files
-env = Environment(
-    {
-        "input": {
-            "seed": 123,
-            "max_gen": 15,
-            "n": 3,
-            "p": 0.5,
-            "max_infect": 500,
-        },
-        "output": {"spec": "filesystem", "dir": "./output"},
-    }
-)
-model = Binom_BP_Model(env=env)
-model.run()
+class ExampleModelDirectRunner(CSVDirectRunner):
+    """Run the example model locally while honoring staged sampler I/O."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            Binom_BP_Model.simulate,
+            output_filename="output.csv",
+            fieldnames=("generation", "population"),
+            row_builder=self._build_population_row,
+            input_error_message="Example model input JSON must be an object.",
+        )
+
+    @staticmethod
+    def _build_population_row(
+        generation: int,
+        population: Any,
+    ) -> dict[str, Any]:
+        """Build one CSV output row for a generation population."""
+        return {
+            "generation": generation,
+            "population": population,
+        }

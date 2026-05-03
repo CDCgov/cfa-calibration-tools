@@ -51,6 +51,46 @@ def test_particlewise_generation_runner_sample_particles_until_accepted():
     assert accepted_proposal.attempts == 1
 
 
+def test_particlewise_generation_runner_passes_zero_based_attempt_context():
+    contexts: list[dict[str, int]] = []
+    reporter = SamplerReporter(
+        verbose=True,
+        console=Console(file=StringIO(), force_terminal=True),
+    )
+    runner = ParticlewiseGenerationRunner(
+        config=ParticlewiseGenerationConfig(
+            generation_particle_count=1,
+            tolerance_values=[0.1],
+            seed_sequence=SeedSequence(123),
+            max_attempts_per_proposal=3,
+            sample_particle_from_priors=lambda _: Particle({"p": 0.2}),
+            sample_and_perturb_particle=lambda _: Particle({"p": 0.8}),
+            particle_to_distance=lambda _particle, **kwargs: (
+                contexts.append(kwargs["evaluation_context"]) or 1.0
+            ),
+            calculate_weight=lambda _: 1.0,
+            replace_particle_population=lambda _: None,
+            reporter=reporter,
+        ),
+        run_state=SamplerRunState(1, False),
+    )
+
+    accepted_proposal = runner.sample_particles_until_accepted(
+        generator=GeneratorSlot(id=7, seed_sequence=SeedSequence(456)),
+        tolerance=0.1,
+        sample_method=lambda _: Particle({"p": 0.2}),
+        evaluation_kwargs={},
+        max_attempts=2,
+        generation=3,
+    )
+
+    assert accepted_proposal.particle is None
+    assert contexts == [
+        {"generation_index": 3, "proposal_index": 7, "attempt_index": 0},
+        {"generation_index": 3, "proposal_index": 7, "attempt_index": 1},
+    ]
+
+
 def test_particlewise_generation_runner_run_generation_records_state():
     stored_populations: list[ParticlePopulation] = []
     run_state = SamplerRunState(1, False)

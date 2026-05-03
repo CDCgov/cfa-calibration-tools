@@ -45,18 +45,21 @@ class PerturbationKernel(ABC):
         """Change the particle values based on the perturbation kernel."""
         to_particle = copy.deepcopy(from_particle)
         if isinstance(perturbed_values, np.ndarray):
-            if len(perturbed_values) == 1:
-                to_particle[self.params[0]] = type(perturbed_values[0])
+            values = perturbed_values.tolist()
+            if not isinstance(values, list):
+                values = [values]
+            if len(values) == 1:
+                to_particle[self.params[0]] = type(values[0])
             else:
-                for i, param in enumerate(self.params):
-                    to_particle[param] = type(perturbed_values[i])
+                for param, value in zip(self.params, values):
+                    to_particle[param] = type(value)
         else:
             to_particle[self.params[0]] = type(perturbed_values)
         return to_particle
 
     @abstractmethod
     def perturb(
-        self, from_particle: Particle, seed_sequence: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence
     ) -> Particle:
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -149,7 +152,7 @@ class SeedKernel(SingleParameterPerturbationKernel):
     indicating that the perturbation is deterministic given the seed sequence.
 
     Methods:
-        perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+        perturb(from_particle: Particle, seed_sequence: SeedSequence) -> Particle:
             Creates a new particle by copying the input particle and modifying
             the specified parameter with a randomly generated integer.
 
@@ -167,7 +170,7 @@ class SeedKernel(SingleParameterPerturbationKernel):
     """
 
     def perturb(
-        self, from_particle: Particle, seed_sequence: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence
     ) -> Particle:
         to_particle = copy.deepcopy(from_particle)
         to_particle[self.params[0]] = spawn_rng(seed_sequence).integers(
@@ -194,7 +197,7 @@ class UniformKernel(SingleParameterPerturbationKernel):
         __init__(param: str, width: float) -> None:
             Initializes the UniformKernel with the parameter name and width.
 
-        perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+        perturb(from_particle: Particle, seed_sequence: SeedSequence) -> Particle:
             Perturbs the specified parameter of a particle using a uniform distribution.
 
         transition_probability(to_particle: Particle, from_particle: Particle) -> float:
@@ -212,7 +215,7 @@ class UniformKernel(SingleParameterPerturbationKernel):
             raise ValueError("Width must be positive for UniformKernel.")
 
     def perturb(
-        self, from_particle: Particle, seed_sequence: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence
     ) -> Particle:
         return self.change_particle_values(
             from_particle,
@@ -249,7 +252,7 @@ class NormalKernel(SingleParameterPerturbationKernel):
         ValueError: If `std_dev` is not positive.
 
     Methods:
-        perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+        perturb(from_particle: Particle, seed_sequence: SeedSequence) -> Particle:
             Perturbs the value of the specified parameter in the given particle using
             a normal distribution.
 
@@ -267,7 +270,7 @@ class NormalKernel(SingleParameterPerturbationKernel):
             )
 
     def perturb(
-        self, from_particle: Particle, seed_sequence: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence
     ) -> Particle:
         return self.change_particle_values(
             from_particle,
@@ -330,7 +333,7 @@ class MultivariateNormalKernel(MultiParameterPerturbationKernel):
             __init__(params: list[str], cov_matrix: np.ndarray | None = None):
                 Initializes the kernel with the given parameters and covariance matrix.
 
-            perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
+            perturb(from_particle: Particle, seed_sequence: SeedSequence) -> Particle:
                 Perturbs the given particle using the multivariate normal distribution.
                 Raises a ValueError if the covariance matrix is not set.
 
@@ -352,7 +355,7 @@ class MultivariateNormalKernel(MultiParameterPerturbationKernel):
         self.cov_matrix = cov_matrix
 
     def perturb(
-        self, from_particle: Particle, seed_sequence: SeedSequence | None
+        self, from_particle: Particle, seed_sequence: SeedSequence
     ) -> Particle:
         if self.cov_matrix is None:
             raise ValueError(

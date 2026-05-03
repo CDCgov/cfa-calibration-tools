@@ -60,6 +60,7 @@ def test_adapt_multivariate_normal_variance():
     adapter.adapt(population, kernel)
     states_matrix = np.array([[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]])
     expected_cov_matrix = np.cov(states_matrix.T) * 2.0
+    assert kernel.cov_matrix is not None
     assert np.allclose(kernel.cov_matrix, expected_cov_matrix)
 
 
