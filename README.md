@@ -8,7 +8,16 @@ CDC Center for Forecasting and Outbreak Analytics.
 
 ## Getting Started
 
-This project uses `uv` for python venv management. Be sure to have `uv` [installed on your machine](https://docs.astral.sh/uv/getting-started/installation/). To begin, ensure all workspaces in the repo are synchronized by running
+This project uses `uv` for python venv management. Be sure to have `uv` [installed on your machine](https://docs.astral.sh/uv/getting-started/installation/). Start with the Makefile entrypoints:
+
+```bash
+make setup
+make test
+make example
+make help
+```
+
+The equivalent underlying setup command is:
 
 ```{bash}
 uv sync --all-packages --all-extras
@@ -16,28 +25,86 @@ uv sync --all-packages --all-extras
 
 ## Running the example model
 
+The default MRP config uses the inline runtime, so `mrp` calls the example
+model in the current Python process.
+
+```bash
+make example-mrp
+make example-mrp MRP_ARGS='--input seed=42 --input max_gen=10'
+```
+
+The equivalent raw commands are:
+
 ```bash
 # Default parameters
-uv run mrp run example_model.mrp.toml
+uv run mrp run packages/example_model/src/example_model/example_model.mrp.toml
 
 ## Override parameters
-uv run mrp run example_model.mrp.toml --input seed=42 --input max_gen=10
+uv run --package example-model mrp run packages/example_model/src/example_model/example_model.mrp.toml --input seed=42 --input max_gen=10
 ```
 
 You can run `uv tool install cfa-mrp` to omit the `uv run`.
+
+To run the Docker-backed config through the Makefile:
+
+```bash
+make mrp-docker
+```
+
+The equivalent raw commands are:
+
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+uv run --package example-model mrp run packages/example_model/src/example_model/example_model.mrp.docker.toml
+```
+
+The Docker-backed config runs the container as your current host UID/GID so the bind-mounted `./output` directory stays writable. If you have a stale `output/` from an older run with different ownership, remove it before retrying.
 
 ## Running a calibration
 
 The repository includes a complete calibration example for the bundled example model:
 
 ```bash
-uv sync --all-packages --all-extras
+make example
+make example CALIBRATE_ARGS='--artifacts-dir /tmp/run'
+```
+
+The equivalent raw command is:
+
+```bash
 uv run python -m example_model.calibrate
 ```
 
-This runs the ABC-SMC calibration workflow defined in [packages/example_model/src/example_model/calibrate.py](/home/as81/work/cfa-calibration-tools-wtk-mp/packages/example_model/src/example_model/calibrate.py) and prints the posterior summary and diagnostics.
+This runs the ABC-SMC calibration workflow defined in `packages/example_model/src/example_model/calibrate.py` and prints the posterior summary and diagnostics.
+By default, calibration stages per-simulation inputs and outputs under
+`./artifacts`, including paths like
+`artifacts/input/generation-0/gen_0_particle_0_attempt_0.json` and
+`artifacts/output/generation-0/gen_0_particle_0_attempt_0/output.csv`.
+Use `--artifacts-dir path/to/artifacts` to choose another location, or
+`--no-artifacts` to disable artifact staging for non-cloud local runs.
+
+To run calibration through the Docker-backed MRP config:
+
+```bash
+make example-docker
+```
+
+The equivalent raw commands are:
+
+```bash
+docker build -t cfa-calibration-tools-example-model-python:latest -f packages/example_model/Dockerfile .
+uv run python -m example_model.calibrate --docker
+```
+
+You can also route calibration through a specific MRP config with `uv run python -m example_model.calibrate --mrp-config path/to/config.toml`.
 
 To compare serial and parallel execution for the same example, run:
+
+```bash
+make example-benchmark
+```
+
+The equivalent raw command is:
 
 ```bash
 uv run python -m example_model.benchmark
