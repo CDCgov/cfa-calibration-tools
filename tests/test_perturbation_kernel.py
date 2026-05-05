@@ -50,6 +50,40 @@ def test_seed_kernel_perturb(seed_sequence: SeedSequence) -> None:
     assert perturbed_particle_1["other"] == "value"
 
 
+def test_seed_kernel_perturb_keep(seed_sequence: SeedSequence) -> None:
+    kernel = SeedKernel("seed", prob_keep=1.0)
+
+    original_ss = copy.deepcopy(seed_sequence)
+    from_particle = Particle({"seed": 123, "other": "value"})
+
+    perturbed_particle_1 = kernel.perturb(from_particle, seed_sequence)
+    perturbed_particle_2 = kernel.perturb(from_particle, seed_sequence)
+    perturbed_particle_3 = kernel.perturb(from_particle, seed_sequence)
+    perturbed_particle_4 = kernel.perturb(from_particle, original_ss)
+
+    # Seeds should be the same between calls
+    assert perturbed_particle_1["seed"] == perturbed_particle_2["seed"]
+    assert perturbed_particle_2["seed"] == perturbed_particle_3["seed"]
+    # But same with same seed sequence
+    assert perturbed_particle_1["seed"] == perturbed_particle_4["seed"]
+    # Other values should be preserved
+    assert perturbed_particle_1["other"] == "value"
+
+
+def test_seed_kernel_perturb_half_keep(seed_sequence: SeedSequence) -> None:
+    kernel = SeedKernel("seed", prob_keep=0.5)
+
+    from_particle = Particle({"seed": 123, "other": "value"})
+
+    kept_count = 0
+    for _ in range(1000):
+        perturbed_particle = kernel.perturb(from_particle, seed_sequence)
+        if perturbed_particle["seed"] == from_particle["seed"]:
+            kept_count += 1
+    assert kept_count > 400
+    assert kept_count < 600
+
+
 def test_uniform_kernel_perturb(seed_sequence: SeedSequence) -> None:
     kernel = UniformKernel("param", width=5)
     from_particle = Particle({"param": 5, "other": "value"})
