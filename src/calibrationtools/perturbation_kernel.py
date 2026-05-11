@@ -150,7 +150,7 @@ class SeedKernel(SingleParameterPerturbationKernel):
 
     Args:
         param (str): The name of the seed parameter to perturb.
-        prob_keep (float): The probability thatt he seed integer is kept. Must be between zero and one. Defaults to zero to preserve behavior that seed changes each perturbation.
+        prob_keep (float): The probability that the seed integer is kept. Must be between zero and one. Defaults to zero to preserve behavior that seed changes each perturbation.
 
     Methods:
         perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
