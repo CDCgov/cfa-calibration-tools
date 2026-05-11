@@ -1,8 +1,9 @@
 import inspect
 from typing import Any, Callable, Concatenate
 
-from calibrationtools.particle import Particle
 from mrp.api import apply_dict_overrides
+
+from calibrationtools.particle import Particle
 
 
 def flatten_dict(
@@ -39,7 +40,9 @@ def flatten_dict(
     return dict(items)
 
 
-def unflatten_parameter_name(flattened_name: str, value: Any) -> dict[str, Any]:
+def unflatten_parameter_name(
+    flattened_name: str, value: Any
+) -> dict[str, Any]:
     """
     Unflattens a parameter name by splitting it on dots.
     Args:
@@ -138,11 +141,14 @@ class ParticleReader:
                     )
         else:
             name_key = {
-                param_name: param_name for param_name in self.particle_param_names
+                param_name: param_name
+                for param_name in self.particle_param_names
             }
         return name_key
 
-    def _merge_particle_with_defaults(self, particle: Particle) -> dict[str, Any]:
+    def _merge_particle_with_defaults(
+        self, particle: Particle
+    ) -> dict[str, Any]:
         """
         Merges the parameters from a Particle with the default parameters, using the mapping defined in self.name_key to unflatten particle parameter names into the nested structure of default_params.
         Args:
@@ -153,9 +159,15 @@ class ParticleReader:
         """
         particle_params = {}
         for param_name, value in particle.items():
-            unflattened = unflatten_parameter_name(self.name_key[param_name], value)
-            particle_params = apply_dict_overrides(particle_params, unflattened)
-        merged_params = apply_dict_overrides(self.default_params, particle_params)
+            unflattened = unflatten_parameter_name(
+                self.name_key[param_name], value
+            )
+            particle_params = apply_dict_overrides(
+                particle_params, unflattened
+            )
+        merged_params = apply_dict_overrides(
+            self.default_params, particle_params
+        )
         return merged_params
 
     def read_particle(
@@ -182,11 +194,16 @@ class ParticleReader:
             # Be sure to pass default params to user-defined read_fn if expected
             args = inspect.signature(self.read_fn).parameters
             expects_default = (
-                any(req.kind == inspect.Parameter.VAR_KEYWORD for req in args.values())
+                any(
+                    req.kind == inspect.Parameter.VAR_KEYWORD
+                    for req in args.values()
+                )
                 or "default_params" in args
             )
             if expects_default:
-                return self.read_fn(particle, default_params=self.default_params, **kwargs)
+                return self.read_fn(
+                    particle, default_params=self.default_params, **kwargs
+                )
             else:
                 return self.read_fn(particle, **kwargs)
         else:

@@ -307,4 +307,3 @@ def test_read_particle_callable_collects_defaults(
     read = reader.read_particle(dense_particle)
     assert read["defaults"] == default_param_dict
     assert read["particle"] == dict(dense_particle)
-    
