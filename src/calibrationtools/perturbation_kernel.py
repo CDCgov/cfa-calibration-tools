@@ -148,6 +148,10 @@ class SeedKernel(SingleParameterPerturbationKernel):
     with a new integer value. The transition probability is always 1.0,
     indicating that the perturbation is deterministic given the seed sequence.
 
+    Args:
+        param (str): The name of the seed parameter to perturb.
+        prob_keep (float): The probability that the seed integer is kept. Must be between zero and one. Defaults to zero to preserve behavior that seed changes each perturbation.
+
     Methods:
         perturb(from_particle: Particle, seed_sequence: SeedSequence | None) -> Particle:
             Creates a new particle by copying the input particle and modifying
@@ -157,8 +161,8 @@ class SeedKernel(SingleParameterPerturbationKernel):
             Returns the transition probability between two particles, which is
             always 1.0 for this kernel.
 
-    Parameters:
-        params (list): A list containing the name of the "seed" parameter.
+    Raises:
+        ValueError: If the probability `prob_keep` is less than zero or greater than one.
 
     Notes:
         - The random integer is u32, generated in the range [0, 2^32 - 1].
@@ -166,19 +170,34 @@ class SeedKernel(SingleParameterPerturbationKernel):
           from the provided seed sequence.
     """
 
+    def __init__(self, param: str, prob_keep: float = 0.0) -> None:
+        super().__init__(param)
+        self.prob_keep = prob_keep
+        if self.prob_keep < 0.0 or self.prob_keep > 1.0:
+            raise ValueError(
+                "Probability of retaining value must be between 0 and 1."
+            )
+
     def perturb(
         self, from_particle: Particle, seed_sequence: SeedSequence | None
     ) -> Particle:
         to_particle = copy.deepcopy(from_particle)
-        to_particle[self.params[0]] = spawn_rng(seed_sequence).integers(
-            0, 2**32 - 1
-        )
+        rng = spawn_rng(seed_sequence)
+        if rng.uniform() < self.prob_keep:
+            to_particle[self.params[0]] = from_particle[self.params[0]]
+            # Sync RNG in case that we don't need a new value
+            rng.uniform()
+        else:
+            to_particle[self.params[0]] = rng.integers(0, 2**32 - 1)
         return to_particle
 
     def transition_probability(
         self, to_particle: Particle, from_particle: Particle
     ) -> float:
-        return 1.0
+        if to_particle[self.params[0]] == from_particle[self.params[0]]:
+            return self.prob_keep
+        else:
+            return 1.0 - self.prob_keep
 
 
 class UniformKernel(SingleParameterPerturbationKernel):
