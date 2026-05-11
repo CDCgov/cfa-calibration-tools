@@ -17,6 +17,7 @@ from .calibration_results import CalibrationResults
 from .particle import Particle
 from .particle_evaluator import ParticleEvaluator
 from .particle_population import ParticlePopulation
+from .particle_reader import ParticleReader
 from .particle_updater import _ParticleUpdater
 from .particlewise_generation_runner import (
     ParticlewiseGenerationConfig,
@@ -42,12 +43,13 @@ class ABCSampler:
         generation_particle_count (int): Number of particles to accept per generation for a complete population.
         tolerance_values (list[float]): List of tolerance values for each generation for evaluating acceptance criterion.
         priors (PriorDistribution | dict | Path): Prior distribution of the parameters being calibrated. Can be provided as a PriorDistribution object, a dictionary, or a path to a JSON file containing a valid priors schema.
-        particles_to_params (Callable[..., dict]): Function to map particles to model parameters.
         outputs_to_distance (Callable[..., float]): Function to compute distance between model outputs and target data.
         target_data (Any): Observed data to compare against.
         model_runner (MRPModel): Model runner to simulate outputs given parameters.
         perturbation_kernel (PerturbationKernel): Initial kernel used to perturb particles across SMC steps.
         variance_adapter (VarianceAdapter): Adapter to adjust perturbation variance across SMC steps.
+        particles_to_params (Callable[..., dict] | None): Optional function to map particles to model parameters.
+        default_parameters (dict[str, Any] | None): Default parameter dictionary to be used by the sampler
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         max_proposals_per_batch (int): Maximum number of particles to propose in a single batch when running in parallel with batched proposals with automatic batch sizes.
         parallel_worker_count (int): Default number of workers to use for sampler parallel execution when `max_workers` is not supplied.
@@ -60,7 +62,7 @@ class ABCSampler:
         seed_parameter_name (str | None): The name of the seed parameter to include in the priors if `incl_seed_parameter` is True when loading priors from a dictionary or JSON file.
 
     Raises:
-        ValueError: If `parallel_worker_count` is not positive.
+        ValueError: If `parallel_worker_count` is not positive or if default parameters are not provided and a particle reader is not provided
 
     Methods:
         particle_population:
@@ -91,12 +93,13 @@ class ABCSampler:
         generation_particle_count: int,
         tolerance_values: list[float],
         priors: PriorDistribution | dict | Path,
-        particles_to_params: Callable[..., dict],
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: MRPModel,
         perturbation_kernel: PerturbationKernel,
         variance_adapter: VarianceAdapter,
+        particles_to_params: Callable[..., dict] | None = None,
+        default_parameters: dict[str, Any] | None = None,
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         max_proposals_per_batch: int = 10_000,
         parallel_worker_count: int = 10,
@@ -118,12 +121,6 @@ class ABCSampler:
         self.outputs_to_distance = outputs_to_distance
         self.target_data = target_data
         self.model_runner = model_runner
-        self._particle_evaluator = ParticleEvaluator(
-            particles_to_params=particles_to_params,
-            outputs_to_distance=outputs_to_distance,
-            target_data=target_data,
-            model_runner=model_runner,
-        )
         self.entropy = entropy
         self.keep_previous_population_data = keep_previous_population_data
         self.results_inherit_entropy_only = results_inherit_entropy_only
@@ -143,6 +140,23 @@ class ABCSampler:
             from .load_priors import load_priors_from_json
 
             self._priors = load_priors_from_json(priors)
+
+        if not self.particles_to_params and not default_parameters:
+            raise ValueError(
+                "Either the default parameters must be provided or a user-specified particle reader must be provided"
+            )
+
+        self.particle_reader = ParticleReader(
+            particle_param_names=self._priors.params,
+            default_params=default_parameters,
+            read_fn=self.particles_to_params,
+        )
+        self._particle_evaluator = ParticleEvaluator(
+            particle_reader=self.particle_reader,
+            outputs_to_distance=outputs_to_distance,
+            target_data=target_data,
+            model_runner=model_runner,
+        )
 
         self._init_random()
         self.set_updater(perturbation_kernel)

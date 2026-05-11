@@ -8,6 +8,11 @@ from .load_priors import (
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .particle_population_metrics import ParticlePopulationMetrics
+from .particle_reader import (
+    ParticleReader,
+    flatten_dict,
+    unflatten_parameter_name,
+)
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -44,6 +49,7 @@ __all__ = [
     "Particle",
     "ParticlePopulation",
     "ParticlePopulationMetrics",
+    "ParticleReader",
     "_ParticleUpdater",
     "PriorDistribution",
     "UniformPrior",
@@ -70,4 +76,6 @@ __all__ = [
     "independent_priors_from_dict",
     "validate_schema",
     "run_coroutine_from_sync",
+    "flatten_dict",
+    "unflatten_parameter_name",
 ]

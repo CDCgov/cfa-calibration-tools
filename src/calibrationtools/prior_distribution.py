@@ -48,7 +48,7 @@ class CompositePriorDistribution(PriorDistribution):
     """Base class for prior distributions that sample multiple parameters."""
 
     def __init__(self, priors: list[PriorDistribution]) -> None:
-        super().__init__([])
+        super().__init__([p.params[0] for p in priors])
         self.priors = priors
 
 

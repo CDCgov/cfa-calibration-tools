@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from example_model import Binom_BP_Model
 from mrp import Environment
-from mrp.api import apply_dict_overrides
 
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
@@ -27,19 +26,13 @@ def example_model_defaults() -> dict:
 
 
 @pytest.fixture()
-def example_model_sampler() -> ABCSampler:
+def example_model_sampler(example_model_defaults) -> ABCSampler:
     ##===================================#
     ## Define model
     ##===================================#
     env = Environment(
         {
-            "input": {
-                "seed": 123,
-                "max_gen": 15,
-                "n": 3,
-                "p": 0.5,
-                "max_infect": 500,
-            },
+            "input": example_model_defaults,
             "output": {"spec": "filesystem", "dir": "./output"},
         }
     )
@@ -75,11 +68,6 @@ def example_model_sampler() -> ABCSampler:
     ##===================================#
     ## Run ABC-SMC
     ##===================================#
-    def particles_to_params(particle, **kwargs):
-        base_inputs = kwargs.get("base_inputs")
-        model_params = apply_dict_overrides(base_inputs, particle)
-        return model_params
-
     def outputs_to_distance(model_output, target_data):
         return abs(np.sum(model_output) - target_data)
 
@@ -89,7 +77,7 @@ def example_model_sampler() -> ABCSampler:
         priors=P,
         perturbation_kernel=K,
         variance_adapter=V,
-        particles_to_params=particles_to_params,
+        default_parameters=model.env.input,
         outputs_to_distance=outputs_to_distance,
         target_data=5,
         model_runner=model,
@@ -98,15 +86,9 @@ def example_model_sampler() -> ABCSampler:
     return sampler
 
 
-def test_sampler_run_integration(
-    example_model_sampler, example_model_defaults
-):
-    results_serial = example_model_sampler.run(
-        execution="serial", base_inputs=example_model_defaults
-    )
-    results_parallel = example_model_sampler.run(
-        execution="parallel", base_inputs=example_model_defaults
-    )
+def test_sampler_run_integration(example_model_sampler):
+    results_serial = example_model_sampler.run(execution="serial")
+    results_parallel = example_model_sampler.run(execution="parallel")
 
     assert (
         results_serial.posterior_particles.ess
@@ -114,10 +96,6 @@ def test_sampler_run_integration(
     )
 
 
-def test_sampler_run_parallel_batches_integration(
-    example_model_sampler, example_model_defaults
-):
-    results_parallel_batches = example_model_sampler.run_parallel_batches(
-        base_inputs=example_model_defaults
-    )
+def test_sampler_run_parallel_batches_integration(example_model_sampler):
+    results_parallel_batches = example_model_sampler.run_parallel_batches()
     assert results_parallel_batches.posterior_particles.ess > 0

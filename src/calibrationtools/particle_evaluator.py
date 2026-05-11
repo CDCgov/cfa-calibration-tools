@@ -10,6 +10,7 @@ from typing import Any, Callable
 from mrp import MRPModel
 
 from .particle import Particle
+from .particle_reader import ParticleReader
 
 
 class ParticleEvaluator:
@@ -20,7 +21,7 @@ class ParticleEvaluator:
     boundary.
 
     Args:
-        particles_to_params (Callable[..., dict]): Function mapping a
+        particle_reader (ParticleReader): class mapping a
             particle to model parameters.
         outputs_to_distance (Callable[..., float]): Function scoring simulated
             outputs against target data.
@@ -30,12 +31,12 @@ class ParticleEvaluator:
 
     def __init__(
         self,
-        particles_to_params: Callable[..., dict],
+        particle_reader: ParticleReader,
         outputs_to_distance: Callable[..., float],
         target_data: Any,
         model_runner: MRPModel,
     ) -> None:
-        self.particles_to_params = particles_to_params
+        self.particle_reader = particle_reader
         self.outputs_to_distance = outputs_to_distance
         self.target_data = target_data
         self.model_runner = model_runner
@@ -55,7 +56,7 @@ class ParticleEvaluator:
             Any: Simulated outputs produced by the model.
         """
 
-        params = self.particles_to_params(particle, **kwargs)
+        params = self.particle_reader.read_particle(particle, **kwargs)
         return self.model_runner.simulate(params)
 
     def distance(self, particle: Particle, **kwargs: Any) -> float:
