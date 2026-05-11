@@ -1,0 +1,14 @@
+input = "packages/deterministic_lv_model/defaults.json"
+
+[model]
+spec = "deterministic_lv_model"
+version = "0.0.1"
+
+[runtime]
+env = "uv"
+command = "python"
+args = ["-m", "deterministic_lv_model"]
+
+[output]
+spec = "filesystem"
+dir = "./output"
