@@ -1,13 +1,12 @@
-input = "packages/example_model/defaults.json"
+input = "defaults.json"
 
 [model]
 spec = "example_model"
 version = "0.0.1"
 
 [runtime]
-env = "uv"
-command = "python"
-args = ["-m", "example_model"]
+spec = "inline"
+callable = "example_model.example_model:run_inline"
 
 [output]
 spec = "filesystem"
