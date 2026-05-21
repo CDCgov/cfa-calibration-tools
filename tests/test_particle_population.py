@@ -1,3 +1,4 @@
+import polars as pl
 import pytest
 
 from calibrationtools import Particle, ParticlePopulation
@@ -86,3 +87,84 @@ def test_empty_particle_population_normalize_weights_noop() -> None:
 
     assert population.size == 0
     assert population.total_weight == 0.0
+
+
+def test_particle_join(population, state, state2) -> None:
+    new_particles = [Particle({"new_x": 5.0}), Particle({"new_x": 6.0})]
+    new_population = population.join(new_particles)
+
+    # Assert no changes to base population
+    assert population.size == 2
+    assert population.particles[0] == state
+    assert population.particles[1] == state2
+
+    assert new_population.size == 4
+    assert new_population.particles[0] == {"x": 1.0, "y": 2.0, "new_x": 5.0}
+    assert new_population.particles[1] == {"x": 1.0, "y": 2.0, "new_x": 6.0}
+    assert new_population.particles[2] == {"x": 3.0, "y": 4.0, "new_x": 5.0}
+    assert new_population.particles[3] == {"x": 3.0, "y": 4.0, "new_x": 6.0}
+
+
+def test_particle_join_with_weights(population, state, state2) -> None:
+    new_particle_population = ParticlePopulation(
+        states=[{"new_x": 5.0}, {"new_x": 6.0}],
+        weights=[0.4, 0.6],
+    )
+    new_population = population.join(new_particle_population)
+
+    # Assert no changes to base population
+    assert population.size == 2
+    assert population.particles[0] == state
+    assert population.particles[1] == state2
+
+    assert new_population.size == 4
+    assert new_population.particles[0] == {"x": 1.0, "y": 2.0, "new_x": 5.0}
+    assert new_population.particles[1] == {"x": 1.0, "y": 2.0, "new_x": 6.0}
+    assert new_population.particles[2] == {"x": 3.0, "y": 4.0, "new_x": 5.0}
+    assert new_population.particles[3] == {"x": 3.0, "y": 4.0, "new_x": 6.0}
+    assert new_population.weights[0] == pytest.approx(0.4 * 0.3)
+    assert new_population.weights[1] == pytest.approx(0.6 * 0.3)
+    assert new_population.weights[2] == pytest.approx(0.4 * 0.7)
+    assert new_population.weights[3] == pytest.approx(0.6 * 0.7)
+
+
+def test_particle_join_overwrites_original(population, state, state2) -> None:
+    new_particles = [Particle({"y": 5.0}), Particle({"y": 6.0})]
+    joined_population = population.join(new_particles)
+
+    # Assert no changes to base population
+    assert population.size == 2
+    assert population.particles[0] == state
+    assert population.particles[1] == state2
+
+    # Assert correct joining of particles
+    assert joined_population.size == 4
+    assert joined_population.particles[0] == {"x": 1.0, "y": 5.0}
+    assert joined_population.particles[1] == {"x": 1.0, "y": 6.0}
+    assert joined_population.particles[2] == {"x": 3.0, "y": 5.0}
+    assert joined_population.particles[3] == {"x": 3.0, "y": 6.0}
+
+
+def test_particle_join_type_behavior(population) -> None:
+    new_data = [{"z": 5.0}, {"z": 6.0}]
+    new_particles = [Particle(p) for p in new_data]
+    dataframe = pl.DataFrame({"z": [v["z"] for v in new_data]})
+    new_population = ParticlePopulation(states=new_data)
+
+    sequence_join = population.join(new_particles)
+    dataframe_join = population.join(dataframe)
+    population_join = population.join(new_population)
+
+    assert isinstance(sequence_join, ParticlePopulation)
+    assert isinstance(dataframe_join, ParticlePopulation)
+    assert isinstance(population_join, ParticlePopulation)
+    assert (
+        population_join.particles
+        == sequence_join.particles
+        == dataframe_join.particles
+    )
+    assert (
+        population_join.weights
+        == sequence_join.weights
+        == dataframe_join.weights
+    )

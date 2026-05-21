@@ -9,6 +9,7 @@ dependencies = [
     "cfa-mrp>=0.0.4",
     "jsonschema>=4.26.0",
     "numpy>=2.3.4",
+    "polars>=1.40.1",
     "pyarrow>=23.0.0",
     "rich>=14.3.3",
     "scipy>=1.16.3",
