@@ -3,8 +3,12 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from calibrationtools import Particle
-from calibrationtools.particle_runner import ParticleRunner, _run_particles_helper
+from calibrationtools.particle_runner import (
+    ParticleRunner,
+    _run_particles_helper,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,7 +38,9 @@ def identity_params(particle: Particle) -> dict:
 class TestParticleRunnerInit:
     def test_parallel_is_default(self):
         model = MagicMock()
-        runner = ParticleRunner(model=model, particles_to_params=identity_params)
+        runner = ParticleRunner(
+            model=model, particles_to_params=identity_params
+        )
         assert runner.parallel is True
 
     def test_serial_execution(self):
@@ -56,7 +62,8 @@ class TestParticleRunnerInit:
     def test_zero_max_workers_uses_cpu_count(self):
         model = MagicMock()
         with patch(
-            "calibrationtools.particle_runner.os.process_cpu_count", return_value=8
+            "calibrationtools.particle_runner.os.cpu_count",
+            return_value=8,
         ):
             runner = ParticleRunner(
                 model=model, particles_to_params=identity_params, max_workers=0
@@ -66,38 +73,38 @@ class TestParticleRunnerInit:
     def test_none_max_workers_uses_cpu_count(self):
         model = MagicMock()
         with patch(
-            "calibrationtools.particle_runner.os.process_cpu_count", return_value=4
+            "calibrationtools.particle_runner.os.cpu_count",
+            return_value=4,
         ):
             runner = ParticleRunner(
-                model=model, particles_to_params=identity_params, max_workers=None
+                model=model,
+                particles_to_params=identity_params,
+                max_workers=None,
             )
         assert runner.max_workers == 4
 
     def test_fallback_to_os_cpu_count(self):
         model = MagicMock()
-        with (
-            patch(
-                "calibrationtools.particle_runner.os.process_cpu_count",
-                return_value=None,
-            ),
-            patch("calibrationtools.particle_runner.os.cpu_count", return_value=2),
+        with patch(
+            "calibrationtools.particle_runner.os.cpu_count", return_value=2
         ):
             runner = ParticleRunner(
-                model=model, particles_to_params=identity_params, max_workers=None
+                model=model,
+                particles_to_params=identity_params,
+                max_workers=None,
             )
         assert runner.max_workers == 2
 
     def test_fallback_to_one_when_cpu_count_unavailable(self):
         model = MagicMock()
-        with (
-            patch(
-                "calibrationtools.particle_runner.os.process_cpu_count",
-                return_value=None,
-            ),
-            patch("calibrationtools.particle_runner.os.cpu_count", return_value=None),
+        with patch(
+            "calibrationtools.particle_runner.os.cpu_count",
+            return_value=None,
         ):
             runner = ParticleRunner(
-                model=model, particles_to_params=identity_params, max_workers=None
+                model=model,
+                particles_to_params=identity_params,
+                max_workers=None,
             )
         assert runner.max_workers == 1
 
@@ -147,7 +154,9 @@ class TestRunParticle:
 class TestEvaluateParticleChunk:
     def test_runs_all_particles_in_chunk(self, particle):
         model = MagicMock()
-        runner = ParticleRunner(model=model, particles_to_params=identity_params)
+        runner = ParticleRunner(
+            model=model, particles_to_params=identity_params
+        )
         particles = [particle for i in range(3)]
 
         runner._evaluate_particle_chunk(particles)
@@ -156,7 +165,9 @@ class TestEvaluateParticleChunk:
 
     def test_empty_chunk_makes_no_calls(self):
         model = MagicMock()
-        runner = ParticleRunner(model=model, particles_to_params=identity_params)
+        runner = ParticleRunner(
+            model=model, particles_to_params=identity_params
+        )
 
         runner._evaluate_particle_chunk([])
 
@@ -165,7 +176,9 @@ class TestEvaluateParticleChunk:
     def test_returns_list_of_results(self, particle):
         model = MagicMock()
         model.simulate.return_value = "result"
-        runner = ParticleRunner(model=model, particles_to_params=identity_params)
+        runner = ParticleRunner(
+            model=model, particles_to_params=identity_params
+        )
         particles = [particle for i in range(2)]
 
         result = runner._evaluate_particle_chunk(particles)
@@ -260,7 +273,9 @@ class TestRunParticlesAsync:
 
         assert worker.call_count == 3
 
-    def test_worker_called_once_per_chunk_with_larger_chunksize(self, particle):
+    def test_worker_called_once_per_chunk_with_larger_chunksize(
+        self, particle
+    ):
         worker = MagicMock(return_value=None)
         particles = [particle for i in range(6)]
         executor = ThreadPoolExecutor(max_workers=2)

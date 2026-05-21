@@ -4,9 +4,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Concatenate, Literal
 
+from .async_runner import run_coroutine_from_sync
 from .particle import Particle
 from .sampler_reporting import SamplerReporter
-from .async_runner import run_coroutine_from_sync
+
 
 async def _run_particles_helper(
     particles: list[Particle],
@@ -22,8 +23,8 @@ async def _run_particles_helper(
         particles (list[Particle]): List of particles to run the worker function on
         executor (ThreadPoolExecutor): Executor to run the worker function on
         worker (Callable[[list[Particle]], Any]): Worker function to run on each particle
-        chunksize (int, optional): Number of particles to run in each chunk. Defaults to 1.
-        reporter (SamplerReporter, optional): Reporter to use for progress reporting. Defaults to None, in which case a new SamplerReporter will be created.
+        chunksize (int): Number of particles to run in each chunk. Defaults to 1.
+        reporter (SamplerReporter | None): Optional reporter to use for progress reporting. Defaults to None, in which case a new SamplerReporter will be created.
 
     """
     if reporter is None:
@@ -70,6 +71,7 @@ class ParticleRunner:
         execution (Literal["parallel", "serial"], optional): Whether to run particles in parallel using threads or serially. Defaults to "parallel".
         max_workers (int | None, optional): Maximum number of worker threads to use for parallel execution. If None or 0, it will be set to the number of CPU cores available. Defaults to None.
     """
+
     def __init__(
         self,
         model: Any,
@@ -89,7 +91,7 @@ class ParticleRunner:
             max_workers (int | None): The maximum number of workers to use for parallel execution. If None or 0, it will be set to the number of CPU cores available.
         """
         if not max_workers:
-            self.max_workers = os.process_cpu_count() or os.cpu_count() or 1
+            self.max_workers = os.cpu_count() or 1
         else:
             self.max_workers = max_workers
 
@@ -112,13 +114,15 @@ class ParticleRunner:
         threaded batch-processing paths.
 
         Args:
-            proposed_particles (list[Particle]): Proposed particles to score.
-            particle_kwargs (dict[str, Any]): Additional keyword arguments
-                forwarded into particle evaluation.
+            particles (list[Particle]): Proposed particles to score.
+            **kwargs: Additional keyword arguments forwarded into particle evaluation.
+        Returns:
+            list[Any]: List of model outputs corresponding to the proposed particles.
         """
 
         return [
-            self.run_particle(particle=particle, **kwargs) for particle in particles
+            self.run_particle(particle=particle, **kwargs)
+            for particle in particles
         ]
 
     def run(self, particles: list[Particle]):
@@ -151,4 +155,6 @@ class ParticleRunner:
                     reporter.advance(handle)
 
                 end = time.time()
-                reporter.print_run_summary(end - start, process_name="Simulations")
+                reporter.print_run_summary(
+                    end - start, process_name="Simulations"
+                )
