@@ -9,11 +9,13 @@ _DOCUMENTED_VM_SPECS = {
     "medium": (8, 32 * GIBIBYTE),
     "large": (16, 64 * GIBIBYTE),
     "xlarge": (32, 128 * GIBIBYTE),
-    "standard_d2s_v3": (2, 8 * GIBIBYTE),
-    "standard_d4s_v3": (4, 16 * GIBIBYTE),
-    "standard_d8s_v3": (8, 32 * GIBIBYTE),
-    "standard_d16s_v3": (16, 64 * GIBIBYTE),
-    "standard_d32s_v3": (32, 128 * GIBIBYTE),
+    "standard_d2_v3": (2, 8 * GIBIBYTE),
+    "standard_d4_v3": (4, 16 * GIBIBYTE),
+    "standard_d8_v3": (8, 32 * GIBIBYTE),
+    "standard_d16_v3": (16, 64 * GIBIBYTE),
+    "standard_d32_v3": (32, 128 * GIBIBYTE),
+    "standard_d48_v3": (48, 192 * GIBIBYTE),
+    "standard_d64_v3": (64, 256 * GIBIBYTE),
 }
 
 
@@ -30,7 +32,7 @@ def _resolve_vm_spec(vm_size: str) -> tuple[int, int]:
 
 
 def resolve_vm_memory_bytes(vm_size: str) -> int:
-    """Return RAM for documented cloud VM shorthands and Dsv3 SKUs."""
+    """Return RAM for documented cloud VM shorthands and Dv3/Dsv3 SKUs."""
     return _resolve_vm_spec(vm_size)[1]
 
 

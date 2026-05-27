@@ -16,11 +16,13 @@ from calibrationtools.cloud.sizing import (
         ("medium", 32),
         ("large", 64),
         ("xlarge", 128),
-        ("Standard_D2s_v3", 8),
-        ("Standard_D4s_v3", 16),
-        ("Standard_D8s_v3", 32),
-        ("Standard_D16s_v3", 64),
-        ("Standard_D32s_v3", 128),
+        ("Standard_D2_v3", 8),
+        ("Standard_D4_v3", 16),
+        ("Standard_D8_v3", 32),
+        ("Standard_D16_v3", 64),
+        ("Standard_D32_v3", 128),
+        ("Standard_D48_v3", 192),
+        ("Standard_D64_v3", 256),
     ],
 )
 def test_resolve_vm_memory_bytes_supports_documented_sizes(
@@ -37,11 +39,13 @@ def test_resolve_vm_memory_bytes_supports_documented_sizes(
         ("medium", 32),
         ("large", 64),
         ("xlarge", 128),
-        ("Standard_D2s_v3", 8),
-        ("Standard_D4s_v3", 16),
-        ("Standard_D8s_v3", 32),
-        ("Standard_D16s_v3", 64),
-        ("Standard_D32s_v3", 128),
+        ("Standard_D2_v3", 8),
+        ("Standard_D4_v3", 16),
+        ("Standard_D8_v3", 32),
+        ("Standard_D16_v3", 64),
+        ("Standard_D32_v3", 128),
+        ("Standard_D48_v3", 192),
+        ("Standard_D64_v3", 256),
     ],
 )
 def test_resolve_vm_task_slots_per_node_limit_supports_documented_sizes(
@@ -52,7 +56,7 @@ def test_resolve_vm_task_slots_per_node_limit_supports_documented_sizes(
 
 def test_resolve_vm_memory_bytes_rejects_unknown_raw_sku():
     with pytest.raises(ValueError, match="Cannot auto-size unknown vm_size"):
-        resolve_vm_memory_bytes("Standard_D48s_v3")
+        resolve_vm_memory_bytes("Standard_D99_v3")
 
 
 def test_compute_task_slots_per_node_reserves_fifteen_percent():
