@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 
 from numpy.random import SeedSequence
@@ -94,3 +95,92 @@ def test_particlewise_generation_runner_run_generation_records_state():
     assert run_state.step_attempts == [1]
     assert len(run_state.generator_history[0]) == 1
     assert stored_populations[0].size == 1
+
+
+def _build_speculative_runner(
+    *,
+    particles: list[Particle],
+    distances: dict[float, float],
+    sleeps: dict[float, float],
+) -> tuple[ParticlewiseGenerationRunner, list[ParticlePopulation]]:
+    stored_populations: list[ParticlePopulation] = []
+    reporter = SamplerReporter(
+        verbose=True,
+        console=Console(file=StringIO(), force_terminal=True),
+    )
+
+    def sample_particle(_):
+        return particles.pop(0)
+
+    def particle_to_distance(particle, **_):
+        value = particle["p"]
+        time.sleep(sleeps.get(value, 0.0))
+        return distances[value]
+
+    return (
+        ParticlewiseGenerationRunner(
+            config=ParticlewiseGenerationConfig(
+                generation_particle_count=1,
+                tolerance_values=[0.5],
+                seed_sequence=SeedSequence(123),
+                max_attempts_per_proposal=2,
+                sample_particle_from_priors=sample_particle,
+                sample_and_perturb_particle=sample_particle,
+                particle_to_distance=particle_to_distance,
+                calculate_weight=lambda _: 1.0,
+                replace_particle_population=stored_populations.append,
+                reporter=reporter,
+                slot_lookahead=2,
+            ),
+            run_state=SamplerRunState(1, False),
+        ),
+        stored_populations,
+    )
+
+
+def test_particlewise_generation_runner_speculative_accepts_first_attempt_in_order():
+    runner, stored_populations = _build_speculative_runner(
+        particles=[Particle({"p": 0.0}), Particle({"p": 1.0})],
+        distances={0.0: 0.0, 1.0: 0.0},
+        sleeps={0.0: 0.03, 1.0: 0.0},
+    )
+    generation_start_time = time.time()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        generation_stats = runner.run_generation(
+            ParticlewiseGenerationRequest(
+                generation=0,
+                n_workers=2,
+                parallel_executor=executor,
+                overall_start_time=generation_start_time,
+                generation_start_time=generation_start_time,
+                particle_kwargs={},
+            )
+        )
+
+    assert generation_stats.attempts == 1
+    assert stored_populations[0].particles == [Particle({"p": 0.0})]
+
+
+def test_particlewise_generation_runner_speculative_buffers_until_prior_attempt_rejects():
+    runner, stored_populations = _build_speculative_runner(
+        particles=[Particle({"p": 0.0}), Particle({"p": 1.0})],
+        distances={0.0: 1.0, 1.0: 0.0},
+        sleeps={0.0: 0.03, 1.0: 0.0},
+    )
+    generation_start_time = time.time()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        generation_stats = runner.run_generation(
+            ParticlewiseGenerationRequest(
+                generation=0,
+                n_workers=2,
+                parallel_executor=executor,
+                overall_start_time=generation_start_time,
+                generation_start_time=generation_start_time,
+                particle_kwargs={},
+            )
+        )
+
+    assert generation_stats.attempts == 2
+    assert stored_populations[0].particles == [Particle({"p": 1.0})]

@@ -264,6 +264,70 @@ def test_sampler_run_parallel_equal(sampler: ABCSampler):
             )
 
 
+def test_sampler_run_parallel_lookahead_equal(sampler: ABCSampler):
+    results_serial = sampler.run_serial()
+    results_parallel = sampler.run_parallel(slot_lookahead=1)
+    results_lookahead = sampler.run_parallel(
+        max_workers=2,
+        slot_lookahead=3,
+    )
+
+    assert results_serial.point_estimates == results_parallel.point_estimates
+    assert results_serial.point_estimates == results_lookahead.point_estimates
+    assert results_serial.ess == results_parallel.ess
+    assert results_serial.ess == results_lookahead.ess
+    assert results_serial.acceptance_rates == results_parallel.acceptance_rates
+    assert results_serial.acceptance_rates == results_lookahead.acceptance_rates
+    assert (
+        results_serial.posterior.particle_population.particles
+        == results_parallel.posterior.particle_population.particles
+    )
+    assert (
+        results_serial.posterior.particle_population.particles
+        == results_lookahead.posterior.particle_population.particles
+    )
+    assert (
+        results_serial.posterior.particle_population.weights
+        == results_parallel.posterior.particle_population.weights
+    )
+    assert (
+        results_serial.posterior.particle_population.weights
+        == results_lookahead.posterior.particle_population.weights
+    )
+
+
+def test_sampler_rejects_invalid_constructor_slot_lookahead(K, P, Vnorm):
+    with pytest.raises(ValueError, match="slot_lookahead"):
+        ABCSampler(
+            generation_particle_count=5,
+            tolerance_values=[0.5, 0.1],
+            priors=P,
+            perturbation_kernel=K,
+            variance_adapter=Vnorm,
+            particles_to_params=particles_to_params,
+            outputs_to_distance=outputs_to_distance,
+            target_data=0.75,
+            model_runner=DummyModelRunner(),
+            slot_lookahead=0,
+            entropy=123,
+        )
+
+
+def test_sampler_rejects_invalid_run_parallel_slot_lookahead(
+    sampler: ABCSampler,
+):
+    with pytest.raises(ValueError, match="slot_lookahead"):
+        sampler.run_parallel(slot_lookahead=0)
+
+
+def test_sampler_rejects_serial_slot_lookahead(sampler: ABCSampler):
+    with pytest.raises(ValueError, match="parallel execution"):
+        sampler.run(execution="serial", slot_lookahead=2)
+
+    with pytest.raises(ValueError, match="parallel execution"):
+        sampler.run_serial(slot_lookahead=2)
+
+
 def test_sampler_run_parallel_with_unpickleable_runner(K, P, Vnorm):
     sampler = ABCSampler(
         generation_particle_count=5,
@@ -376,6 +440,32 @@ def test_sampler_parallel_worker_failure_does_not_leak_future_errors(
         RuntimeError, match="concurrent simulate on shared runner"
     ):
         sampler.run_parallel(max_workers=2)
+
+    captured = capfd.readouterr()
+    assert "Future exception was never retrieved" not in captured.err
+
+
+def test_sampler_parallel_lookahead_worker_failure_does_not_leak_future_errors(
+    K, P, Vnorm, capfd
+):
+    sampler = ABCSampler(
+        generation_particle_count=5,
+        tolerance_values=[0.5],
+        priors=P,
+        perturbation_kernel=K,
+        variance_adapter=Vnorm,
+        particles_to_params=particles_to_params,
+        outputs_to_distance=outputs_to_distance,
+        target_data=0.75,
+        model_runner=NonThreadSafeModelRunner(),
+        entropy=123,
+        verbose=False,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="concurrent simulate on shared runner"
+    ):
+        sampler.run_parallel(max_workers=2, slot_lookahead=2)
 
     captured = capfd.readouterr()
     assert "Future exception was never retrieved" not in captured.err

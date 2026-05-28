@@ -52,3 +52,9 @@ To run the calibration example for this model, run
 uv sync --all-packages
 uv run python -m example_model.calibrate
 ```
+
+To enable speculative per-slot lookahead for the parallel sampler, pass:
+
+```bash
+uv run python -m example_model.calibrate --slot-lookahead 3
+```

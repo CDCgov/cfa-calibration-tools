@@ -37,6 +37,13 @@ uv run python -m example_model.calibrate
 
 This runs the ABC-SMC calibration workflow defined in [packages/example_model/src/example_model/calibrate.py](/home/as81/work/cfa-calibration-tools-wtk-mp/packages/example_model/src/example_model/calibrate.py) and prints the posterior summary and diagnostics.
 
+To keep multiple speculative attempts submitted per generator slot during
+parallel execution, pass `--slot-lookahead`:
+
+```bash
+uv run python -m example_model.calibrate --slot-lookahead 3
+```
+
 To compare serial and parallel execution for the same example, run:
 
 ```bash

@@ -53,6 +53,7 @@ class ABCSampler:
         max_attempts_per_proposal (int): Maximum number of sample and perturb attempts to propose a particle.
         max_proposals_per_batch (int): Maximum number of particles to propose in a single batch when running in parallel with batched proposals with automatic batch sizes.
         parallel_worker_count (int): Default number of workers to use for sampler parallel execution when `max_workers` is not supplied.
+        slot_lookahead (int): Number of speculative attempts to keep submitted per generator slot during particlewise parallel execution.
         entropy (int | None): Entropy to initialize the seed sequence for reproducibility.
         verbose (bool): Whether to print verbose output during execution.
         keep_previous_population_data (bool): Whether to retain previous
@@ -103,6 +104,7 @@ class ABCSampler:
         max_attempts_per_proposal: int = np.iinfo(np.int32).max,
         max_proposals_per_batch: int = 10_000,
         parallel_worker_count: int = 10,
+        slot_lookahead: int = 1,
         entropy: int | None = None,
         verbose: bool = True,
         keep_previous_population_data: bool = False,
@@ -111,10 +113,13 @@ class ABCSampler:
     ):
         if parallel_worker_count <= 0:
             raise ValueError("parallel_worker_count must be positive")
+        if slot_lookahead < 1:
+            raise ValueError("slot_lookahead must be at least 1")
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
         self.max_proposals_per_batch = max_proposals_per_batch
         self.parallel_worker_count = parallel_worker_count
+        self.slot_lookahead = slot_lookahead
         self.tolerance_values = tolerance_values
         self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
@@ -398,7 +403,10 @@ class ABCSampler:
         return results
 
     def run_parallel(
-        self, max_workers: int | None = None, **kwargs: Any
+        self,
+        max_workers: int | None = None,
+        slot_lookahead: int | None = None,
+        **kwargs: Any,
     ) -> CalibrationResults:
         """
         Executes the Sequential Monte Carlo (SMC) sampling process in parallel using async orchestration over a thread pool.
@@ -411,6 +419,7 @@ class ABCSampler:
 
         Args:
             max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`.
+            slot_lookahead (int | None): Number of speculative attempts to keep submitted per generator slot. When None, uses the sampler default.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -419,10 +428,18 @@ class ABCSampler:
             CalibrationResults: An object containing the results of the calibration process.
         """
         return self.run(
-            execution="parallel", max_workers=max_workers, **kwargs
+            execution="parallel",
+            max_workers=max_workers,
+            slot_lookahead=slot_lookahead,
+            **kwargs,
         )
 
-    def run_serial(self, **kwargs: Any) -> CalibrationResults:
+    def run_serial(
+        self,
+        *,
+        slot_lookahead: int | None = None,
+        **kwargs: Any,
+    ) -> CalibrationResults:
         """
         Executes the Sequential Monte Carlo (SMC) sampling process in serial.
 
@@ -433,6 +450,7 @@ class ABCSampler:
         The execution is performed in serial.
 
         Args:
+            slot_lookahead (int | None): Must be None or 1 for serial execution.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -440,7 +458,11 @@ class ABCSampler:
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
         """
-        return self.run(execution="serial", **kwargs)
+        return self.run(
+            execution="serial",
+            slot_lookahead=slot_lookahead,
+            **kwargs,
+        )
 
     def _resolve_worker_count(self, max_workers: int | None) -> int:
         """Resolve the worker count for a parallel sampler run.
@@ -467,6 +489,30 @@ class ABCSampler:
             raise ValueError("max_workers must be positive")
         return worker_count
 
+    def _resolve_slot_lookahead(
+        self,
+        execution: Literal["serial", "parallel"],
+        slot_lookahead: int | None,
+    ) -> int:
+        """Resolve and validate per-slot speculative lookahead."""
+
+        if slot_lookahead is not None and slot_lookahead < 1:
+            raise ValueError("slot_lookahead must be at least 1")
+        if execution == "serial":
+            if slot_lookahead is not None and slot_lookahead > 1:
+                raise ValueError(
+                    "slot_lookahead > 1 is only supported for parallel execution"
+                )
+            return 1
+        resolved = (
+            self.slot_lookahead
+            if slot_lookahead is None
+            else slot_lookahead
+        )
+        if resolved < 1:
+            raise ValueError("slot_lookahead must be at least 1")
+        return resolved
+
     def _build_reporter(self) -> SamplerReporter:
         """Create the reporter used for one sampler run.
 
@@ -483,6 +529,7 @@ class ABCSampler:
     def _build_particlewise_generation_runner(
         self,
         reporter: SamplerReporter,
+        slot_lookahead: int,
     ) -> ParticlewiseGenerationRunner:
         """Create the particlewise execution engine for the active run.
 
@@ -505,6 +552,7 @@ class ABCSampler:
                 tolerance_values=self.tolerance_values,
                 seed_sequence=self._seed_sequence,
                 max_attempts_per_proposal=self.max_attempts_per_proposal,
+                slot_lookahead=slot_lookahead,
                 sample_particle_from_priors=self.sample_particle_from_priors,
                 sample_and_perturb_particle=self.sample_and_perturb_particle,
                 particle_to_distance=self.particle_to_distance,
@@ -660,6 +708,7 @@ class ABCSampler:
         self,
         execution: Literal["serial", "parallel"] = "parallel",
         max_workers: int | None = None,
+        slot_lookahead: int | None = None,
         **kwargs: Any,
     ) -> CalibrationResults:
         """
@@ -673,6 +722,7 @@ class ABCSampler:
         Args:
             execution (Literal['serial', 'parallel']): Determines whether to run the SMC sampling process in serial or parallel. Defaults to 'serial'.
             max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`. This argument is ignored when execution is set to 'serial'.
+            slot_lookahead (int | None): Number of speculative attempts to keep submitted per generator slot during parallel execution. Serial execution only accepts None or 1.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
@@ -691,8 +741,13 @@ class ABCSampler:
             if execution == "parallel"
             else 1
         )
+        resolved_slot_lookahead = self._resolve_slot_lookahead(
+            execution,
+            slot_lookahead,
+        )
         particlewise_runner = self._build_particlewise_generation_runner(
-            reporter=reporter
+            reporter=reporter,
+            slot_lookahead=resolved_slot_lookahead,
         )
         parallel_executor = self._build_executor(max_workers=n_workers)
 
