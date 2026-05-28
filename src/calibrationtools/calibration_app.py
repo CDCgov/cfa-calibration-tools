@@ -22,6 +22,14 @@ from .sampler import ABCSampler
 CSVOutputContract = CSVColumnOutputContract
 
 
+def positive_int(value: str) -> int:
+    """Parse a positive integer command-line argument."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
 @dataclass(frozen=True)
 class CalibrationAppSpec:
     """Model-specific configuration consumed by the shared calibration app."""
@@ -81,6 +89,15 @@ def build_calibration_parser(
         help="Maximum number of simulations to evaluate at once.",
     )
     parser.add_argument(
+        "--slot-lookahead",
+        type=positive_int,
+        default=None,
+        help=(
+            "Number of speculative attempts to keep submitted per generator "
+            "slot during parallel execution. Defaults to 1."
+        ),
+    )
+    parser.add_argument(
         "--auto-size",
         action="store_true",
         help=(
@@ -108,8 +125,7 @@ def build_calibration_parser(
         "--no-artifacts",
         action="store_true",
         help=(
-            "Disable local input/output artifact staging. Not valid with "
-            "--cloud."
+            "Disable local input/output artifact staging. Not valid with --cloud."
         ),
     )
     return parser
@@ -239,6 +255,7 @@ def run_abc_smc(
     model_runner: object,
     spec: CalibrationAppSpec,
     max_concurrent_simulations: int,
+    slot_lookahead: int | None = None,
     print_task_progress: bool = False,
     artifacts_dir: Path | None = None,
 ) -> CalibrationResults:
@@ -267,7 +284,11 @@ def run_abc_smc(
             print_generation_progress=print_task_progress,
             artifacts_dir=artifacts_dir,
         )
-        results = sampler.run()
+        results = (
+            sampler.run()
+            if slot_lookahead is None
+            else sampler.run(slot_lookahead=slot_lookahead)
+        )
         if spec.output_reporter is not None:
             spec.output_reporter(results)
         return results
@@ -294,6 +315,7 @@ def run_calibration_app(
         ),
         spec=spec,
         max_concurrent_simulations=cloud_sizing.max_concurrent_simulations,
+        slot_lookahead=args.slot_lookahead,
         print_task_progress=args.print_task_progress,
         artifacts_dir=artifacts_dir,
     )

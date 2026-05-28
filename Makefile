@@ -30,6 +30,8 @@ CLOUD_CONFIG ?= packages/example_model/src/example_model/example_model.cloud_con
 MRP_ARGS ?=
 ##@var Common variables|'--artifacts-dir /tmp/run'|Pass options to example calibration
 CALIBRATE_ARGS ?=
+##@var Common variables|3|Enable per-slot speculative lookahead for calibration
+SLOT_LOOKAHEAD ?=
 ##@var Common variables|'-k sampler'|Filter pytest
 TEST_ARGS ?=
 ##@var Common variables|'--fix'|Pass extra ruff options
@@ -74,6 +76,10 @@ ifneq ($(strip $(SKIP_ACR)),)
 SKIP_ACR_FLAG := --skip-acr
 endif
 
+ifneq ($(strip $(SLOT_LOOKAHEAD)),)
+SLOT_LOOKAHEAD_FLAG := --slot-lookahead $(SLOT_LOOKAHEAD)
+endif
+
 PYTEST_CMD = $(UV) run pytest
 RUFF_CMD = $(UV) run --with ruff==$(RUFF_VERSION) ruff
 RUFF_COMMON_ARGS = --line-length 79 .
@@ -81,6 +87,7 @@ TY_CMD = $(UV) run ty
 MRP_CMD = $(UV) run --package $(EXAMPLE_PACKAGE) mrp run
 CALIBRATE_CMD = $(UV) run $(PYTHON) -m example_model.calibrate
 CLOUD_CALIBRATE_CMD = $(UV) run --group cloudops $(PYTHON) -m example_model.calibrate --cloud --cloud-config $(CLOUD_CONFIG)
+CALIBRATE_COMMON_ARGS = $(SLOT_LOOKAHEAD_FLAG) $(CALIBRATE_ARGS)
 CLOUD_CLEANUP_CMD = $(UV) run --group cloudops $(PYTHON) -m calibrationtools.cloud.cleanup --cloud-config $(CLOUD_CONFIG)
 CLOUD_CLEANUP_SESSION_VARS = SESSION_ID="$(SESSION_ID)" IMAGE_TAG="$(IMAGE_TAG)" SKIP_ACR="$(SKIP_ACR)"
 CLOUD_CLEANUP_USER_VARS = CLOUD_USER="$(CLEANUP_USER)" IMAGE_TAG="$(IMAGE_TAG)" SKIP_ACR="$(SKIP_ACR)"
@@ -90,6 +97,8 @@ CLOUD_CLEANUP_USER_VARS = CLOUD_USER="$(CLEANUP_USER)" IMAGE_TAG="$(IMAGE_TAG)" 
 ##@example Variables|make typecheck TY_ARGS='--ignore=unresolved-import'
 ##@example Variables|make mrp MRP_ARGS='--input seed=42 --input max_gen=10'
 ##@example Variables|make calibrate CALIBRATE_ARGS='--artifacts-dir /tmp/run'
+##@example Variables|make calibrate-docker SLOT_LOOKAHEAD=3
+##@example Variables|make calibrate-cloud SLOT_LOOKAHEAD=3
 ##@example Variables|make cloud-cleanup-preview SESSION_ID=20260412010101-alice-testsha-ab12cd34ef56
 
 # Alias targets stay out of the main help so each operation has one canonical
@@ -182,11 +191,11 @@ mrp-docker: docker-build ## Build the image and run the Docker-backed MRP config
 
 .PHONY: calibrate
 calibrate: ## Run local calibration. Pass CALIBRATE_ARGS='...'.
-	$(CALIBRATE_CMD) $(CALIBRATE_ARGS)
+	$(CALIBRATE_CMD) $(CALIBRATE_COMMON_ARGS)
 
 .PHONY: calibrate-docker
 calibrate-docker: docker-build ## Run Docker-backed calibration. Pass CALIBRATE_ARGS='...'.
-	$(CALIBRATE_CMD) --docker $(CALIBRATE_ARGS)
+	$(CALIBRATE_CMD) --docker $(CALIBRATE_COMMON_ARGS)
 
 .PHONY: benchmark
 benchmark: ## Compare serial and parallel example calibration execution.
@@ -196,11 +205,11 @@ benchmark: ## Compare serial and parallel example calibration execution.
 
 .PHONY: calibrate-cloud
 calibrate-cloud: ## Run cloud-backed calibration. Pass CALIBRATE_ARGS='...'.
-	$(CLOUD_CALIBRATE_CMD) $(CALIBRATE_ARGS)
+	$(CLOUD_CALIBRATE_CMD) $(CALIBRATE_COMMON_ARGS)
 
 .PHONY: calibrate-cloud-auto
 calibrate-cloud-auto: ## Run cloud calibration with auto-size/progress. Pass CALIBRATE_ARGS='...'.
-	$(CLOUD_CALIBRATE_CMD) --auto-size --print-task-progress $(CALIBRATE_ARGS)
+	$(CLOUD_CALIBRATE_CMD) --auto-size --print-task-progress $(CALIBRATE_COMMON_ARGS)
 
 .PHONY: cloud-cleanup-preview
 cloud-cleanup-preview: ## Preview cleanup for SESSION_ID=... Optional: IMAGE_TAG=...

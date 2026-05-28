@@ -127,6 +127,8 @@ class ABCSampler:
             one batch when using batched parallel execution.
         max_concurrent_simulations (int): Default number of simulations to run
             concurrently in parallel execution.
+        slot_lookahead (int): Number of speculative attempts to keep submitted
+            per generator slot during particlewise parallel execution.
         entropy (int | None): Entropy used to initialize sampler randomness.
         verbose (bool): Whether to print run summaries.
         keep_previous_population_data (bool): Whether to retain previous
@@ -167,6 +169,7 @@ class ABCSampler:
         results_inherit_entropy_only: bool = True,
         seed_parameter_name: str | None = "seed",
         *,
+        slot_lookahead: int = 1,
         print_generation_progress: bool = False,
         artifacts_dir: Path | str | None = None,
     ):
@@ -182,11 +185,14 @@ class ABCSampler:
         max_concurrent_simulations = _validate_max_concurrent_simulations(
             max_concurrent_simulations
         )
+        if slot_lookahead < 1:
+            raise ValueError("slot_lookahead must be at least 1")
 
         self.generation_particle_count = generation_particle_count
         self.max_attempts_per_proposal = max_attempts_per_proposal
         self.max_proposals_per_batch = max_proposals_per_batch
         self.max_concurrent_simulations = max_concurrent_simulations
+        self.slot_lookahead = slot_lookahead
         self.tolerance_values = tolerance_values
         self._variance_adapter = variance_adapter
         self.particles_to_params = particles_to_params
@@ -499,13 +505,19 @@ class ABCSampler:
         return results
 
     def run_parallel(
-        self, max_workers: int | None = None, **kwargs: Any
+        self,
+        max_workers: int | None = None,
+        slot_lookahead: int | None = None,
+        **kwargs: Any,
     ) -> CalibrationResults:
         """Run the ABC-SMC sampler with parallel particle evaluation.
 
         Args:
             max_workers (int | None): Worker-count override. When omitted, the
                 sampler's configured `max_concurrent_simulations` is used.
+            slot_lookahead (int | None): Number of speculative attempts to keep
+                submitted per generator slot. When omitted, uses the sampler
+                default.
             **kwargs (Any): Additional keyword arguments forwarded to particle
                 evaluation. These must not conflict with sampler attributes.
 
@@ -514,13 +526,23 @@ class ABCSampler:
         """
 
         return self.run(
-            execution="parallel", max_workers=max_workers, **kwargs
+            execution="parallel",
+            max_workers=max_workers,
+            slot_lookahead=slot_lookahead,
+            **kwargs,
         )
 
-    def run_serial(self, **kwargs: Any) -> CalibrationResults:
+    def run_serial(
+        self,
+        *,
+        slot_lookahead: int | None = None,
+        **kwargs: Any,
+    ) -> CalibrationResults:
         """Run the ABC-SMC sampler with serial particle evaluation.
 
         Args:
+            slot_lookahead (int | None): Must be None or 1 for serial
+                execution.
             **kwargs (Any): Additional keyword arguments forwarded to particle
                 evaluation. These must not conflict with sampler attributes.
 
@@ -528,7 +550,11 @@ class ABCSampler:
             CalibrationResults: Results for the completed calibration run.
         """
 
-        return self.run(execution="serial", **kwargs)
+        return self.run(
+            execution="serial",
+            slot_lookahead=slot_lookahead,
+            **kwargs,
+        )
 
     def _resolve_worker_count(self, max_workers: int | None) -> int:
         """Resolve and validate the worker count for a parallel run.
@@ -552,6 +578,28 @@ class ABCSampler:
             raise ValueError("max_workers must be positive")
         return worker_count
 
+    def _resolve_slot_lookahead(
+        self,
+        execution: Literal["serial", "parallel"],
+        slot_lookahead: int | None,
+    ) -> int:
+        """Resolve and validate per-slot speculative lookahead."""
+
+        if slot_lookahead is not None and slot_lookahead < 1:
+            raise ValueError("slot_lookahead must be at least 1")
+        if execution == "serial":
+            if slot_lookahead is not None and slot_lookahead > 1:
+                raise ValueError(
+                    "slot_lookahead > 1 is only supported for parallel execution"
+                )
+            return 1
+        resolved = (
+            self.slot_lookahead if slot_lookahead is None else slot_lookahead
+        )
+        if resolved < 1:
+            raise ValueError("slot_lookahead must be at least 1")
+        return resolved
+
     def _build_reporter(self) -> SamplerReporter:
         """Create the reporter used for one sampler run.
 
@@ -567,12 +615,15 @@ class ABCSampler:
     def _build_particlewise_generation_runner(
         self,
         reporter: SamplerReporter,
+        slot_lookahead: int,
     ) -> ParticlewiseGenerationRunner:
         """Create the particlewise execution engine for the active run.
 
         Args:
             reporter (SamplerReporter): Reporter used for progress and summary
                 output.
+            slot_lookahead (int): Per-slot speculative lookahead for
+                particlewise parallel execution.
 
         Returns:
             ParticlewiseGenerationRunner: Runner configured for the current
@@ -585,6 +636,7 @@ class ABCSampler:
                 tolerance_values=self.tolerance_values,
                 seed_sequence=self._seed_sequence,
                 max_attempts_per_proposal=self.max_attempts_per_proposal,
+                slot_lookahead=slot_lookahead,
                 sample_particle_from_priors=self.sample_particle_from_priors,
                 sample_and_perturb_particle=self.sample_and_perturb_particle,
                 particle_to_distance=self.particle_to_distance,
@@ -752,6 +804,7 @@ class ABCSampler:
         self,
         execution: Literal["serial", "parallel"] = "parallel",
         max_workers: int | None = None,
+        slot_lookahead: int | None = None,
         **kwargs: Any,
     ) -> CalibrationResults:
         """Execute the ABC-SMC sampling process.
@@ -760,6 +813,9 @@ class ABCSampler:
             execution (Literal["serial", "parallel"]): Whether to evaluate
                 particles serially or in parallel.
             max_workers (int | None): Worker-count override for parallel mode.
+            slot_lookahead (int | None): Number of speculative attempts to keep
+                submitted per generator slot during parallel execution. Serial
+                execution only accepts None or 1.
             **kwargs (Any): Additional keyword arguments forwarded to particle
                 evaluation. These must not conflict with sampler attributes.
 
@@ -778,6 +834,10 @@ class ABCSampler:
             if execution == "parallel"
             else 1
         )
+        resolved_slot_lookahead = self._resolve_slot_lookahead(
+            execution,
+            slot_lookahead,
+        )
         use_native_async = (
             execution == "parallel" and self._uses_native_async_collection()
         )
@@ -787,7 +847,8 @@ class ABCSampler:
             else n_workers
         )
         particlewise_runner = self._build_particlewise_generation_runner(
-            reporter=reporter
+            reporter=reporter,
+            slot_lookahead=resolved_slot_lookahead,
         )
         parallel_executor = (
             None

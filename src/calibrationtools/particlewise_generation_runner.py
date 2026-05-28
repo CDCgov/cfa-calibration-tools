@@ -6,9 +6,10 @@ reporting, and population finalization out of `ABCSampler`.
 """
 
 import asyncio
+import copy
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable
 
@@ -41,6 +42,8 @@ class ParticlewiseGenerationConfig:
             deterministic generator slots.
         max_attempts_per_proposal (int): Maximum number of proposal attempts
             allowed for one generator slot.
+        slot_lookahead (int): Number of speculative attempts to keep submitted
+            per generator slot during parallel collection.
         sample_particle_from_priors (Callable[[SeedSequence | None], Particle]):
             Proposal function for the initial generation.
         sample_and_perturb_particle (Callable[[SeedSequence | None], Particle]):
@@ -69,6 +72,7 @@ class ParticlewiseGenerationConfig:
     replace_particle_population: Callable[[ParticlePopulation], None]
     reporter: SamplerReporter
     particle_to_distance_async: Callable[..., Any] | None = None
+    slot_lookahead: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +127,33 @@ class ParticlewiseGenerationState:
     error_distribution: list[dict[str, int | float]]
     generator_slots: list[GeneratorSlot]
     sample_method: Callable[[SeedSequence | None], Particle]
+
+
+@dataclass(frozen=True, slots=True)
+class _SpeculativeAttemptResult:
+    """Store one completed speculative attempt."""
+
+    slot_id: int
+    attempt_index: int
+    particle: Particle
+    distance: float
+
+
+@dataclass(slots=True)
+class _SpeculativeSlotState:
+    """Track one slot's submitted and committed speculative attempts."""
+
+    generator: GeneratorSlot
+    seed_sequence: SeedSequence
+    next_attempt_to_submit: int = 0
+    next_attempt_to_commit: int = 0
+    completed: dict[int, _SpeculativeAttemptResult] = field(
+        default_factory=dict
+    )
+    futures: dict[asyncio.Future[_SpeculativeAttemptResult], int] = field(
+        default_factory=dict
+    )
+    final_proposal: AcceptedProposal | None = None
 
 
 class ParticlewiseGenerationRunner:
@@ -241,6 +272,51 @@ class ParticlewiseGenerationRunner:
             particle=None,
             distance=None,
             attempts=max_attempts,
+        )
+
+    def _evaluate_speculative_attempt(
+        self,
+        *,
+        slot_id: int,
+        attempt_index: int,
+        particle: Particle,
+        evaluation_kwargs: dict[str, Any],
+    ) -> _SpeculativeAttemptResult:
+        """Evaluate one pre-generated speculative particle."""
+
+        return _SpeculativeAttemptResult(
+            slot_id=slot_id,
+            attempt_index=attempt_index,
+            particle=particle,
+            distance=self.config.particle_to_distance(
+                particle,
+                **evaluation_kwargs,
+            ),
+        )
+
+    async def _evaluate_speculative_attempt_async(
+        self,
+        *,
+        slot_id: int,
+        attempt_index: int,
+        particle: Particle,
+        evaluation_kwargs: dict[str, Any],
+        semaphore: asyncio.Semaphore,
+    ) -> _SpeculativeAttemptResult:
+        """Evaluate one pre-generated speculative particle asynchronously."""
+
+        if self.config.particle_to_distance_async is None:
+            raise RuntimeError("Async particle evaluation is not configured.")
+        async with semaphore:
+            distance = await self.config.particle_to_distance_async(
+                particle,
+                **evaluation_kwargs,
+            )
+        return _SpeculativeAttemptResult(
+            slot_id=slot_id,
+            attempt_index=attempt_index,
+            particle=particle,
+            distance=distance,
         )
 
     async def sample_particles_until_accepted_async(
@@ -450,6 +526,264 @@ class ParticlewiseGenerationRunner:
 
         return accepted_list, total_attempts
 
+    def _submit_speculative_attempts(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop,
+        request: ParticlewiseGenerationRequest,
+        state: ParticlewiseGenerationState,
+        slot_state: _SpeculativeSlotState,
+        active_futures: set[asyncio.Future[_SpeculativeAttemptResult]],
+        future_slot_map: dict[
+            asyncio.Future[_SpeculativeAttemptResult],
+            _SpeculativeSlotState,
+        ],
+        semaphore: asyncio.Semaphore | None = None,
+    ) -> None:
+        """Submit attempts until one slot reaches its lookahead window."""
+
+        while (
+            slot_state.final_proposal is None
+            and len(slot_state.futures) < self.config.slot_lookahead
+            and slot_state.next_attempt_to_submit
+            < self.config.max_attempts_per_proposal
+        ):
+            attempt_index = slot_state.next_attempt_to_submit
+            particle = state.sample_method(slot_state.seed_sequence)
+            evaluation_kwargs = build_evaluation_context_kwargs(
+                generation=request.generation,
+                proposal_index=slot_state.generator.id,
+                attempt_index=attempt_index,
+                base_kwargs=request.particle_kwargs,
+            )
+
+            if self.config.particle_to_distance_async is not None:
+                if semaphore is None:
+                    raise RuntimeError(
+                        "Async speculative evaluation requires a semaphore."
+                    )
+                future = asyncio.create_task(
+                    self._evaluate_speculative_attempt_async(
+                        slot_id=slot_state.generator.id,
+                        attempt_index=attempt_index,
+                        particle=particle,
+                        evaluation_kwargs=evaluation_kwargs,
+                        semaphore=semaphore,
+                    )
+                )
+            else:
+                assert request.parallel_executor is not None
+                worker = partial(
+                    self._evaluate_speculative_attempt,
+                    slot_id=slot_state.generator.id,
+                    attempt_index=attempt_index,
+                    particle=particle,
+                    evaluation_kwargs=evaluation_kwargs,
+                )
+                future = loop.run_in_executor(
+                    request.parallel_executor,
+                    worker,
+                )
+
+            slot_state.futures[future] = attempt_index
+            active_futures.add(future)
+            future_slot_map[future] = slot_state
+            slot_state.next_attempt_to_submit += 1
+
+    def _commit_speculative_attempts(
+        self,
+        slot_state: _SpeculativeSlotState,
+        *,
+        tolerance: float,
+    ) -> AcceptedProposal | None:
+        """Commit completed attempts in submission order for one slot."""
+
+        while slot_state.next_attempt_to_commit in slot_state.completed:
+            result = slot_state.completed.pop(
+                slot_state.next_attempt_to_commit
+            )
+            slot_state.next_attempt_to_commit += 1
+            if result.distance <= tolerance:
+                return AcceptedProposal(
+                    slot_id=result.slot_id,
+                    particle=result.particle,
+                    distance=result.distance,
+                    attempts=slot_state.next_attempt_to_commit,
+                )
+
+        if (
+            slot_state.next_attempt_to_commit
+            >= self.config.max_attempts_per_proposal
+        ):
+            return AcceptedProposal(
+                slot_id=slot_state.generator.id,
+                particle=None,
+                distance=None,
+                attempts=self.config.max_attempts_per_proposal,
+            )
+        return None
+
+    @staticmethod
+    def _consume_future_result(
+        future: asyncio.Future[_SpeculativeAttemptResult],
+    ) -> None:
+        """Retrieve an ignored future's result so exceptions do not leak."""
+
+        if not future.done() or future.cancelled():
+            return
+        try:
+            future.result()
+        except BaseException:
+            pass
+
+    def _cancel_slot_futures(
+        self,
+        slot_state: _SpeculativeSlotState,
+        *,
+        active_futures: set[asyncio.Future[_SpeculativeAttemptResult]],
+        future_slot_map: dict[
+            asyncio.Future[_SpeculativeAttemptResult],
+            _SpeculativeSlotState,
+        ],
+    ) -> None:
+        """Cancel or ignore remaining speculative work for a completed slot."""
+
+        for future in list(slot_state.futures):
+            active_futures.discard(future)
+            future_slot_map.pop(future, None)
+            slot_state.futures.pop(future, None)
+            if future.done():
+                self._consume_future_result(future)
+            else:
+                future.cancel()
+
+    @staticmethod
+    async def _cancel_active_futures(
+        active_futures: set[asyncio.Future[_SpeculativeAttemptResult]],
+    ) -> None:
+        """Cancel all active futures and consume their terminal state."""
+
+        for future in active_futures:
+            future.cancel()
+        if active_futures:
+            await asyncio.gather(*active_futures, return_exceptions=True)
+
+    async def _collect_accepted_particles_speculative(
+        self,
+        request: ParticlewiseGenerationRequest,
+        state: ParticlewiseGenerationState,
+        handle: ProgressHandle,
+    ) -> tuple[list[AcceptedProposal], int]:
+        """Collect proposals with per-slot speculative lookahead."""
+
+        if (
+            self.config.particle_to_distance_async is None
+            and request.parallel_executor is None
+        ):
+            raise RuntimeError(
+                "Speculative collection requires async evaluation or an executor."
+            )
+
+        accepted_list: list[AcceptedProposal] = []
+        total_attempts = 0
+        completed = 0
+        active_futures: set[asyncio.Future[_SpeculativeAttemptResult]] = set()
+        future_slot_map: dict[
+            asyncio.Future[_SpeculativeAttemptResult],
+            _SpeculativeSlotState,
+        ] = {}
+        slot_states = [
+            _SpeculativeSlotState(
+                generator=generator,
+                seed_sequence=copy.deepcopy(generator.seed_sequence),
+            )
+            for generator in state.generator_slots
+        ]
+        loop = asyncio.get_running_loop()
+        semaphore = (
+            asyncio.Semaphore(request.n_workers)
+            if self.config.particle_to_distance_async is not None
+            else None
+        )
+
+        try:
+            for slot_state in slot_states:
+                self._submit_speculative_attempts(
+                    loop=loop,
+                    request=request,
+                    state=state,
+                    slot_state=slot_state,
+                    active_futures=active_futures,
+                    future_slot_map=future_slot_map,
+                    semaphore=semaphore,
+                )
+
+            while completed < len(slot_states):
+                if not active_futures:
+                    raise UserWarning(
+                        "No active speculative attempts remained before "
+                        "all generator slots completed."
+                    )
+
+                done, _ = await asyncio.wait(
+                    active_futures,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for future in done:
+                    active_futures.discard(future)
+                    slot_state = future_slot_map.pop(future, None)
+                    if slot_state is None:
+                        self._consume_future_result(future)
+                        continue
+                    attempt_index = slot_state.futures.pop(future, None)
+                    if attempt_index is None:
+                        self._consume_future_result(future)
+                        continue
+
+                    result = future.result()
+                    if slot_state.final_proposal is not None:
+                        continue
+
+                    slot_state.completed[attempt_index] = result
+                    proposal = self._commit_speculative_attempts(
+                        slot_state,
+                        tolerance=(
+                            self.config.tolerance_values[request.generation]
+                        ),
+                    )
+                    if proposal is None:
+                        self._submit_speculative_attempts(
+                            loop=loop,
+                            request=request,
+                            state=state,
+                            slot_state=slot_state,
+                            active_futures=active_futures,
+                            future_slot_map=future_slot_map,
+                            semaphore=semaphore,
+                        )
+                        continue
+
+                    slot_state.final_proposal = proposal
+                    accepted_list.append(proposal)
+                    total_attempts += proposal.attempts
+                    completed += 1
+                    self._cancel_slot_futures(
+                        slot_state,
+                        active_futures=active_futures,
+                        future_slot_map=future_slot_map,
+                    )
+                    self._update_progress(
+                        handle=handle,
+                        completed=completed,
+                        total_attempts=total_attempts,
+                        generation_start_time=request.generation_start_time,
+                    )
+        except BaseException:
+            await self._cancel_active_futures(active_futures)
+            raise
+
+        return accepted_list, total_attempts
+
     async def _collect_accepted_particles_native_async(
         self,
         request: ParticlewiseGenerationRequest,
@@ -529,7 +863,18 @@ class ParticlewiseGenerationRunner:
                 description=description,
                 total=self.config.generation_particle_count,
             )
-            if self.config.particle_to_distance_async is not None:
+            if (
+                self.config.particle_to_distance_async is not None
+                and self.config.slot_lookahead > 1
+            ):
+                accepted_list, total_attempts = run_coroutine_from_sync(
+                    lambda: self._collect_accepted_particles_speculative(
+                        request=request,
+                        state=state,
+                        handle=handle,
+                    )
+                )
+            elif self.config.particle_to_distance_async is not None:
                 accepted_list, total_attempts = run_coroutine_from_sync(
                     lambda: self._collect_accepted_particles_native_async(
                         request=request,
@@ -540,6 +885,14 @@ class ParticlewiseGenerationRunner:
             elif request.n_workers == 1:
                 accepted_list, total_attempts = (
                     self._collect_accepted_particles_serial(
+                        request=request,
+                        state=state,
+                        handle=handle,
+                    )
+                )
+            elif self.config.slot_lookahead > 1:
+                accepted_list, total_attempts = run_coroutine_from_sync(
+                    lambda: self._collect_accepted_particles_speculative(
                         request=request,
                         state=state,
                         handle=handle,
