@@ -155,6 +155,9 @@ class AdaptMultivariateNormalVariance(VarianceAdapter):
     Notes:
         - The covariance matrix is scaled by a factor of 2.0 after being computed
           from the particle states.
+        - The covariance is weighted by the particle weights, so it describes the
+          posterior approximation rather than the raw particle cloud. With equal
+          weights this reduces to the unweighted covariance.
         - The method assumes that the `population` contains particles with parameters
           matching those specified in the `MultivariateNormalKernel`.
     """
@@ -180,5 +183,9 @@ class AdaptMultivariateNormalVariance(VarianceAdapter):
                 for particle in population.particles
             ]
         )
-        cov_matrix = np.cov(states_matrix.T)
+        weights = np.asarray(population.weights, dtype=float)
+        # np.cov applies a 1 - sum(w**2) bias correction that goes to zero as
+        # the population collapses onto a single particle.
+        ddof = 1 if population.ess > 1.0 else 0
+        cov_matrix = np.cov(states_matrix.T, aweights=weights, ddof=ddof)
         mvn_kernel.cov_matrix = cov_matrix * 2.0
