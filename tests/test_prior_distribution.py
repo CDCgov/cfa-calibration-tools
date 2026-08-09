@@ -1,5 +1,6 @@
 from math import exp
 
+import pytest
 from numpy.random import SeedSequence
 from scipy.stats import beta, expon, gamma, lognorm, norm
 
@@ -148,6 +149,33 @@ def test_beta_prior_probability() -> None:
     expected = beta.pdf(0.5, a=alpha, b=beta_param)
 
     assert prior.probability_density(Particle({"x": 0.5})) == expected
+
+
+def test_beta_prior_bounded_sampling(seed_sequence: SeedSequence) -> None:
+    prior = BetaPrior(param="x", alpha=2.0, beta=5.0, min=5.7, max=11.3)
+    samples = [s["x"] for s in prior.sample(50, seed_sequence)]
+
+    assert all(5.7 <= v <= 11.3 for v in samples)
+
+
+def test_beta_prior_bounded_probability() -> None:
+    alpha = 2.0
+    beta_param = 5.0
+    prior = BetaPrior(
+        param="x", alpha=alpha, beta=beta_param, min=5.7, max=11.3
+    )
+    expected = beta.pdf(8.0, a=alpha, b=beta_param, loc=5.7, scale=11.3 - 5.7)
+
+    assert prior.probability_density(Particle({"x": 8.0})) == pytest.approx(
+        expected
+    )
+    assert prior.probability_density(Particle({"x": 5.6})) == 0.0
+    assert prior.probability_density(Particle({"x": 11.4})) == 0.0
+
+
+def test_beta_prior_rejects_inverted_bounds() -> None:
+    with pytest.raises(ValueError, match="Min must be less than max"):
+        BetaPrior(param="x", alpha=2.0, beta=5.0, min=11.3, max=5.7)
 
 
 def test_independent_priors_sampling(

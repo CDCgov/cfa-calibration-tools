@@ -234,6 +234,28 @@ def test_invalid_schema_beta_parameters():
         validate_schema(bad_schema)
 
 
+def test_schema_allows_bounded_beta():
+    schema = {
+        "priors": {
+            "param7": {
+                "distribution": "beta",
+                "parameters": {
+                    "alpha": 2,
+                    "beta": 5,
+                    "min": 5.7,
+                    "max": 11.3,
+                },
+            }
+        }
+    }
+    validate_schema(schema)
+    priors = independent_priors_from_dict(schema, incl_seed_parameter=False)
+    (prior,) = priors.priors
+    assert isinstance(prior, BetaPrior)
+    assert prior.min == 5.7
+    assert prior.max == 11.3
+
+
 def test_invalid_schema_missing_parameters():
     bad_schema = {
         "priors": {

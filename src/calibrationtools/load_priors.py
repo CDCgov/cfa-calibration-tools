@@ -96,6 +96,8 @@ def independent_priors_from_dict(
                         k,
                         alpha=parameters["alpha"],
                         beta=parameters["beta"],
+                        min=parameters.get("min", 0.0),
+                        max=parameters.get("max", 1.0),
                     )
                 )
             case _:
