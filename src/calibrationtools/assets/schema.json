@@ -141,7 +141,9 @@
                         "type": "object",
                         "properties": {
                             "alpha": {"type": "number", "exclusiveMinimum": 0},
-                            "beta": {"type": "number", "exclusiveMinimum": 0}
+                            "beta": {"type": "number", "exclusiveMinimum": 0},
+                            "min": {"type": "number"},
+                            "max": {"type": "number"}
                         },
                         "required": ["alpha", "beta"],
                         "additionalProperties": false

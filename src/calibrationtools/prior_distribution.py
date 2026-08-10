@@ -320,36 +320,65 @@ class BetaPrior(SingleParameterPriorDistribution):
     Represents a beta prior distribution for a single parameter.
 
     The beta distribution is defined by two shape parameters (α and β), both of which must be positive.
+    By default it has support on [0, 1]; supplying `min` and `max` shifts and scales it onto [min, max],
+    which lets a beta express a bounded prior for a parameter that is not a probability.
     This class provides methods to sample from the distribution and calculate the probability density for a given particle.
 
     Args:
         param (str): The name of the parameter this prior is associated with.
         alpha (float): The first shape parameter (α) of the beta distribution. Must be positive.
         beta (float): The second shape parameter (β) of the beta distribution. Must be positive.
+        min (float): The lower bound of the support. Defaults to 0.0.
+        max (float): The upper bound of the support. Must exceed `min`. Defaults to 1.0.
     Raises:
-        ValueError: If `alpha` or `beta` is not positive.
+        ValueError: If `alpha` or `beta` is not positive, or if `min` is not less than `max`.
     """
 
-    def __init__(self, param: str, alpha: float, beta: float) -> None:
+    def __init__(
+        self,
+        param: str,
+        alpha: float,
+        beta: float,
+        min: float = 0.0,
+        max: float = 1.0,
+    ) -> None:
         super().__init__(param)
         self.alpha = alpha
         self.beta = beta
+        self.min = min
+        self.max = max
         if self.alpha <= 0:
             raise ValueError("Alpha must be positive for BetaPrior.")
         if self.beta <= 0:
             raise ValueError("Beta must be positive for BetaPrior.")
+        if self.min >= self.max:
+            raise ValueError("Min must be less than max for BetaPrior.")
+
+    @property
+    def _width(self) -> float:
+        return self.max - self.min
 
     def sample(
         self, n: int, seed: SeedSequence | None
     ) -> Sequence[dict[str, Any]]:
         rng = spawn_rng(seed)
         return [
-            {self.param: rng.beta(self.alpha, self.beta)} for _ in range(n)
+            {
+                self.param: self.min
+                + self._width * rng.beta(self.alpha, self.beta)
+            }
+            for _ in range(n)
         ]
 
     def probability_density(self, particle: Particle) -> float:
         return float(
-            beta.pdf(particle[self.params[0]], a=self.alpha, b=self.beta)
+            beta.pdf(
+                particle[self.params[0]],
+                a=self.alpha,
+                b=self.beta,
+                loc=self.min,
+                scale=self._width,
+            )
         )
 
 
