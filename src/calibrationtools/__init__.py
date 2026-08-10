@@ -13,6 +13,7 @@ from .particle_reader import (
     flatten_dict,
     unflatten_parameter_name,
 )
+from .particle_runner import ParticleRunner
 from .particle_updater import _ParticleUpdater
 from .perturbation_kernel import (
     IndependentKernels,
@@ -50,6 +51,7 @@ __all__ = [
     "ParticlePopulation",
     "ParticlePopulationMetrics",
     "ParticleReader",
+    "ParticleRunner",
     "_ParticleUpdater",
     "PriorDistribution",
     "UniformPrior",

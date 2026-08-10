@@ -1,4 +1,6 @@
-from typing import Any, Sequence
+from typing import Any, Self, Sequence
+
+import polars as pl
 
 from .particle import Particle
 
@@ -116,6 +118,44 @@ class ParticlePopulation:
             normalization_factor = 1.0 / self.total_weight
             for i in range(self.size):
                 self.weights[i] *= normalization_factor
+
+    def join(self, other: Self | Sequence[Particle] | pl.DataFrame) -> Self:
+        """
+        Method to cross join the current ParticlePopulation with another ParticlePopulation, a sequence of Particles, or a Polars DataFrame.
+        Args:
+            other (Self | Sequence[Particle] | pl.DataFrame): The other population, sequence of particles, or DataFrame to join with.
+        Returns:
+            Self: A new ParticlePopulation resulting from the cross join.
+        Raises:
+            TypeError: If the 'other' argument is not a ParticlePopulation, Sequence[Particle], or pl.DataFrame.
+        """
+        if isinstance(other, self.__class__):
+            other_particles = other.particles
+            other_weights = other.weights
+        elif isinstance(other, Sequence) and all(
+            isinstance(p, Particle) for p in other
+        ):
+            other_particles = list(other)
+            other_weights = [1.0] * len(other_particles)
+        elif isinstance(other, pl.DataFrame):
+            other_particles = [
+                Particle(row) for row in other.iter_rows(named=True)
+            ]
+            other_weights = [1.0] * len(other_particles)
+        else:
+            raise TypeError(
+                "Unsupported type for joining: must be ParticlePopulation, Sequence[Particle], or pl.DataFrame"
+            )
+
+        new_population = self.__class__()
+        for p1, w1 in zip(self.particles, self.weights):
+            for p2, w2 in zip(other_particles, other_weights):
+                new_particle = Particle({**p1.data, **p2.data})
+                new_weight = w1 * w2
+                new_population.add_particle(new_particle, new_weight)
+
+        new_population.normalize_weights()
+        return new_population
 
     def __repr__(self):
         return f"ParticlePopulation(size={self.size}, ESS={self.ess})"
