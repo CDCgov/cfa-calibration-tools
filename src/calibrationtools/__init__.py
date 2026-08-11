@@ -1,5 +1,11 @@
 from .async_runner import run_coroutine_from_sync
+from .azure_batch_executor import AzureBatchExecutor
 from .calibration_results import CalibrationResults
+from .cloud_executor import (
+    CloudAcceptanceResult,
+    CloudAcceptanceTask,
+    CloudExecutor,
+)
 from .load_priors import (
     independent_priors_from_dict,
     load_priors_from_json,
@@ -46,7 +52,11 @@ from .variance_adapter import (
 
 __all__ = [
     "ABCSampler",
+    "AzureBatchExecutor",
     "CalibrationResults",
+    "CloudAcceptanceResult",
+    "CloudAcceptanceTask",
+    "CloudExecutor",
     "Particle",
     "ParticlePopulation",
     "ParticlePopulationMetrics",

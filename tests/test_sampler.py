@@ -152,6 +152,11 @@ def test_abc_sampler_run(K, sampler_with_archive: ABCSampler):
     )
 
 
+def test_azure_execution_requires_cloud_executor(sampler: ABCSampler):
+    with pytest.raises(ValueError, match="cloud_executor is required"):
+        sampler.run(execution="azure_batch")
+
+
 def test_sampler_run_does_not_archive_previous_population_by_default(
     sampler: ABCSampler,
 ):
