@@ -37,6 +37,12 @@ benchmarks/
 # !your_data_file.csv
 # !your_data_directory/
 
+# Local Spec Kit / agent scaffolding
+.agents/
+.specify/
+AGENTS.md
+specs/
+
 #####
 # Python
 # https://github.com/github/gitignore/blob/main/Python.gitignore
