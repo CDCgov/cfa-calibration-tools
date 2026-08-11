@@ -325,9 +325,7 @@ class AzureBatchExecutor(CloudExecutor):
     ) -> None:
         started = time.monotonic()
         while True:
-            task_records = list(
-                self.cloud_client.batch_service_client.task.list(job_id)
-            )
+            task_records = self._list_batch_tasks(job_id)
             completed = sum(
                 getattr(
                     getattr(task, "execution_info", None), "exit_code", None
@@ -353,6 +351,14 @@ class AzureBatchExecutor(CloudExecutor):
                 )
             time.sleep(self.poll_interval)
 
+    def _list_batch_tasks(self, job_id: str) -> list[Any]:
+        """List task records across supported Azure Batch client versions."""
+
+        batch_client = self.cloud_client.batch_service_client
+        if hasattr(batch_client, "list_tasks"):
+            return list(batch_client.list_tasks(job_id))
+        return list(batch_client.task.list(job_id))
+
     def _raise_for_failed_tasks(
         self, job_id: str, task_records: list[Any]
     ) -> None:
@@ -376,11 +382,16 @@ class AzureBatchExecutor(CloudExecutor):
             failure_info or "no details"
         )
         try:
-            stderr = b"".join(
-                self.cloud_client.batch_service_client.file.get_from_task(
+            batch_client = self.cloud_client.batch_service_client
+            if hasattr(batch_client, "download_task_file"):
+                stream = batch_client.download_task_file(
                     job_id, task_id, "stderr.txt"
                 )
-            ).decode("utf-8", errors="replace")
+            else:
+                stream = batch_client.file.get_from_task(
+                    job_id, task_id, "stderr.txt"
+                )
+            stderr = b"".join(stream).decode("utf-8", errors="replace")
         except Exception:
             stderr = ""
         message = f"Azure Batch job {job_id} failed in task {task_id} (exit {exit_code}): {detail}"
@@ -433,6 +444,20 @@ class AzureBatchExecutor(CloudExecutor):
             path_to_dockerfile=self.image_dockerfile,
             use_device_code=False,
         )
+        try:
+            tags = cloud_client.list_acr_tags(
+                registry_name=registry_name, repo_name=self.image_name
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Azure image publication could not be verified. Authenticate "
+                "the container runtime to ACR and push the image before retrying."
+            ) from exc
+        if self.image_tag not in tags:
+            raise RuntimeError(
+                "Azure image publication did not produce "
+                f"{self.image_name}:{self.image_tag} in {registry}."
+            )
 
     def _upload_image(self) -> None:
         registry = self._registry_server()

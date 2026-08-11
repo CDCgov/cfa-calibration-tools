@@ -30,6 +30,7 @@ class FakeCloudClient:
         self.uploaded: dict[str, bytes] = {}
         self.results: dict[str, bytes] = {}
         self.calls: list[tuple[str, object]] = []
+        self.image_tags: list[str] = []
         self.batch_service_client = SimpleNamespace(
             task=SimpleNamespace(list=self.list_tasks),
             file=SimpleNamespace(
@@ -81,6 +82,13 @@ class FakeCloudClient:
     def delete_pool(self, pool_name: str) -> None:
         self.calls.append(("delete_pool", pool_name))
 
+    def package_and_upload_dockerfile(self, **kwargs) -> str:
+        self.calls.append(("build_image", kwargs["repo_name"]))
+        return "demo.azurecr.io/demo-image:latest"
+
+    def list_acr_tags(self, **kwargs) -> list[str]:
+        return self.image_tags
+
 
 def task(slot_id: int) -> CloudAcceptanceTask:
     return CloudAcceptanceTask(
@@ -126,6 +134,34 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
     assert "task-0" in str(error.value)
     assert "exit 2" in str(error.value)
     assert "fake worker stderr" in str(error.value)
+
+
+def test_azure_executor_supports_current_batch_client_api() -> None:
+    client = FakeCloudClient(exit_code=2)
+    client.batch_service_client = SimpleNamespace(
+        list_tasks=client.list_tasks,
+        download_task_file=lambda *args: [b"current client stderr"],
+    )
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    with pytest.raises(RuntimeError, match="current client stderr"):
+        asyncio.run(executor.execute_tasks([task(0)]))
+
+
+def test_azure_executor_requires_built_image_to_appear_in_acr() -> None:
+    client = FakeCloudClient()
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        build_image=True,
+        cloud_client=client,
+    )
+
+    with pytest.raises(RuntimeError, match="did not produce"):
+        executor._setup_job([task(0)], callback=None)
 
 
 def test_azure_executor_clone_isolates_names_and_disables_image_publish() -> (

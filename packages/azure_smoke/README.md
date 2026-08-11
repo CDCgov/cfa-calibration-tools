@@ -15,18 +15,39 @@ Registry. The command reads its `.env` through `cfa-cloudops`; in particular it 
 `AZURE_CONTAINER_REGISTRY_ACCOUNT` and the optional
 `AZURE_CONTAINER_REGISTRY_DOMAIN`. Do not replace these with a placeholder registry name.
 
+## Build and publish the worker image
+
+The current cloud-operations image helper delegates authentication to Docker. On a
+Docker-compatible Podman host, authenticate Podman directly with an ACR access token, then
+build and push the image. This reads only the ACR account/domain settings from `.env`.
+
+```bash
+ACR_ACCOUNT="$(uv run --package example-model-azure-smoke \
+  python -c 'from dotenv import load_dotenv; import os; load_dotenv(); print(os.environ["AZURE_CONTAINER_REGISTRY_ACCOUNT"])')"
+ACR_DOMAIN="$(uv run --package example-model-azure-smoke \
+  python -c 'from dotenv import load_dotenv; import os; load_dotenv(); print(os.getenv("AZURE_CONTAINER_REGISTRY_DOMAIN", "azurecr.io"))')"
+ACR_SERVER="$ACR_ACCOUNT.$ACR_DOMAIN"
+ACR_TOKEN="$(az acr login --name "$ACR_ACCOUNT" --expose-token --query accessToken --output tsv)"
+
+podman login "$ACR_SERVER" \
+  --username 00000000-0000-0000-0000-000000000000 \
+  --password "$ACR_TOKEN"
+podman build -f packages/azure_smoke/Dockerfile \
+  -t "$ACR_SERVER/calibrationtools-example-smoke:smoke" .
+podman push "$ACR_SERVER/calibrationtools-example-smoke:smoke"
+```
+
+Use `docker` in place of `podman` on a Docker host. The token is short-lived; build and
+push immediately after obtaining it.
+
 ## Run the smoke test
 
 ```bash
 uv sync --all-packages
 uv run --package example-model-azure-smoke example-model-azure-smoke \
-  --base-name example-model-smoke \
-  --build-image
+  --base-name example-model-smoke
 ```
 
-`--build-image` uses the cloud-operations helper's configured Azure CLI authentication and
-the included Dockerfile; it works with a Docker-compatible Podman setup. Omit it only when
-the configured ACR already contains `calibrationtools-example-smoke:smoke`. The command
-removes its Azure Batch job and pool by default. Pass `--keep-job` or `--keep-pool` when
-Azure-side inspection is needed. The Blob container is retained by the current executor and
-should be deleted after validation if it is no longer needed.
+The command removes its Azure Batch job and pool by default. Pass `--keep-job` or
+`--keep-pool` when Azure-side inspection is needed. The Blob container is retained by the
+current executor and should be deleted after validation if it is no longer needed.
