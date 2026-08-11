@@ -144,6 +144,15 @@ class AzureBatchExecutor(CloudExecutor):
         )
         if registry:
             return registry
+        if self._cloud_client is not None:
+            try:
+                registry = (
+                    self._cloud_client.cred.azure_container_registry_endpoint
+                )
+            except AttributeError:
+                registry = None
+            if registry:
+                return registry
         account = os.getenv("AZURE_CONTAINER_REGISTRY_ACCOUNT")
         if account:
             domain = os.getenv("AZURE_CONTAINER_REGISTRY_DOMAIN", "azurecr.io")
@@ -414,9 +423,10 @@ class AzureBatchExecutor(CloudExecutor):
             self._emit(callback, "Azure resources cleaned", resources=cleaned)
 
     def _build_and_push_image(self) -> None:
+        cloud_client = self.cloud_client
         registry = self._registry_server()
         registry_name = registry.removesuffix(".azurecr.io")
-        self.cloud_client.package_and_upload_dockerfile(
+        cloud_client.package_and_upload_dockerfile(
             registry_name=registry_name,
             repo_name=self.image_name,
             tag=self.image_tag,

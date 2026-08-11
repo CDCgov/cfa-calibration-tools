@@ -156,3 +156,20 @@ def test_azure_executor_uses_cfa_cloudops_acr_environment(
     executor = AzureBatchExecutor(image_name="example-model")
 
     assert executor.image_uri == "exampleacr.azurecr.io/example-model:latest"
+
+
+def test_azure_executor_uses_registry_from_cloud_client_configuration() -> (
+    None
+):
+    cloud_client = SimpleNamespace(
+        cred=SimpleNamespace(
+            azure_container_registry_endpoint="configuredacr.azurecr.io"
+        )
+    )
+    executor = AzureBatchExecutor(
+        image_name="example-model", cloud_client=cloud_client
+    )
+
+    assert (
+        executor.image_uri == "configuredacr.azurecr.io/example-model:latest"
+    )

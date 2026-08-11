@@ -10,41 +10,23 @@ It does not modify or repurpose `packages/example_model`.
 ## Prerequisites
 
 Run from the repository root on the Azure-capable machine. Use the existing approved
-`cfa-cloudops` credential configuration for Azure Batch and Blob Storage, and provide an
-Azure Container Registry server through `AZURE_CONTAINER_REGISTRY_SERVER`,
-`--registry-server`, or the existing `cfa-cloudops` variables
-`AZURE_CONTAINER_REGISTRY_ACCOUNT` and `AZURE_CONTAINER_REGISTRY_DOMAIN`.
-
-When your `.env` uses the latter variables, derive the server for the local container
-commands without exposing any credential values:
-
-```bash
-export AZURE_CONTAINER_REGISTRY_SERVER="$(uv run --package example-model-azure-smoke \
-  python -c \"from dotenv import load_dotenv; import os; load_dotenv(); print(os.environ['AZURE_CONTAINER_REGISTRY_ACCOUNT'] + '.' + os.getenv('AZURE_CONTAINER_REGISTRY_DOMAIN', 'azurecr.io'))\")"
-```
-
-Build and push the included worker image with the normal Docker/ACR tools:
-
-```bash
-export AZURE_CONTAINER_REGISTRY_SERVER=myregistry.azurecr.io
-docker build -f packages/azure_smoke/Dockerfile \
-  -t "$AZURE_CONTAINER_REGISTRY_SERVER/calibrationtools-example-smoke:smoke" .
-az acr login --name "${AZURE_CONTAINER_REGISTRY_SERVER%.azurecr.io}"
-docker push "$AZURE_CONTAINER_REGISTRY_SERVER/calibrationtools-example-smoke:smoke"
-```
-
-Alternatively, `--build-image` asks `cfa-cloudops` to build and upload the Dockerfile. It
-uses that tool's configured Azure CLI authentication, which is commonly managed identity.
+`cfa-cloudops` credential configuration for Azure Batch, Blob Storage, and Azure Container
+Registry. The command reads its `.env` through `cfa-cloudops`; in particular it uses
+`AZURE_CONTAINER_REGISTRY_ACCOUNT` and the optional
+`AZURE_CONTAINER_REGISTRY_DOMAIN`. Do not replace these with a placeholder registry name.
 
 ## Run the smoke test
 
 ```bash
 uv sync --all-packages
 uv run --package example-model-azure-smoke example-model-azure-smoke \
-  --registry-server "$AZURE_CONTAINER_REGISTRY_SERVER" \
-  --base-name example-model-smoke
+  --base-name example-model-smoke \
+  --build-image
 ```
 
-The command removes its Azure Batch job and pool by default. Pass `--keep-job` or
-`--keep-pool` when Azure-side inspection is needed. The Blob container is retained by the
-current executor and should be deleted after validation if it is no longer needed.
+`--build-image` uses the cloud-operations helper's configured Azure CLI authentication and
+the included Dockerfile; it works with a Docker-compatible Podman setup. Omit it only when
+the configured ACR already contains `calibrationtools-example-smoke:smoke`. The command
+removes its Azure Batch job and pool by default. Pass `--keep-job` or `--keep-pool` when
+Azure-side inspection is needed. The Blob container is retained by the current executor and
+should be deleted after validation if it is no longer needed.
