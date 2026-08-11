@@ -134,14 +134,25 @@ class AzureBatchExecutor(CloudExecutor):
 
     @property
     def image_uri(self) -> str:
+        return f"{self._registry_server()}/{self.image_name}:{self.image_tag}"
+
+    def _registry_server(self) -> str:
+        """Resolve an ACR server from explicit or cfa-cloudops settings."""
+
         registry = self.registry_server or os.getenv(
             "AZURE_CONTAINER_REGISTRY_SERVER"
         )
-        if not registry:
-            raise ValueError(
-                "Container registry server must be configured for Azure Batch"
-            )
-        return f"{registry}/{self.image_name}:{self.image_tag}"
+        if registry:
+            return registry
+        account = os.getenv("AZURE_CONTAINER_REGISTRY_ACCOUNT")
+        if account:
+            domain = os.getenv("AZURE_CONTAINER_REGISTRY_DOMAIN", "azurecr.io")
+            return f"{account}.{domain}"
+        raise ValueError(
+            "Container registry server must be configured through "
+            "registry_server, AZURE_CONTAINER_REGISTRY_SERVER, or "
+            "AZURE_CONTAINER_REGISTRY_ACCOUNT"
+        )
 
     def clone_for_scenario(self, scenario_name: str) -> "AzureBatchExecutor":
         """Create an isolated executor without repeated image publication."""
@@ -403,13 +414,7 @@ class AzureBatchExecutor(CloudExecutor):
             self._emit(callback, "Azure resources cleaned", resources=cleaned)
 
     def _build_and_push_image(self) -> None:
-        registry = self.registry_server or os.getenv(
-            "AZURE_CONTAINER_REGISTRY_SERVER"
-        )
-        if not registry:
-            raise ValueError(
-                "Container registry server must be configured for image builds"
-            )
+        registry = self._registry_server()
         registry_name = registry.removesuffix(".azurecr.io")
         self.cloud_client.package_and_upload_dockerfile(
             registry_name=registry_name,
@@ -420,13 +425,7 @@ class AzureBatchExecutor(CloudExecutor):
         )
 
     def _upload_image(self) -> None:
-        registry = self.registry_server or os.getenv(
-            "AZURE_CONTAINER_REGISTRY_SERVER"
-        )
-        if not registry:
-            raise ValueError(
-                "Container registry server must be configured for image uploads"
-            )
+        registry = self._registry_server()
         self.cloud_client.upload_docker_image(
             image_name=f"{self.image_name}:{self.image_tag}",
             registry_name=registry.removesuffix(".azurecr.io"),

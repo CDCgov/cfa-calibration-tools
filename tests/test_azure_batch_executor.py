@@ -144,3 +144,15 @@ def test_azure_executor_clone_isolates_names_and_disables_image_publish() -> (
     assert clone.pool_name == "base-study-scenario-a-pool"
     assert clone.build_image is False
     assert clone.upload_image is False
+
+
+def test_azure_executor_uses_cfa_cloudops_acr_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AZURE_CONTAINER_REGISTRY_SERVER", raising=False)
+    monkeypatch.setenv("AZURE_CONTAINER_REGISTRY_ACCOUNT", "exampleacr")
+    monkeypatch.setenv("AZURE_CONTAINER_REGISTRY_DOMAIN", "azurecr.io")
+
+    executor = AzureBatchExecutor(image_name="example-model")
+
+    assert executor.image_uri == "exampleacr.azurecr.io/example-model:latest"

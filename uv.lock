@@ -14,6 +14,7 @@ resolution-markers = [
 members = [
     "calibrationtools",
     "example-model",
+    "example-model-azure-smoke",
 ]
 
 [[package]]
@@ -618,6 +619,21 @@ dependencies = [
 requires-dist = [
     { name = "cfa-mrp" },
     { name = "numpy", specifier = ">=2.3.4" },
+]
+
+[[package]]
+name = "example-model-azure-smoke"
+version = "0.1.0"
+source = { editable = "packages/azure_smoke" }
+dependencies = [
+    { name = "calibrationtools", extra = ["azure"] },
+    { name = "example-model" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "calibrationtools", extras = ["azure"], editable = "." },
+    { name = "example-model", editable = "packages/example_model" },
 ]
 
 [[package]]
