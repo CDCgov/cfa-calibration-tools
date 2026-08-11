@@ -14,5 +14,3 @@ RUN apt-get update \
 RUN uv sync --locked --no-dev --package example-model-azure-smoke
 
 ENV PATH="/app/.venv/bin:${PATH}"
-
-ENTRYPOINT ["python", "-m", "example_model_azure_smoke"]

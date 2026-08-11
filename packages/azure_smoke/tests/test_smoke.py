@@ -49,3 +49,4 @@ def test_worker_dockerfile_installs_git_before_syncing_git_dependencies():
 
     assert "apt-get install --yes --no-install-recommends git" in contents
     assert contents.index("apt-get install") < contents.index("uv sync")
+    assert "ENTRYPOINT" not in contents
