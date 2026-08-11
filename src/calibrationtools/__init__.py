@@ -1,6 +1,7 @@
 from .async_runner import run_coroutine_from_sync
 from .azure_batch_executor import AzureBatchExecutor
 from .calibration_results import CalibrationResults
+from .calibration_study import CalibrationScenario, CalibrationStudy
 from .cloud_executor import (
     CloudAcceptanceResult,
     CloudAcceptanceTask,
@@ -53,6 +54,8 @@ from .variance_adapter import (
 __all__ = [
     "ABCSampler",
     "AzureBatchExecutor",
+    "CalibrationScenario",
+    "CalibrationStudy",
     "CalibrationResults",
     "CloudAcceptanceResult",
     "CloudAcceptanceTask",
