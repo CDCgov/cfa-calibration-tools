@@ -35,12 +35,14 @@ class ScenarioProgressSnapshot:
     name: str
     state: ScenarioState
     generation: int | None
+    generation_total: int | None
     completed: int | None
     total: int | None
     attempts: int | None
     acceptance_rate: float | None
     elapsed_seconds: float | None
     eta_seconds: float | None
+    status_message: str | None
     failure_summary: str | None
     detail_log_path: str | None
 
@@ -63,11 +65,13 @@ class _ScenarioProgress:
     state: ScenarioState = ScenarioState.QUEUED
     parameters: Mapping[str, Any] = field(default_factory=dict)
     generation: int | None = None
+    generation_total: int | None = None
     completed: int | None = None
     total: int | None = None
     attempts: int | None = None
     acceptance_rate: float | None = None
     eta_seconds: float | None = None
+    status_message: str | None = None
     started_at: float | None = None
     finished_at: float | None = None
     failure_summary: str | None = None
@@ -113,6 +117,7 @@ class StudyProgressReporter:
     def finish(self, *, success: bool) -> None:
         """Stop the live display after all scenario work has settled."""
 
+        del success
         with self._lock:
             if self._live is not None:
                 self._live.update(self._render(), refresh=True)
@@ -132,7 +137,17 @@ class StudyProgressReporter:
             scenario.state = ScenarioState.RUNNING
             scenario.started_at = time.monotonic()
             scenario.parameters = dict(parameters or {})
+            scenario.status_message = None
             self._write_detail(scenario, "scenario_started", {})
+            self._refresh()
+
+    def mark_shared_pool_preparing(self) -> None:
+        """Show that queued scenarios are waiting for shared Azure capacity."""
+
+        with self._lock:
+            for scenario in self._scenarios.values():
+                scenario.status_message = "Preparing shared Azure pool"
+                self._write_detail(scenario, "shared_pool_preparing", {})
             self._refresh()
 
     def mark_completed(self, scenario_name: str) -> None:
@@ -165,7 +180,7 @@ class StudyProgressReporter:
 
         with self._lock:
             scenario = self._scenario(scenario_name)
-            if scenario.state is ScenarioState.RUNNING:
+            if scenario.state in (ScenarioState.QUEUED, ScenarioState.RUNNING):
                 scenario.state = ScenarioState.CANCELLED
                 scenario.finished_at = time.monotonic()
                 self._write_detail(scenario, "scenario_cancelled", {})
@@ -181,6 +196,7 @@ class StudyProgressReporter:
             payload = dict(event.payload)
             if event.event_type == "generation_started":
                 scenario.generation = event.generation
+                scenario.generation_total = payload.get("generation_total")
             elif event.event_type == "work_progressed":
                 scenario.generation = event.generation
                 scenario.completed = payload.get("completed")
@@ -233,12 +249,14 @@ class StudyProgressReporter:
             name=scenario.name,
             state=scenario.state,
             generation=scenario.generation,
+            generation_total=scenario.generation_total,
             completed=scenario.completed,
             total=scenario.total,
             attempts=scenario.attempts,
             acceptance_rate=scenario.acceptance_rate,
             elapsed_seconds=self._elapsed(scenario),
             eta_seconds=scenario.eta_seconds,
+            status_message=scenario.status_message,
             failure_summary=scenario.failure_summary,
             detail_log_path=scenario.detail_log_path,
         )
@@ -284,20 +302,31 @@ class StudyProgressReporter:
         table.add_column("Acceptance")
         table.add_column("Elapsed")
         table.add_column("ETA")
+        table.add_column("Note", overflow="fold")
         for scenario in snapshot.scenarios:
             table.add_row(
                 scenario.name,
                 scenario.state.value,
                 "-"
                 if scenario.generation is None
-                else str(scenario.generation + 1),
+                else self._format_generation(scenario),
                 self._format_work(scenario),
                 "-" if scenario.attempts is None else str(scenario.attempts),
                 self._format_percent(scenario.acceptance_rate),
                 self._format_duration(scenario.elapsed_seconds),
                 self._format_duration(scenario.eta_seconds),
+                scenario.failure_summary or scenario.status_message or "",
             )
         return table
+
+    @staticmethod
+    def _format_generation(scenario: ScenarioProgressSnapshot) -> str:
+        if scenario.generation is None:
+            return "-"
+        generation = str(scenario.generation + 1)
+        if scenario.generation_total is None:
+            return generation
+        return f"{generation}/{scenario.generation_total}"
 
     @staticmethod
     def _format_work(scenario: ScenarioProgressSnapshot) -> str:

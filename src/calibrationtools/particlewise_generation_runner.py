@@ -537,6 +537,7 @@ class ParticlewiseGenerationRunner:
                 "generation_started",
                 generation=request.generation,
                 tolerance=self.config.tolerance_values[request.generation],
+                generation_total=len(self.config.tolerance_values),
             )
             if request.cloud_executor is not None:
                 accepted_list, total_attempts = (

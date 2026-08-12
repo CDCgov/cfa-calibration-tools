@@ -102,6 +102,18 @@ def run_cloud_acceptance_task(
 class CloudExecutor(ABC):
     """Execute complete acceptance tasks without mutating sampler state."""
 
+    async def prepare_study(self) -> None:
+        """Prepare resources shared by all scenarios in one study.
+
+        Backends without study-scoped resources keep the default no-op behavior.
+        """
+
+    async def cleanup_study(self) -> None:
+        """Clean resources owned by one complete study after all scenarios settle.
+
+        Backends without study-scoped resources keep the default no-op behavior.
+        """
+
     @abstractmethod
     async def execute_tasks(
         self,

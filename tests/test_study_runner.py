@@ -2,6 +2,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from calibrationtools.calibration_study import (
     CalibrationScenario,
     CalibrationStudy,
@@ -13,6 +15,13 @@ from calibrationtools.sampler_types import ProgressEvent
 class CloneTrackingExecutor(CloudExecutor):
     def __init__(self) -> None:
         self.cloned_for: list[str] = []
+        self.lifecycle: list[str] = []
+
+    async def prepare_study(self) -> None:
+        self.lifecycle.append("prepare")
+
+    async def cleanup_study(self) -> None:
+        self.lifecycle.append("cleanup")
 
     def clone_for_scenario(self, scenario_name: str) -> "ScenarioExecutor":
         self.cloned_for.append(scenario_name)
@@ -102,6 +111,7 @@ def test_study_limits_concurrency_clones_executors_and_preserves_order(
     assert list(results.values()) == ["first", "second", "third"]
     assert constructed == ["first", "second", "third"]
     assert executor.cloned_for == ["first", "second", "third"]
+    assert executor.lifecycle == ["prepare", "cleanup"]
     assert maximum[0] == 2
     assert all(tmp_path.joinpath(f"{name}.jsonl").exists() for name in results)
 
@@ -138,4 +148,43 @@ def test_study_records_failure_and_cancels_remaining_scenarios(
     snapshot = study.reporter.snapshot()
     assert snapshot.failed_count == 1
     assert snapshot.cancelled_count == 1
+    assert executor.lifecycle == ["prepare", "cleanup"]
     assert "first failed" in tmp_path.joinpath("first.jsonl").read_text()
+    assert tmp_path.joinpath("second.jsonl").exists()
+
+
+def test_study_reports_shared_pool_preparation_failure(
+    tmp_path: Path,
+) -> None:
+    """Surface a shared-pool failure on every scenario before scheduling work."""
+
+    class FailingSetupExecutor(CloneTrackingExecutor):
+        async def prepare_study(self) -> None:
+            self.lifecycle.append("prepare")
+            raise RuntimeError("shared pool unavailable")
+
+    executor = FailingSetupExecutor()
+    study = CalibrationStudy(
+        scenarios=[
+            CalibrationScenario("first"),
+            CalibrationScenario("second"),
+        ],
+        sampler_factory=lambda scenario: (_ for _ in ()).throw(
+            AssertionError(f"factory should not run for {scenario.name}")
+        ),
+        cloud_executor=executor,
+        detail_log_dir=tmp_path,
+        quiet=True,
+    )
+
+    with pytest.raises(RuntimeError, match="shared pool unavailable"):
+        study.run()
+
+    assert executor.lifecycle == ["prepare", "cleanup"]
+    assert study.reporter is not None
+    snapshot = study.reporter.snapshot()
+    assert snapshot.failed_count == 2
+    assert (
+        "shared pool unavailable"
+        in tmp_path.joinpath("first.jsonl").read_text()
+    )

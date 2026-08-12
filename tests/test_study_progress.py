@@ -2,6 +2,8 @@ import json
 import time
 from pathlib import Path
 
+from rich.console import Console
+
 from calibrationtools.sampler_types import ProgressEvent
 from calibrationtools.study_progress import (
     ScenarioState,
@@ -19,13 +21,18 @@ def test_reporter_tracks_progress_and_writes_scenario_detail_log(
         quiet=True,
     )
     reporter.start()
+    reporter.mark_shared_pool_preparing()
+    assert (
+        reporter.snapshot().scenarios[1].status_message
+        == "Preparing shared Azure pool"
+    )
     reporter.mark_started("first", parameters={"beta": 0.2})
     reporter.handle_sampler_event(
         "first",
         ProgressEvent(
             event_type="generation_started",
             generation=0,
-            payload={"tolerance": 0.5},
+            payload={"tolerance": 0.5, "generation_total": 2},
         ),
     )
     reporter.handle_sampler_event(
@@ -55,7 +62,9 @@ def test_reporter_tracks_progress_and_writes_scenario_detail_log(
     assert snapshot.running_count == 1
     assert snapshot.queued_count == 1
     assert first.state is ScenarioState.RUNNING
+    assert first.status_message is None
     assert first.generation == 0
+    assert first.generation_total == 2
     assert first.completed == 2
     assert first.total == 4
     assert first.attempts == 5
@@ -66,6 +75,9 @@ def test_reporter_tracks_progress_and_writes_scenario_detail_log(
         for line in Path(first.detail_log_path).read_text().splitlines()
     ]
     assert records[-1]["payload"]["message"] == "pool ready"
+    console = Console(record=True, width=200)
+    console.print(reporter._render())
+    assert "1/2" in console.export_text()
     reporter.finish(success=True)
 
 
@@ -88,3 +100,6 @@ def test_reporter_records_failure_and_running_elapsed_time(
     assert scenario.failure_summary == "worker unavailable"
     assert scenario.detail_log_path is not None
     assert "worker unavailable" in Path(scenario.detail_log_path).read_text()
+    console = Console(record=True, width=200)
+    console.print(reporter._render())
+    assert "worker unavailable" in console.export_text()

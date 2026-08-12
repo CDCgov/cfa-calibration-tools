@@ -78,24 +78,44 @@ class StudyRunner:
                 reporter.mark_completed(scenario.name)
                 return index, result
 
-        tasks = [
-            asyncio.create_task(run_one(index, scenario))
-            for index, scenario in enumerate(self.study.scenarios)
-        ]
+        tasks: list[asyncio.Task[tuple[int, Any]]] = []
+        success = False
+        prepared = False
         try:
+            reporter.mark_shared_pool_preparing()
+            await self.study.cloud_executor.prepare_study()
+            prepared = True
+            tasks = [
+                asyncio.create_task(run_one(index, scenario))
+                for index, scenario in enumerate(self.study.scenarios)
+            ]
             completed = await asyncio.gather(*tasks)
-        except BaseException:
+        except BaseException as exc:
             for task in tasks:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            for scenario in reporter.snapshot().scenarios:
-                if scenario.state is ScenarioState.RUNNING:
-                    reporter.mark_cancelled(scenario.name)
-            reporter.finish(success=False)
+            if not prepared:
+                for scenario in self.study.scenarios:
+                    reporter.mark_failed(scenario.name, exc)
+            else:
+                for scenario in reporter.snapshot().scenarios:
+                    if scenario.state in (
+                        ScenarioState.QUEUED,
+                        ScenarioState.RUNNING,
+                    ):
+                        reporter.mark_cancelled(scenario.name)
             raise
-        reporter.finish(success=True)
-        return {
-            self.study.scenarios[index].name: result
-            for index, result in sorted(completed, key=lambda item: item[0])
-        }
+        else:
+            success = True
+            return {
+                self.study.scenarios[index].name: result
+                for index, result in sorted(
+                    completed, key=lambda item: item[0]
+                )
+            }
+        finally:
+            try:
+                await self.study.cloud_executor.cleanup_study()
+            finally:
+                reporter.finish(success=success)

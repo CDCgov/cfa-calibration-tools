@@ -58,6 +58,8 @@ class AzureBatchExecutor(CloudExecutor):
         base_image: str | None = None,
         poll_interval: float = 5.0,
         max_wait: float = 3600.0,
+        _use_shared_study_pool: bool = False,
+        _study_pool_ready: bool = False,
         cloud_client: Any | None = None,
         client_factory: Callable[[], Any] | None = None,
     ) -> None:
@@ -95,6 +97,8 @@ class AzureBatchExecutor(CloudExecutor):
         self.base_image = base_image
         self.poll_interval = poll_interval
         self.max_wait = max_wait
+        self._use_shared_study_pool = _use_shared_study_pool
+        self._study_pool_ready = _study_pool_ready
         self._cloud_client = cloud_client
         self._client_factory = client_factory
         self._task_blobs: list[str] = []
@@ -164,11 +168,18 @@ class AzureBatchExecutor(CloudExecutor):
         )
 
     def clone_for_scenario(self, scenario_name: str) -> "AzureBatchExecutor":
-        """Create an isolated executor without repeated image publication."""
+        """Create an isolated executor without repeated image publication.
+
+        Once a study has prepared its pool, clones share only that pool and its
+        mounted Blob container. Jobs, task blobs, clients, and mutable task state
+        remain scenario-local.
+        """
 
         suffix = self._safe_name(scenario_name)
         return type(self)(
             base_name=f"{self.base_name}-{suffix}",
+            pool_name=self.pool_name if self._study_pool_ready else None,
+            blob_name=self.blob_name if self._study_pool_ready else None,
             registry_server=self.registry_server,
             image_name=self.image_name,
             image_tag=self.image_tag,
@@ -179,7 +190,9 @@ class AzureBatchExecutor(CloudExecutor):
             mount_path=self.mount_path,
             command_template=self.command_template,
             delete_job_after=self.delete_job_after,
-            delete_pool_after=self.delete_pool_after,
+            delete_pool_after=(
+                False if self._study_pool_ready else self.delete_pool_after
+            ),
             env_path=self.env_path,
             use_sp=self.use_sp,
             use_federated=self.use_federated,
@@ -189,8 +202,20 @@ class AzureBatchExecutor(CloudExecutor):
             base_image=self.base_image,
             poll_interval=self.poll_interval,
             max_wait=self.max_wait,
+            _use_shared_study_pool=self._study_pool_ready,
+            _study_pool_ready=self._study_pool_ready,
             client_factory=self._client_factory,
         )
+
+    async def prepare_study(self) -> None:
+        """Create the shared study pool and its mounted Blob container once."""
+
+        await asyncio.to_thread(self._prepare_shared_study_pool)
+
+    async def cleanup_study(self) -> None:
+        """Delete a completed study's shared pool when configured to do so."""
+
+        await asyncio.to_thread(self._cleanup_shared_study_pool)
 
     async def execute_tasks(
         self,
@@ -244,12 +269,46 @@ class AzureBatchExecutor(CloudExecutor):
         tasks: list[CloudAcceptanceTask],
         callback: ProgressCallback | None,
     ) -> str:
+        if self._use_shared_study_pool:
+            if not self._study_pool_ready:
+                raise RuntimeError(
+                    "Shared Azure study pool was not prepared before scenario work"
+                )
+        else:
+            self._prepare_pool()
+        self._task_blobs = self._upload_task_chunks(tasks)
+        self._run_index += 1
+        job_id = (
+            f"{self.base_name}-job-{int(time.time() * 1000)}-{self._run_index}"
+        )
+        self._emit(
+            callback,
+            (
+                "Using shared Azure study pool"
+                if self._use_shared_study_pool
+                else "Azure pool ready"
+            ),
+            pool_name=self.pool_name,
+            job_id=job_id,
+        )
+        return job_id
+
+    def _prepare_shared_study_pool(self) -> None:
+        """Provision the Blob mount and pool once for a complete study."""
+
+        if self._study_pool_ready:
+            return
+        self._prepare_pool()
+        self._study_pool_ready = True
+
+    def _prepare_pool(self) -> None:
+        """Publish the requested image and create this executor's pool."""
+
         if self.build_image:
             self._build_and_push_image()
         elif self.upload_image:
             self._upload_image()
         self.cloud_client.create_blob_container(self.blob_name)
-        self._task_blobs = self._upload_task_chunks(tasks)
         self.cloud_client.create_pool(
             self.pool_name,
             mounts=[self.blob_name],
@@ -258,17 +317,13 @@ class AzureBatchExecutor(CloudExecutor):
             max_autoscale_nodes=self.max_autoscale_nodes,
             task_slots_per_node=self.task_slots_per_node,
         )
-        self._run_index += 1
-        job_id = (
-            f"{self.base_name}-job-{int(time.time() * 1000)}-{self._run_index}"
-        )
-        self._emit(
-            callback,
-            "Azure pool ready",
-            pool_name=self.pool_name,
-            job_id=job_id,
-        )
-        return job_id
+
+    def _cleanup_shared_study_pool(self) -> None:
+        """Perform deferred pool cleanup after every study scenario has settled."""
+
+        if self._study_pool_ready and self.delete_pool_after:
+            self.cloud_client.delete_pool(self.pool_name)
+        self._study_pool_ready = False
 
     def _upload_task_chunks(
         self, tasks: list[CloudAcceptanceTask]
@@ -281,7 +336,7 @@ class AzureBatchExecutor(CloudExecutor):
             for index, start in enumerate(
                 range(0, len(tasks), self.chunk_size)
             ):
-                name = f"tasks-{stamp}-{index:0{width}d}.pkl"
+                name = f"tasks-{self.base_name}-{stamp}-{index:0{width}d}.pkl"
                 with (task_dir / name).open("wb") as file:
                     pickle.dump(tasks[start : start + self.chunk_size], file)
                 names.append(name)
