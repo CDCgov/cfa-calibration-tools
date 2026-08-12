@@ -51,3 +51,16 @@ uv run --package example-model-azure-smoke example-model-azure-smoke \
 The command removes its Azure Batch job and pool by default. Pass `--keep-job` or
 `--keep-pool` when Azure-side inspection is needed. The Blob container is retained by the
 current executor and should be deleted after validation if it is no longer needed.
+
+## Run the final concurrent-study smoke test
+
+After the image above is published, this exact command runs the two-scenario Azure
+validation with one live study dashboard and per-scenario JSONL logs:
+
+```bash
+uv run --package example-model-azure-smoke example-model-azure-smoke \
+  --study \
+  --base-name example-model-study \
+  --max-concurrent-scenarios 2 \
+  --detail-log-dir azure-smoke-study-logs
+```

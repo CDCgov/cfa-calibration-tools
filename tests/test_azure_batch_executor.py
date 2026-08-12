@@ -129,11 +129,21 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
         cloud_client=client,
     )
 
+    events = []
     with pytest.raises(RuntimeError) as error:
-        asyncio.run(executor.execute_tasks([task(0)]))
+        asyncio.run(
+            executor.execute_tasks([task(0)], progress_callback=events.append)
+        )
     assert "task-0" in str(error.value)
     assert "exit 2" in str(error.value)
     assert "fake worker stderr" in str(error.value)
+    assert any(call[0] == "delete_job" for call in client.calls)
+    assert [event.payload["message"] for event in events] == [
+        "Azure pool ready",
+        "Azure tasks submitted",
+        "Azure task progress",
+        "Azure resources cleaned",
+    ]
 
 
 def test_azure_executor_supports_current_batch_client_api() -> None:
@@ -180,6 +190,40 @@ def test_azure_executor_clone_isolates_names_and_disables_image_publish() -> (
     assert clone.pool_name == "base-study-scenario-a-pool"
     assert clone.build_image is False
     assert clone.upload_image is False
+
+
+def test_study_pool_is_shared_across_scenario_clones_and_cleaned_once() -> (
+    None
+):
+    client = FakeCloudClient()
+    executor = AzureBatchExecutor(
+        base_name="Shared Study",
+        registry_server="demo.azurecr.io",
+        chunk_size=1,
+        poll_interval=0,
+        delete_pool_after=True,
+        cloud_client=client,
+        client_factory=lambda: client,
+    )
+
+    asyncio.run(executor.prepare_study())
+    first = executor.clone_for_scenario("first")
+    second = executor.clone_for_scenario("second")
+    asyncio.run(first.execute_tasks([task(0)]))
+    asyncio.run(second.execute_tasks([task(1)]))
+
+    assert first.pool_name == second.pool_name == "shared-study-pool"
+    assert first.blob_name == second.blob_name == "shared-study-tasks"
+    assert first.base_name != second.base_name
+    assert len([call for call in client.calls if call[0] == "pool"]) == 1
+    assert len([call for call in client.calls if call[0] == "job"]) == 2
+    assert len(client.uploaded) == 2
+    assert len(set(client.uploaded)) == 2
+    assert not any(call[0] == "delete_pool" for call in client.calls)
+
+    asyncio.run(executor.cleanup_study())
+
+    assert client.calls[-1] == ("delete_pool", "shared-study-pool")
 
 
 def test_azure_executor_uses_cfa_cloudops_acr_environment(

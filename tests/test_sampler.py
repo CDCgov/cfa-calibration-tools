@@ -1,6 +1,8 @@
+import builtins
 import threading
 import time
 from copy import deepcopy
+from typing import Literal
 
 import pytest
 from numpy.random import SeedSequence
@@ -155,6 +157,31 @@ def test_abc_sampler_run(K, sampler_with_archive: ABCSampler):
 def test_azure_execution_requires_cloud_executor(sampler: ABCSampler):
     with pytest.raises(ValueError, match="cloud_executor is required"):
         sampler.run(execution="azure_batch")
+
+
+@pytest.mark.parametrize("execution", ["serial", "parallel"])
+def test_local_execution_never_imports_optional_azure_dependency(
+    sampler: ABCSampler,
+    monkeypatch: pytest.MonkeyPatch,
+    execution: Literal["serial", "parallel"],
+) -> None:
+    """Keep serial and local-threaded runs independent of cfa-cloudops."""
+
+    original_import = builtins.__import__
+
+    def reject_cloudops_import(name, *args, **import_kwargs):
+        if name == "cfa.cloudops":
+            raise AssertionError("local execution imported cfa-cloudops")
+        return original_import(name, *args, **import_kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_cloudops_import)
+
+    if execution == "serial":
+        results = sampler.run(execution=execution)
+    else:
+        results = sampler.run(execution=execution, max_workers=1)
+
+    assert isinstance(results, CalibrationResults)
 
 
 def test_sampler_run_does_not_archive_previous_population_by_default(

@@ -11,6 +11,10 @@ from example_model import Binom_BP_Model
 from mrp import Environment
 
 from calibrationtools.azure_batch_executor import AzureBatchExecutor
+from calibrationtools.calibration_study import (
+    CalibrationScenario,
+    CalibrationStudy,
+)
 from calibrationtools.perturbation_kernel import (
     IndependentKernels,
     NormalKernel,
@@ -43,7 +47,9 @@ def outputs_to_distance(model_output: list[int], target_data: float) -> float:
     return abs(float(np.sum(model_output)) - target_data)
 
 
-def build_smoke_sampler(particle_count: int = 4) -> ABCSampler:
+def build_smoke_sampler(
+    particle_count: int = 4, target_data: float = 5.0
+) -> ABCSampler:
     """Build a one-generation sampler that finishes in one attempt per slot.
 
     The broad, finite tolerance makes this an infrastructure check rather than
@@ -65,7 +71,7 @@ def build_smoke_sampler(particle_count: int = 4) -> ABCSampler:
         variance_adapter=AdaptIdentityVariance(),
         default_parameters=DEFAULT_PARAMETERS,
         outputs_to_distance=outputs_to_distance,
-        target_data=5.0,
+        target_data=target_data,
         model_runner=Binom_BP_Model(
             env=Environment({"input": dict(DEFAULT_PARAMETERS)})
         ),
@@ -104,6 +110,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--particle-count", type=int, default=4)
     parser.add_argument("--chunk-size", type=int, default=1)
     parser.add_argument("--max-autoscale-nodes", type=int, default=1)
+    parser.add_argument(
+        "--study",
+        action="store_true",
+        help="Run two named smoke scenarios concurrently through Azure Batch.",
+    )
+    parser.add_argument("--max-concurrent-scenarios", type=int, default=2)
+    parser.add_argument(
+        "--detail-log-dir",
+        default="azure-smoke-study-logs",
+        help="Directory for per-scenario JSONL progress logs in study mode.",
+    )
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--max-wait", type=float, default=1800.0)
     image_actions = parser.add_mutually_exclusive_group()
@@ -125,7 +142,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_executor(args: argparse.Namespace) -> AzureBatchExecutor:
+def build_executor(
+    args: argparse.Namespace, *, max_autoscale_nodes: int | None = None
+) -> AzureBatchExecutor:
     """Create the Azure executor configured by the smoke-test command line."""
 
     return AzureBatchExecutor(
@@ -133,7 +152,11 @@ def build_executor(args: argparse.Namespace) -> AzureBatchExecutor:
         registry_server=args.registry_server,
         image_name=args.image_name,
         image_tag=args.image_tag,
-        max_autoscale_nodes=args.max_autoscale_nodes,
+        max_autoscale_nodes=(
+            max_autoscale_nodes
+            if max_autoscale_nodes is not None
+            else args.max_autoscale_nodes
+        ),
         chunk_size=args.chunk_size,
         delete_job_after=args.delete_job_after,
         delete_pool_after=args.delete_pool_after,
@@ -145,14 +168,48 @@ def build_executor(args: argparse.Namespace) -> AzureBatchExecutor:
     )
 
 
+def run_smoke_study(args: argparse.Namespace) -> dict[str, Any]:
+    """Run two independent Azure smoke scenarios and return ordered results."""
+
+    scenarios = (
+        CalibrationScenario("baseline", {"target_data": 5.0}),
+        CalibrationScenario("higher-target", {"target_data": 6.0}),
+    )
+    study = CalibrationStudy(
+        scenarios=scenarios,
+        sampler_factory=lambda scenario: build_smoke_sampler(
+            particle_count=args.particle_count,
+            target_data=float(scenario.parameters["target_data"]),
+        ),
+        cloud_executor=build_executor(
+            args,
+            max_autoscale_nodes=max(
+                args.max_autoscale_nodes, args.max_concurrent_scenarios
+            ),
+        ),
+        max_concurrent_scenarios=args.max_concurrent_scenarios,
+        detail_log_dir=args.detail_log_dir,
+        study_name=args.base_name,
+    )
+    return study.run()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the example-model Azure smoke test and print its concise outcome."""
 
     args = parse_args(argv)
+    if args.study:
+        results_by_scenario = run_smoke_study(args)
+        print(
+            "Azure concurrent smoke study completed: "
+            f"{', '.join(results_by_scenario)}. "
+            f"Detail logs: {args.detail_log_dir}"
+        )
+        return 0
+
     sampler = build_smoke_sampler(args.particle_count)
     results = sampler.run(
-        execution="azure_batch",
-        cloud_executor=build_executor(args),
+        execution="azure_batch", cloud_executor=build_executor(args)
     )
     print(
         "Azure smoke test completed: "
