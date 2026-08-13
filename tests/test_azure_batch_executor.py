@@ -139,10 +139,184 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
     assert "fake worker stderr" in str(error.value)
     assert any(call[0] == "delete_job" for call in client.calls)
     assert [event.payload["message"] for event in events] == [
+        "Authenticating with Azure",
+        "Creating Blob container calibrationtools-tasks",
+        "Creating pool calibrationtools-pool (STANDARD_D2S_V3)",
+        "Pool calibrationtools-pool created",
         "Azure pool ready",
         "Azure tasks submitted",
-        "Azure task progress",
+        "Azure task progress 1/1",
         "Azure resources cleaned",
+    ]
+
+
+class StalledPoolClient(FakeCloudClient):
+    """Report an allocated-but-unusable pool with tasks stuck in `active`."""
+
+    def __init__(self, node_state: str = "unusable") -> None:
+        super().__init__()
+        self.batch_service_client = SimpleNamespace(
+            task=SimpleNamespace(list=self.list_stalled_tasks),
+            compute_node=SimpleNamespace(
+                list=lambda pool_name: [
+                    SimpleNamespace(
+                        state=node_state,
+                        errors=[
+                            SimpleNamespace(
+                                code="ContainerPullFailed",
+                                message="failed to pull image",
+                            )
+                        ],
+                        start_task_info=None,
+                    )
+                ]
+            ),
+            pool=SimpleNamespace(
+                get=lambda pool_name: SimpleNamespace(resize_errors=[])
+            ),
+        )
+
+    def list_stalled_tasks(self, job_id: str):
+        return [
+            SimpleNamespace(id="task-0", state="active", execution_info=None)
+        ]
+
+
+def test_azure_executor_fails_fast_when_pool_has_no_usable_nodes() -> None:
+    """Detect a spoiled pool instead of polling silently until timeout."""
+
+    client = StalledPoolClient()
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    with pytest.raises(RuntimeError) as error:
+        asyncio.run(
+            executor.execute_tasks([task(0)], progress_callback=events.append)
+        )
+
+    assert "no usable nodes" in str(error.value)
+    assert "ContainerPullFailed" in str(error.value)
+    assert any(
+        "unusable" in str(event.payload.get("node_states")) for event in events
+    )
+
+
+def test_azure_executor_times_out_when_no_task_ever_starts() -> None:
+    """Report a dedicated error when a healthy pool never starts any task."""
+
+    client = StalledPoolClient(node_state="idle")
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        max_wait_for_first_task_start=0,
+        cloud_client=client,
+    )
+
+    with pytest.raises(TimeoutError) as error:
+        asyncio.run(executor.execute_tasks([task(0)]))
+
+    assert "did not start" in str(error.value) or "started within" in str(
+        error.value
+    )
+    assert "idle" in str(error.value)
+
+
+class AllocatingPoolClient(FakeCloudClient):
+    """Report a pool whose nodes reach `idle` only after several polls."""
+
+    def __init__(self, states: list[str]) -> None:
+        super().__init__()
+        self.node_states = list(states)
+        self.node_polls = 0
+        self.batch_service_client = SimpleNamespace(
+            task=SimpleNamespace(list=self.list_tasks),
+            file=SimpleNamespace(
+                get_from_task=lambda *args: [b"fake worker stderr"]
+            ),
+            compute_node=SimpleNamespace(list=self.list_compute_nodes),
+            pool=SimpleNamespace(
+                get=lambda pool_name: SimpleNamespace(resize_errors=[])
+            ),
+        )
+
+    def list_compute_nodes(self, pool_name: str):
+        index = min(self.node_polls, len(self.node_states) - 1)
+        self.node_polls += 1
+        state = self.node_states[index]
+        if state == "none":
+            return []
+        return [SimpleNamespace(state=state, errors=[], start_task_info=None)]
+
+
+def test_azure_executor_reports_node_allocation_until_nodes_are_ready() -> (
+    None
+):
+    """Emit node-allocation progress between pool creation and task start."""
+
+    client = AllocatingPoolClient(["none", "creating", "starting", "idle"])
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks([task(0)], progress_callback=events.append)
+    )
+
+    node_events = [
+        event for event in events if event.payload.get("stage") == "pool_nodes"
+    ]
+    assert len(node_events) == 4
+    assert "none allocated" not in node_events[0].payload["message"]
+    assert node_events[0].payload["usable_nodes"] == 0
+    assert node_events[-1].payload["usable_nodes"] == 1
+    assert "creating 1" in node_events[1].payload["message"]
+
+
+def test_azure_executor_times_out_when_pool_never_allocates_nodes() -> None:
+    """Fail with a quota-oriented message when allocation never completes."""
+
+    client = AllocatingPoolClient(["creating"])
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        max_wait_for_nodes=0,
+        cloud_client=client,
+    )
+
+    with pytest.raises(TimeoutError) as error:
+        asyncio.run(executor.execute_tasks([task(0)]))
+
+    assert "allocated no usable nodes" in str(error.value)
+    assert "quota-blocked resize" in str(error.value)
+
+
+def test_azure_executor_skips_node_wait_when_disabled() -> None:
+    """Allow opting out of the node-allocation poll."""
+
+    client = AllocatingPoolClient(["creating"])
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        wait_for_nodes=False,
+        max_wait_for_nodes=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    results = asyncio.run(
+        executor.execute_tasks([task(0)], progress_callback=events.append)
+    )
+
+    assert [result.slot_id for result in results] == [0]
+    assert not [
+        event for event in events if event.payload.get("stage") == "pool_nodes"
     ]
 
 

@@ -72,6 +72,7 @@ class _ScenarioProgress:
     acceptance_rate: float | None = None
     eta_seconds: float | None = None
     status_message: str | None = None
+    status_changed_at: float | None = None
     started_at: float | None = None
     finished_at: float | None = None
     failure_summary: str | None = None
@@ -89,10 +90,12 @@ class StudyProgressReporter:
         detail_log_dir: str | Path,
         quiet: bool = False,
         console: Console | None = None,
+        stall_warning_seconds: float = 120.0,
     ) -> None:
         self.study_name = study_name
         self.detail_log_dir = Path(detail_log_dir)
         self.quiet = quiet
+        self.stall_warning_seconds = stall_warning_seconds
         self.console = console or Console()
         self._scenarios = {
             name: _ScenarioProgress(name=name) for name in scenario_names
@@ -100,6 +103,8 @@ class StudyProgressReporter:
         self._scenario_order = tuple(scenario_names)
         self._lock = threading.RLock()
         self._live: Live | None = None
+        self._setup_message: str | None = None
+        self._setup_started_at: float | None = None
 
     def start(self) -> None:
         """Start the single live display for this study."""
@@ -107,7 +112,7 @@ class StudyProgressReporter:
         with self._lock:
             if not self.quiet and self._live is None:
                 self._live = Live(
-                    self._render(),
+                    _LiveDashboard(self),
                     console=self.console,
                     refresh_per_second=4,
                     transient=False,
@@ -119,6 +124,8 @@ class StudyProgressReporter:
 
         del success
         with self._lock:
+            self._setup_message = None
+            self._setup_started_at = None
             if self._live is not None:
                 self._live.update(self._render(), refresh=True)
                 self._live.stop()
@@ -138,17 +145,52 @@ class StudyProgressReporter:
             scenario.started_at = time.monotonic()
             scenario.parameters = dict(parameters or {})
             scenario.status_message = None
+            self._setup_message = None
+            self._setup_started_at = None
             self._write_detail(scenario, "scenario_started", {})
             self._refresh()
 
     def mark_shared_pool_preparing(self) -> None:
         """Show that queued scenarios are waiting for shared Azure capacity."""
 
+        self.mark_shared_setup_status("Preparing shared Azure pool")
+
+    def mark_shared_setup_status(self, message: str) -> None:
+        """Update the study-level status shown while shared resources come up.
+
+        Args:
+            message (str): Human-readable description of the current stage.
+
+        Returns:
+            None: This method does not return a value.
+        """
+
         with self._lock:
+            if self._setup_started_at is None:
+                self._setup_started_at = time.monotonic()
+            self._setup_message = message
             for scenario in self._scenarios.values():
-                scenario.status_message = "Preparing shared Azure pool"
-                self._write_detail(scenario, "shared_pool_preparing", {})
+                if scenario.status_message != message:
+                    scenario.status_changed_at = time.monotonic()
+                scenario.status_message = message
+                self._write_detail(
+                    scenario, "shared_pool_preparing", {"message": message}
+                )
             self._refresh()
+
+    def handle_setup_event(self, event: ProgressEvent) -> None:
+        """Route one shared-resource setup event to the study status line.
+
+        Args:
+            event (ProgressEvent): Executor event emitted during preparation.
+
+        Returns:
+            None: This method does not return a value.
+        """
+
+        message = event.payload.get("message")
+        if message:
+            self.mark_shared_setup_status(str(message))
 
     def mark_completed(self, scenario_name: str) -> None:
         """Record a successfully completed scenario."""
@@ -204,9 +246,16 @@ class StudyProgressReporter:
                 scenario.attempts = payload.get("attempts")
                 scenario.acceptance_rate = payload.get("acceptance_rate")
                 scenario.eta_seconds = payload.get("eta_seconds")
+                scenario.status_message = None
+                scenario.status_changed_at = time.monotonic()
+            elif event.event_type == "executor_message":
+                message = payload.get("message")
+                if message:
+                    if str(message) != scenario.status_message:
+                        scenario.status_changed_at = time.monotonic()
+                    scenario.status_message = str(message)
             self._write_detail(scenario, event.event_type, payload)
-            if event.event_type != "executor_message":
-                self._refresh()
+            self._refresh()
 
     def snapshot(self) -> StudyProgressSnapshot:
         """Return immutable monitor state for tests and external observers."""
@@ -289,11 +338,11 @@ class StudyProgressReporter:
 
     def _refresh(self) -> None:
         if self._live is not None:
-            self._live.update(self._render(), refresh=True)
+            self._live.refresh()
 
     def _render(self) -> RenderableType:
         snapshot = self.snapshot()
-        table = Table(title=f"Calibration study: {self.study_name}")
+        table = Table(title=self._render_title())
         table.add_column("Scenario")
         table.add_column("State")
         table.add_column("Generation")
@@ -315,9 +364,45 @@ class StudyProgressReporter:
                 self._format_percent(scenario.acceptance_rate),
                 self._format_duration(scenario.elapsed_seconds),
                 self._format_duration(scenario.eta_seconds),
-                scenario.failure_summary or scenario.status_message or "",
+                scenario.failure_summary or self._format_note(scenario) or "",
             )
         return table
+
+    def _format_note(self, scenario: ScenarioProgressSnapshot) -> str:
+        """Render the status note with an age hint so stalls stay visible.
+
+        Args:
+            scenario (ScenarioProgressSnapshot): Scenario being rendered.
+
+        Returns:
+            str: Status text, annotated with its age when it is stale.
+        """
+
+        message = scenario.status_message
+        if not message:
+            return ""
+        tracked = self._scenarios.get(scenario.name)
+        changed_at = getattr(tracked, "status_changed_at", None)
+        if changed_at is None:
+            return message
+        age = time.monotonic() - changed_at
+        if age < self.stall_warning_seconds:
+            return message
+        return f"[yellow]{message} (unchanged {self._format_duration(age)})[/yellow]"
+
+    def _render_title(self) -> str:
+        title = f"Calibration study: {self.study_name}"
+        if self._setup_message is None:
+            return title
+        elapsed = (
+            0.0
+            if self._setup_started_at is None
+            else time.monotonic() - self._setup_started_at
+        )
+        return (
+            f"{title}\n[cyan]{self._setup_message}[/cyan] "
+            f"({self._format_duration(elapsed)} elapsed)"
+        )
 
     @staticmethod
     def _format_generation(scenario: ScenarioProgressSnapshot) -> str:
@@ -344,3 +429,21 @@ class StudyProgressReporter:
             return "-"
         minutes, seconds = divmod(int(max(value, 0)), 60)
         return f"{minutes}m{seconds:02d}s" if minutes else f"{seconds}s"
+
+
+class _LiveDashboard:
+    """Re-render the study dashboard on every Rich refresh tick.
+
+    Passing a live proxy instead of a static table lets elapsed timers advance
+    during long-running phases such as Azure pool creation, where no events
+    arrive to trigger an explicit refresh.
+
+    Args:
+        reporter (StudyProgressReporter): Reporter owning the dashboard state.
+    """
+
+    def __init__(self, reporter: "StudyProgressReporter") -> None:
+        self._reporter = reporter
+
+    def __rich__(self) -> RenderableType:
+        return self._reporter._render()

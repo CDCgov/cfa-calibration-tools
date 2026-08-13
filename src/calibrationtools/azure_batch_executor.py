@@ -9,15 +9,84 @@ import re
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Iterator
 
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
+from . import formatting
 from .cloud_executor import (
     CloudAcceptanceResult,
     CloudAcceptanceTask,
     CloudExecutor,
 )
 from .sampler_types import ProgressCallback, ProgressEvent
+
+#: Node states from which a pool can never make progress on queued tasks.
+_UNUSABLE_NODE_STATES = frozenset(
+    {"unusable", "starttaskfailed", "preempted", "offline", "unknown"}
+)
+
+#: Node states in which a node can accept or is already running task work.
+_USABLE_NODE_STATES = frozenset({"idle", "running", "leavingpool"})
+
+
+@contextmanager
+def _rich_upload_progress(description: str) -> Iterator[None]:
+    """Render blob uploads with a single-line Rich progress bar.
+
+    ``cfa-cloudops`` drives its upload loop with ``tqdm``, which emits a new
+    line per refresh once its stream is not a plain terminal. This context
+    manager temporarily swaps that iterator for a Rich-backed equivalent so
+    upload progress matches the rest of the sampler output.
+
+    Args:
+        description (str): Label shown beside the progress bar.
+
+    Yields:
+        None: Control returns to the caller while the bar is installed.
+    """
+
+    try:
+        from cfa.cloudops import blob as cloudops_blob
+    except Exception:
+        yield
+        return
+
+    progress = Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("•"),
+        TextColumn("{task.completed}/{task.total}"),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        console=formatting.get_console(True),
+        transient=True,
+    )
+    original_tqdm = cloudops_blob.tqdm
+
+    def tracked(
+        iterable: Iterable[Any], *args: Any, **kwargs: Any
+    ) -> Iterator[Any]:
+        items = list(iterable)
+        task_id = progress.add_task(description, total=len(items))
+        for item in items:
+            yield item
+            progress.advance(task_id)
+
+    cloudops_blob.tqdm = tracked
+    try:
+        with progress:
+            yield
+    finally:
+        cloudops_blob.tqdm = original_tqdm
 
 
 class AzureBatchExecutor(CloudExecutor):
@@ -58,6 +127,9 @@ class AzureBatchExecutor(CloudExecutor):
         base_image: str | None = None,
         poll_interval: float = 5.0,
         max_wait: float = 3600.0,
+        max_wait_for_first_task_start: float = 900.0,
+        wait_for_nodes: bool = True,
+        max_wait_for_nodes: float = 1800.0,
         _use_shared_study_pool: bool = False,
         _study_pool_ready: bool = False,
         cloud_client: Any | None = None,
@@ -97,6 +169,9 @@ class AzureBatchExecutor(CloudExecutor):
         self.base_image = base_image
         self.poll_interval = poll_interval
         self.max_wait = max_wait
+        self.max_wait_for_first_task_start = max_wait_for_first_task_start
+        self.wait_for_nodes = wait_for_nodes
+        self.max_wait_for_nodes = max_wait_for_nodes
         self._use_shared_study_pool = _use_shared_study_pool
         self._study_pool_ready = _study_pool_ready
         self._cloud_client = cloud_client
@@ -202,15 +277,29 @@ class AzureBatchExecutor(CloudExecutor):
             base_image=self.base_image,
             poll_interval=self.poll_interval,
             max_wait=self.max_wait,
+            max_wait_for_first_task_start=self.max_wait_for_first_task_start,
+            wait_for_nodes=self.wait_for_nodes,
+            max_wait_for_nodes=self.max_wait_for_nodes,
             _use_shared_study_pool=self._study_pool_ready,
             _study_pool_ready=self._study_pool_ready,
             client_factory=self._client_factory,
         )
 
-    async def prepare_study(self) -> None:
-        """Create the shared study pool and its mounted Blob container once."""
+    async def prepare_study(
+        self,
+        *,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
+        """Create the shared study pool and its mounted Blob container once.
 
-        await asyncio.to_thread(self._prepare_shared_study_pool)
+        Args:
+            progress_callback (ProgressCallback | None): Optional observer for
+                image, container, and pool setup stages.
+        """
+
+        await asyncio.to_thread(
+            self._prepare_shared_study_pool, progress_callback
+        )
 
     async def cleanup_study(self) -> None:
         """Delete a completed study's shared pool when configured to do so."""
@@ -275,7 +364,7 @@ class AzureBatchExecutor(CloudExecutor):
                     "Shared Azure study pool was not prepared before scenario work"
                 )
         else:
-            self._prepare_pool()
+            self._prepare_pool(callback)
         self._task_blobs = self._upload_task_chunks(tasks)
         self._run_index += 1
         job_id = (
@@ -293,29 +382,162 @@ class AzureBatchExecutor(CloudExecutor):
         )
         return job_id
 
-    def _prepare_shared_study_pool(self) -> None:
+    def _prepare_shared_study_pool(
+        self, callback: ProgressCallback | None = None
+    ) -> None:
         """Provision the Blob mount and pool once for a complete study."""
 
         if self._study_pool_ready:
             return
-        self._prepare_pool()
+        self._prepare_pool(callback)
         self._study_pool_ready = True
 
-    def _prepare_pool(self) -> None:
+    def _prepare_pool(self, callback: ProgressCallback | None = None) -> None:
         """Publish the requested image and create this executor's pool."""
 
+        self._emit(
+            callback,
+            "Authenticating with Azure",
+            stage="authenticate",
+            pool_name=self.pool_name,
+        )
+        client = self.cloud_client
         if self.build_image:
+            self._emit(
+                callback,
+                f"Building and pushing image {self.image_uri}",
+                stage="image",
+            )
             self._build_and_push_image()
         elif self.upload_image:
+            self._emit(
+                callback,
+                f"Uploading image {self.image_uri}",
+                stage="image",
+            )
             self._upload_image()
-        self.cloud_client.create_blob_container(self.blob_name)
-        self.cloud_client.create_pool(
+        self._emit(
+            callback,
+            f"Creating Blob container {self.blob_name}",
+            stage="blob_container",
+            blob_name=self.blob_name,
+        )
+        client.create_blob_container(self.blob_name)
+        self._emit(
+            callback,
+            f"Creating pool {self.pool_name} ({self.vm_size})",
+            stage="pool",
+            pool_name=self.pool_name,
+        )
+        client.create_pool(
             self.pool_name,
             mounts=[self.blob_name],
             container_image_name=self.image_uri,
             vm_size=self.vm_size,
             max_autoscale_nodes=self.max_autoscale_nodes,
             task_slots_per_node=self.task_slots_per_node,
+        )
+        self._wait_for_pool_nodes(callback)
+        self._emit(
+            callback,
+            f"Pool {self.pool_name} created",
+            stage="pool_ready",
+            pool_name=self.pool_name,
+        )
+
+    def _wait_for_pool_nodes(
+        self, callback: ProgressCallback | None = None
+    ) -> None:
+        """Poll until the pool allocates at least one usable compute node.
+
+        ``create_pool`` returns as soon as Batch accepts the pool definition,
+        long before any VM boots, pulls the container image, and runs its start
+        task. Polling node states here turns the silent gap between pool
+        creation and first task execution into visible progress, and surfaces
+        allocation failures instead of letting the job wait for them.
+
+        Args:
+            callback (ProgressCallback | None): Optional observer for node
+                allocation progress events.
+
+        Returns:
+            None: This method does not return a value.
+
+        Raises:
+            RuntimeError: If every allocated node reaches a terminal bad state.
+            TimeoutError: If no usable node appears within
+                ``max_wait_for_nodes``.
+        """
+
+        if not self.wait_for_nodes:
+            return
+        started = time.monotonic()
+        while True:
+            health = self._pool_health()
+            states = health.get("node_states")
+            if states is None:
+                return
+            usable = sum(
+                count
+                for name, count in states.items()
+                if name in _USABLE_NODE_STATES
+            )
+            elapsed = time.monotonic() - started
+            self._emit(
+                callback,
+                self._node_wait_message(states, usable, elapsed),
+                stage="pool_nodes",
+                pool_name=self.pool_name,
+                usable_nodes=usable,
+                elapsed_seconds=elapsed,
+                **health,
+            )
+            if usable:
+                return
+            self._raise_for_unhealthy_pool(
+                f"pool {self.pool_name} startup", health
+            )
+            if elapsed > self.max_wait_for_nodes:
+                detail = "; ".join(
+                    list(health.get("node_errors", ()))
+                    + list(health.get("resize_errors", ()))
+                )
+                message = (
+                    f"Azure Batch pool {self.pool_name} allocated no usable "
+                    f"nodes within {self.max_wait_for_nodes:.0f}s "
+                    f"(node states: {self._state_summary(states)}). This "
+                    "usually means a quota-blocked resize, an image pull "
+                    "failure, or a failing start task."
+                )
+                if detail:
+                    message += f" Details: {detail}"
+                raise TimeoutError(message)
+            time.sleep(self.poll_interval)
+
+    def _node_wait_message(
+        self, states: dict[str, int], usable: int, elapsed: float
+    ) -> str:
+        """Summarize node allocation progress for one status line."""
+
+        if not states:
+            return (
+                f"Waiting for pool {self.pool_name} to allocate nodes "
+                f"({elapsed:.0f}s)"
+            )
+        summary = self._state_summary(states)
+        if usable:
+            return f"Pool {self.pool_name} nodes ready ({summary})"
+        return (
+            f"Waiting for pool {self.pool_name} nodes: {summary} "
+            f"({elapsed:.0f}s)"
+        )
+
+    @staticmethod
+    def _state_summary(states: dict[str, int]) -> str:
+        """Render node state counts in a stable, compact order."""
+
+        return ", ".join(
+            f"{name} {count}" for name, count in sorted(states.items())
         )
 
     def _cleanup_shared_study_pool(self) -> None:
@@ -340,12 +562,13 @@ class AzureBatchExecutor(CloudExecutor):
                 with (task_dir / name).open("wb") as file:
                     pickle.dump(tasks[start : start + self.chunk_size], file)
                 names.append(name)
-            self.cloud_client.upload_files(
-                files=names,
-                container_name=self.blob_name,
-                local_root_dir=str(task_dir),
-                location_in_blob=".",
-            )
+            with _rich_upload_progress("Uploading task files"):
+                self.cloud_client.upload_files(
+                    files=names,
+                    container_name=self.blob_name,
+                    local_root_dir=str(task_dir),
+                    location_in_blob=".",
+                )
             return names
         finally:
             shutil.rmtree(task_dir, ignore_errors=True)
@@ -379,6 +602,8 @@ class AzureBatchExecutor(CloudExecutor):
         self, job_id: str, callback: ProgressCallback | None
     ) -> None:
         started = time.monotonic()
+        total = len(self._task_blobs)
+        running_seen = False
         while True:
             task_records = self._list_batch_tasks(job_id)
             completed = sum(
@@ -388,23 +613,173 @@ class AzureBatchExecutor(CloudExecutor):
                 is not None
                 for task in task_records
             )
+            running = sum(
+                str(getattr(task, "state", "")).lower().endswith("running")
+                for task in task_records
+            )
+            running_seen = running_seen or running > 0 or completed > 0
+            health = self._pool_health()
             self._emit(
                 callback,
-                "Azure task progress",
+                self._wait_message(completed, running, total, health),
                 job_id=job_id,
                 completed=completed,
-                total=len(self._task_blobs),
+                running=running,
+                total=total,
+                elapsed_seconds=time.monotonic() - started,
+                **health,
             )
-            if len(task_records) >= len(self._task_blobs) and completed >= len(
-                self._task_blobs
-            ):
+            if len(task_records) >= total and completed >= total:
                 self._raise_for_failed_tasks(job_id, task_records)
                 return
-            if time.monotonic() - started > self.max_wait:
+            self._raise_for_unhealthy_pool(f"job {job_id}", health)
+            elapsed = time.monotonic() - started
+            if (
+                not running_seen
+                and elapsed > self.max_wait_for_first_task_start
+            ):
+                raise TimeoutError(
+                    f"No Azure Batch task in job {job_id} started within "
+                    f"{self.max_wait_for_first_task_start:.0f}s on pool "
+                    f"{self.pool_name}. Node states: "
+                    f"{health.get('node_states') or 'unknown'}. This usually "
+                    "means the pool never allocated usable nodes (quota, "
+                    "image pull, or start-task failure)."
+                )
+            if elapsed > self.max_wait:
                 raise TimeoutError(
                     f"Azure Batch job {job_id} did not complete in time"
                 )
             time.sleep(self.poll_interval)
+
+    @classmethod
+    def _wait_message(
+        cls,
+        completed: int,
+        running: int,
+        total: int,
+        health: dict[str, Any],
+    ) -> str:
+        """Summarize job and pool state for one progress line."""
+
+        parts = [f"Azure task progress {completed}/{total}"]
+        if running:
+            parts.append(f"{running} running")
+        states = health.get("node_states")
+        if states:
+            parts.append("nodes: " + cls._state_summary(states))
+        elif states == {}:
+            parts.append("nodes: none allocated yet")
+        return " • ".join(parts)
+
+    def _pool_health(self) -> dict[str, Any]:
+        """Summarize compute-node states and errors for the executor's pool.
+
+        Batch surfaces pool problems (image pull failures, start-task errors,
+        quota-blocked resizes) on the nodes and the pool rather than on the
+        job, so a job that never starts otherwise looks identical to a job that
+        is merely slow.
+
+        Returns:
+            dict[str, Any]: Node state counts plus any node or resize errors.
+            Keys are omitted when the client does not expose that information.
+        """
+
+        batch_client = getattr(self.cloud_client, "batch_service_client", None)
+        if batch_client is None:
+            return {}
+        try:
+            nodes = self._list_compute_nodes(batch_client)
+        except Exception:
+            return {}
+        states: dict[str, int] = {}
+        errors: list[str] = []
+        for node in nodes:
+            state = self._state_name(getattr(node, "state", None))
+            states[state] = states.get(state, 0) + 1
+            for error in getattr(node, "errors", None) or []:
+                errors.append(self._error_text(error))
+            start_task_info = getattr(node, "start_task_info", None)
+            failure_info = getattr(start_task_info, "failure_info", None)
+            if failure_info is not None:
+                errors.append(f"start task: {self._error_text(failure_info)}")
+        health: dict[str, Any] = {"node_states": states}
+        if errors:
+            health["node_errors"] = sorted(set(errors))[:5]
+        resize_errors = self._pool_resize_errors(batch_client)
+        if resize_errors:
+            health["resize_errors"] = resize_errors
+        return health
+
+    def _list_compute_nodes(self, batch_client: Any) -> list[Any]:
+        """List pool nodes across supported Azure Batch client versions."""
+
+        if hasattr(batch_client, "list_compute_nodes"):
+            return list(batch_client.list_compute_nodes(self.pool_name))
+        return list(batch_client.compute_node.list(self.pool_name))
+
+    def _pool_resize_errors(self, batch_client: Any) -> list[str]:
+        """Return pool resize errors, which usually indicate quota problems."""
+
+        try:
+            if hasattr(batch_client, "get_pool"):
+                pool = batch_client.get_pool(self.pool_name)
+            else:
+                pool = batch_client.pool.get(self.pool_name)
+        except Exception:
+            return []
+        return [
+            self._error_text(error)
+            for error in getattr(pool, "resize_errors", None) or []
+        ]
+
+    def _raise_for_unhealthy_pool(
+        self, context: str, health: dict[str, Any]
+    ) -> None:
+        """Fail fast when every allocated node is in a terminal bad state.
+
+        Args:
+            context (str): Phase description included in the error message.
+            health (dict[str, Any]): Result of :meth:`_pool_health`.
+
+        Returns:
+            None: This method does not return a value.
+
+        Raises:
+            RuntimeError: If no allocated node can ever run a task.
+        """
+
+        states = health.get("node_states") or {}
+        if not states or not set(states) <= _UNUSABLE_NODE_STATES:
+            return
+        detail = "; ".join(
+            list(health.get("node_errors", ()))
+            + list(health.get("resize_errors", ()))
+        )
+        message = (
+            f"Azure Batch pool {self.pool_name} has no usable nodes during "
+            f"{context} (node states: {self._state_summary(states)})."
+        )
+        if detail:
+            message += f" Details: {detail}"
+        raise RuntimeError(message)
+
+    @staticmethod
+    def _state_name(state: Any) -> str:
+        """Normalize an Azure Batch state enum or string to a plain name."""
+
+        value = getattr(state, "value", state)
+        return str(value).rsplit(".", 1)[-1].replace("_", "").lower()
+
+    @staticmethod
+    def _error_text(error: Any) -> str:
+        """Render an Azure Batch error object as one compact line."""
+
+        code = getattr(error, "code", None)
+        message = getattr(error, "message", None)
+        message = getattr(message, "value", message)
+        text = " ".join(str(part) for part in (code, message) if part)
+        return " ".join(text.split()) or str(error)
 
     def _list_batch_tasks(self, job_id: str) -> list[Any]:
         """List task records across supported Azure Batch client versions."""

@@ -102,11 +102,21 @@ def run_cloud_acceptance_task(
 class CloudExecutor(ABC):
     """Execute complete acceptance tasks without mutating sampler state."""
 
-    async def prepare_study(self) -> None:
+    async def prepare_study(
+        self,
+        *,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
         """Prepare resources shared by all scenarios in one study.
 
         Backends without study-scoped resources keep the default no-op behavior.
+
+        Args:
+            progress_callback (ProgressCallback | None): Optional observer for
+                setup-stage events emitted while shared resources come up.
         """
+
+        del progress_callback
 
     async def cleanup_study(self) -> None:
         """Clean resources owned by one complete study after all scenarios settle.

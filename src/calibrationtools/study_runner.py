@@ -83,7 +83,9 @@ class StudyRunner:
         prepared = False
         try:
             reporter.mark_shared_pool_preparing()
-            await self.study.cloud_executor.prepare_study()
+            await self.study.cloud_executor.prepare_study(
+                progress_callback=reporter.handle_setup_event
+            )
             prepared = True
             tasks = [
                 asyncio.create_task(run_one(index, scenario))

@@ -17,7 +17,7 @@ class CloneTrackingExecutor(CloudExecutor):
         self.cloned_for: list[str] = []
         self.lifecycle: list[str] = []
 
-    async def prepare_study(self) -> None:
+    async def prepare_study(self, *, progress_callback=None) -> None:
         self.lifecycle.append("prepare")
 
     async def cleanup_study(self) -> None:
@@ -159,7 +159,7 @@ def test_study_reports_shared_pool_preparation_failure(
     """Surface a shared-pool failure on every scenario before scheduling work."""
 
     class FailingSetupExecutor(CloneTrackingExecutor):
-        async def prepare_study(self) -> None:
+        async def prepare_study(self, *, progress_callback=None) -> None:
             self.lifecycle.append("prepare")
             raise RuntimeError("shared pool unavailable")
 

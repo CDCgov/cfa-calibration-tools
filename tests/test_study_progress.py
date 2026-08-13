@@ -62,7 +62,7 @@ def test_reporter_tracks_progress_and_writes_scenario_detail_log(
     assert snapshot.running_count == 1
     assert snapshot.queued_count == 1
     assert first.state is ScenarioState.RUNNING
-    assert first.status_message is None
+    assert first.status_message == "pool ready"
     assert first.generation == 0
     assert first.generation_total == 2
     assert first.completed == 2
