@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import pickle
 import re
 import shutil
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
@@ -35,6 +37,55 @@ _UNUSABLE_NODE_STATES = frozenset(
 
 #: Node states in which a node can accept or is already running task work.
 _USABLE_NODE_STATES = frozenset({"idle", "running", "leavingpool"})
+
+
+@contextmanager
+def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
+    """Divert ``cfa-cloudops`` console output into a list for re-reporting.
+
+    ``cfa-cloudops`` writes advisories and per-file progress with bare
+    ``print`` calls and its own log handlers. Those writes land mid-frame in
+    the sampler's live display and force partial redraws, which is why a
+    running calibration appears to emit duplicated, truncated progress bars.
+    Capturing them keeps the display coherent while preserving the content so
+    the caller can surface it as a normal progress notice.
+
+    Args:
+        enabled (bool): Whether to capture output. Disabling restores the
+            default passthrough behavior for debugging.
+
+    Yields:
+        list[str]: Captured lines, appended as they are produced by logging
+            and populated from stdout once the block exits.
+    """
+
+    if not enabled:
+        yield []
+        return
+
+    lines: list[str] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            lines.append(record.getMessage().strip())
+
+    buffer = StringIO()
+    logger = logging.getLogger("cfa")
+    handler = _Collector()
+    previous_propagate = logger.propagate
+    logger.addHandler(handler)
+    logger.propagate = False
+    try:
+        with redirect_stdout(buffer):
+            yield lines
+    finally:
+        logger.removeHandler(handler)
+        logger.propagate = previous_propagate
+        lines.extend(
+            line.strip()
+            for line in buffer.getvalue().splitlines()
+            if line.strip()
+        )
 
 
 @contextmanager
@@ -130,6 +181,7 @@ class AzureBatchExecutor(CloudExecutor):
         max_wait_for_first_task_start: float = 900.0,
         wait_for_nodes: bool = True,
         max_wait_for_nodes: float = 1800.0,
+        quiet_cloud_output: bool = True,
         _use_shared_study_pool: bool = False,
         _study_pool_ready: bool = False,
         cloud_client: Any | None = None,
@@ -172,12 +224,14 @@ class AzureBatchExecutor(CloudExecutor):
         self.max_wait_for_first_task_start = max_wait_for_first_task_start
         self.wait_for_nodes = wait_for_nodes
         self.max_wait_for_nodes = max_wait_for_nodes
+        self.quiet_cloud_output = quiet_cloud_output
         self._use_shared_study_pool = _use_shared_study_pool
         self._study_pool_ready = _study_pool_ready
         self._cloud_client = cloud_client
         self._client_factory = client_factory
         self._task_blobs: list[str] = []
         self._run_index = 0
+        self._reported_notices: set[str] = set()
 
     @staticmethod
     def _safe_name(value: str) -> str:
@@ -187,6 +241,33 @@ class AzureBatchExecutor(CloudExecutor):
                 "Azure resource names need at least one alphanumeric character"
             )
         return safe
+
+    @contextmanager
+    def _quiet(
+        self, callback: ProgressCallback | None = None
+    ) -> Iterator[None]:
+        """Fold ``cfa-cloudops`` console output into the progress stream.
+
+        Args:
+            callback (ProgressCallback | None): Observer that receives each
+                distinct notice as an ``executor_message`` event.
+
+        Yields:
+            None: Control returns to the caller while capture is active.
+        """
+
+        with _capture_cloudops_output(self.quiet_cloud_output) as lines:
+            yield
+        for line in lines:
+            if line in self._reported_notices:
+                continue
+            self._reported_notices.add(line)
+            self._emit(
+                callback,
+                f"cfa-cloudops: {line}",
+                stage="cloud_notice",
+                source_library="cfa-cloudops",
+            )
 
     @property
     def cloud_client(self) -> Any:
@@ -280,6 +361,7 @@ class AzureBatchExecutor(CloudExecutor):
             max_wait_for_first_task_start=self.max_wait_for_first_task_start,
             wait_for_nodes=self.wait_for_nodes,
             max_wait_for_nodes=self.max_wait_for_nodes,
+            quiet_cloud_output=self.quiet_cloud_output,
             _use_shared_study_pool=self._study_pool_ready,
             _study_pool_ready=self._study_pool_ready,
             client_factory=self._client_factory,
@@ -325,7 +407,9 @@ class AzureBatchExecutor(CloudExecutor):
             await asyncio.to_thread(
                 self._wait_for_completion, job_id, progress_callback
             )
-            results = await asyncio.to_thread(self._download_results, job_id)
+            results = await asyncio.to_thread(
+                self._download_results, job_id, progress_callback
+            )
         except BaseException:
             if job_id is not None:
                 await asyncio.to_thread(
@@ -422,21 +506,23 @@ class AzureBatchExecutor(CloudExecutor):
             stage="blob_container",
             blob_name=self.blob_name,
         )
-        client.create_blob_container(self.blob_name)
+        with self._quiet(callback):
+            client.create_blob_container(self.blob_name)
         self._emit(
             callback,
             f"Creating pool {self.pool_name} ({self.vm_size})",
             stage="pool",
             pool_name=self.pool_name,
         )
-        client.create_pool(
-            self.pool_name,
-            mounts=[self.blob_name],
-            container_image_name=self.image_uri,
-            vm_size=self.vm_size,
-            max_autoscale_nodes=self.max_autoscale_nodes,
-            task_slots_per_node=self.task_slots_per_node,
-        )
+        with self._quiet(callback):
+            client.create_pool(
+                self.pool_name,
+                mounts=[self.blob_name],
+                container_image_name=self.image_uri,
+                vm_size=self.vm_size,
+                max_autoscale_nodes=self.max_autoscale_nodes,
+                task_slots_per_node=self.task_slots_per_node,
+            )
         self._wait_for_pool_nodes(callback)
         self._emit(
             callback,
@@ -576,21 +662,23 @@ class AzureBatchExecutor(CloudExecutor):
     def _submit_job(
         self, job_id: str, callback: ProgressCallback | None
     ) -> None:
-        self.cloud_client.create_job(
-            job_id, pool_name=self.pool_name, exist_ok=True
-        )
+        with self._quiet(callback):
+            self.cloud_client.create_job(
+                job_id, pool_name=self.pool_name, exist_ok=True
+            )
         width = max(1, len(str(len(self._task_blobs) - 1)))
-        for index, task_blob in enumerate(self._task_blobs):
-            command = self.command_template.format(
-                task_file=task_blob,
-                blob_container=self.blob_name,
-                mount_path=self.mount_path,
-            )
-            self.cloud_client.add_task(
-                job_name=job_id,
-                command_line=command,
-                name_suffix=f"-{index:0{width}d}",
-            )
+        with self._quiet(callback):
+            for index, task_blob in enumerate(self._task_blobs):
+                command = self.command_template.format(
+                    task_file=task_blob,
+                    blob_container=self.blob_name,
+                    mount_path=self.mount_path,
+                )
+                self.cloud_client.add_task(
+                    job_name=job_id,
+                    command_line=command,
+                    name_suffix=f"-{index:0{width}d}",
+                )
         self._emit(
             callback,
             "Azure tasks submitted",
@@ -829,19 +917,23 @@ class AzureBatchExecutor(CloudExecutor):
             message += f"\n\nRepresentative task stderr:\n{stderr[-4000:]}"
         raise RuntimeError(message)
 
-    def _download_results(self, job_id: str) -> list[CloudAcceptanceResult]:
+    def _download_results(
+        self, job_id: str, callback: ProgressCallback | None = None
+    ) -> list[CloudAcceptanceResult]:
         results: list[CloudAcceptanceResult] = []
-        for task_blob in self._task_blobs:
+        total = len(self._task_blobs)
+        for index, task_blob in enumerate(self._task_blobs, start=1):
             with tempfile.NamedTemporaryFile(
                 "wb", suffix=".pkl", delete=False
             ) as file:
                 destination = file.name
             try:
-                self.cloud_client.download_file(
-                    src_path=f"results-{task_blob}",
-                    dest_path=destination,
-                    container_name=self.blob_name,
-                )
+                with self._quiet(callback):
+                    self.cloud_client.download_file(
+                        src_path=f"results-{task_blob}",
+                        dest_path=destination,
+                        container_name=self.blob_name,
+                    )
                 with open(destination, "rb") as file:
                     results.extend(pickle.load(file))
             except Exception as exc:
@@ -850,6 +942,14 @@ class AzureBatchExecutor(CloudExecutor):
                 ) from exc
             finally:
                 Path(destination).unlink(missing_ok=True)
+            self._emit(
+                callback,
+                f"Downloading Azure results {index}/{total}",
+                stage="download",
+                job_id=job_id,
+                completed=index,
+                total=total,
+            )
         return results
 
     def _cleanup(self, job_id: str, callback: ProgressCallback | None) -> None:

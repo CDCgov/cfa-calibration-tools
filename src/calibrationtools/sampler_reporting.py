@@ -75,6 +75,7 @@ class SamplerReporter:
             TimeElapsedColumn(),
             TextColumn("•"),
             TextColumn("ETA: {task.fields[eta]}"),
+            TextColumn("{task.fields[status]}"),
             console=self.console,
             transient=True,
         )
@@ -104,8 +105,30 @@ class SamplerReporter:
             total=total,
             acceptance="N/A",
             eta="calculating...",
+            status="",
         )
         return ProgressHandle(progress=progress, task_id=task_id)
+
+    def set_collection_status(
+        self, handle: ProgressHandle, status: str
+    ) -> None:
+        """Show a backend status message beside the collection bar.
+
+        Remote backends spend long stretches provisioning capacity or waiting
+        on queued work. Surfacing their status keeps a stalled run
+        distinguishable from a slow one without adding extra output lines.
+
+        Args:
+            handle (ProgressHandle): Handle referencing the active task.
+            status (str): Message describing current backend activity.
+
+        Returns:
+            None: This helper does not return a value.
+        """
+
+        handle.progress.update(
+            handle.task_id, status=f"• {status}" if status else ""
+        )
 
     def update_collection_progress(
         self,

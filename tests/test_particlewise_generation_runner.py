@@ -179,6 +179,51 @@ def test_particlewise_generation_runner_uses_cloud_results_in_slot_order():
     ]
 
 
+def test_particlewise_generation_runner_shows_executor_status_on_progress_bar():
+    """Surface backend status so a waiting cloud run never looks frozen."""
+
+    statuses: list[str] = []
+    run_state = SamplerRunState(1, False)
+    reporter = SamplerReporter(
+        verbose=True,
+        console=Console(file=StringIO(), force_terminal=True),
+    )
+    reporter.set_collection_status = (  # type: ignore[method-assign]
+        lambda handle, status: statuses.append(status)
+    )
+    runner = ParticlewiseGenerationRunner(
+        config=ParticlewiseGenerationConfig(
+            generation_particle_count=2,
+            tolerance_values=[0.5],
+            seed_sequence=SeedSequence(123),
+            max_attempts_per_proposal=5,
+            sample_particle_from_priors=cloud_sample,
+            sample_and_perturb_particle=cloud_sample,
+            particle_to_distance=cloud_distance,
+            calculate_weight=lambda _: 1.0,
+            replace_particle_population=lambda _: None,
+            reporter=reporter,
+        ),
+        run_state=run_state,
+    )
+    started = time.time()
+
+    runner.run_generation(
+        ParticlewiseGenerationRequest(
+            generation=0,
+            n_workers=1,
+            parallel_executor=None,
+            overall_start_time=started,
+            generation_start_time=started,
+            particle_kwargs={},
+            cloud_executor=ReverseCloudExecutor(),
+            progress_callback=None,
+        )
+    )
+
+    assert statuses == ["fake cloud complete"]
+
+
 def test_particlewise_generation_runner_rejects_duplicate_cloud_results():
     task = CloudAcceptanceTask(
         slot_id=0,

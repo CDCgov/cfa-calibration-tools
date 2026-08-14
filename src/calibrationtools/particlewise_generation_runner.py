@@ -445,7 +445,9 @@ class ParticlewiseGenerationRunner:
         results = run_coroutine_from_sync(
             lambda: executor.execute_tasks(
                 tasks,
-                progress_callback=request.progress_callback,
+                progress_callback=self._cloud_progress_callback(
+                    request, handle
+                ),
             )
         )
         accepted_list = self._validate_cloud_results(
@@ -463,6 +465,38 @@ class ParticlewiseGenerationRunner:
                 request=request,
             )
         return accepted_list, total_attempts
+
+    def _cloud_progress_callback(
+        self,
+        request: ParticlewiseGenerationRequest,
+        handle: ProgressHandle,
+    ) -> ProgressCallback:
+        """Route executor events to the progress bar and the caller.
+
+        Cloud backends emit setup and queue events during the long stretch
+        before any particle is accepted. Without this bridge the bar sits at
+        zero percent with no explanation until the whole generation finishes.
+
+        Args:
+            request (ParticlewiseGenerationRequest): Active generation request.
+            handle (ProgressHandle): Handle referencing the collection task.
+
+        Returns:
+            ProgressCallback: Callback that updates the bar and forwards the
+                event to any caller-supplied observer.
+        """
+
+        def callback(event: ProgressEvent) -> None:
+            if event.event_type == "executor_message":
+                message = event.payload.get("message")
+                if message:
+                    self.config.reporter.set_collection_status(
+                        handle, str(message)
+                    )
+            if request.progress_callback is not None:
+                request.progress_callback(event)
+
+        return callback
 
     @staticmethod
     def _validate_cloud_results(

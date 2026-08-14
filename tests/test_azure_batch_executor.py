@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
@@ -147,6 +148,101 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
         "Azure tasks submitted",
         "Azure task progress 1/1",
         "Azure resources cleaned",
+    ]
+
+
+class NoisyCloudClient(FakeCloudClient):
+    """Emit the advisory notices that `cfa-cloudops` writes to the console."""
+
+    def create_pool(self, *args, **kwargs) -> None:
+        print(
+            f"Pool {args[0]} is using a deprecated VM series. "
+            "Consider updating the pool to a supported VM series."
+        )
+        logging.getLogger("cfa.cloudops.batch_helpers").warning(
+            "The current VM is too old. Please upgrade to a newer version."
+        )
+        super().create_pool(*args, **kwargs)
+
+
+def test_azure_executor_reports_cloud_notices_as_progress_events(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Fold library notices into progress events instead of raw console noise."""
+
+    client = NoisyCloudClient()
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks([task(0)], progress_callback=events.append)
+    )
+
+    notices = [
+        event.payload["message"]
+        for event in events
+        if event.payload.get("stage") == "cloud_notice"
+    ]
+    assert any("deprecated VM series" in notice for notice in notices)
+    assert any("current VM is too old" in notice for notice in notices)
+    assert all(notice.startswith("cfa-cloudops: ") for notice in notices)
+    assert "deprecated VM series" not in capsys.readouterr().out
+
+
+def test_azure_executor_reports_each_cloud_notice_once() -> None:
+    """Avoid repeating one advisory on every subsequent Azure call."""
+
+    client = NoisyCloudClient()
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks([task(0)], progress_callback=events.append)
+    )
+    executor._prepare_pool(events.append)
+
+    notices = [
+        event.payload["message"]
+        for event in events
+        if event.payload.get("stage") == "cloud_notice"
+    ]
+    assert len(notices) == len(set(notices))
+
+
+def test_azure_executor_reports_result_download_progress() -> None:
+    """Replace per-file download prints with counted progress events."""
+
+    client = FakeCloudClient()
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        chunk_size=1,
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks(
+            [task(0), task(1)], progress_callback=events.append
+        )
+    )
+
+    downloads = [
+        event.payload["message"]
+        for event in events
+        if event.payload.get("stage") == "download"
+    ]
+    assert downloads == [
+        "Downloading Azure results 1/2",
+        "Downloading Azure results 2/2",
     ]
 
 
