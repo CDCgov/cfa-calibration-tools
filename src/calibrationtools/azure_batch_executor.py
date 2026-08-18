@@ -38,6 +38,28 @@ _UNUSABLE_NODE_STATES = frozenset(
 #: Node states in which a node can accept or is already running task work.
 _USABLE_NODE_STATES = frozenset({"idle", "running", "leavingpool"})
 
+#: Terminal control sequences emitted by the progress bars in cfa-cloudops.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _clean_notice(text: str) -> str:
+    """Reduce a captured ``cfa-cloudops`` line to plain single-line text.
+
+    Captured output still carries the styling and carriage returns of the
+    progress bars it came from. Re-emitting that verbatim pushes escape
+    sequences into whatever renders the notice, where they show up as stray
+    digits and colour codes rather than as styling.
+
+    Args:
+        text (str): Raw captured line.
+
+    Returns:
+        str: The final frame of the line, without escapes or padding.
+    """
+
+    without_ansi = _ANSI_ESCAPE.sub("", text)
+    return " ".join(without_ansi.split("\r")[-1].split())
+
 
 @contextmanager
 def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
@@ -67,7 +89,7 @@ def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
 
     class _Collector(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
-            lines.append(record.getMessage().strip())
+            lines.append(_clean_notice(record.getMessage()))
 
     buffer = StringIO()
     logger = logging.getLogger("cfa")
@@ -82,14 +104,18 @@ def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
         logger.removeHandler(handler)
         logger.propagate = previous_propagate
         lines.extend(
-            line.strip()
-            for line in buffer.getvalue().splitlines()
-            if line.strip()
+            cleaned
+            for cleaned in (
+                _clean_notice(line) for line in buffer.getvalue().splitlines()
+            )
+            if cleaned
         )
 
 
 @contextmanager
-def _rich_upload_progress(description: str) -> Iterator[None]:
+def _rich_upload_progress(
+    description: str, enabled: bool = True
+) -> Iterator[None]:
     """Render blob uploads with a single-line Rich progress bar.
 
     ``cfa-cloudops`` drives its upload loop with ``tqdm``, which emits a new
@@ -99,10 +125,17 @@ def _rich_upload_progress(description: str) -> Iterator[None]:
 
     Args:
         description (str): Label shown beside the progress bar.
+        enabled (bool): Whether to install the bar. Studies own a live display
+            of their own, and Rich supports only one at a time, so they pass
+            ``False`` to avoid two displays fighting over the console.
 
     Yields:
         None: Control returns to the caller while the bar is installed.
     """
+
+    if not enabled:
+        yield
+        return
 
     try:
         from cfa.cloudops import blob as cloudops_blob
@@ -449,7 +482,7 @@ class AzureBatchExecutor(CloudExecutor):
                 )
         else:
             self._prepare_pool(callback)
-        self._task_blobs = self._upload_task_chunks(tasks)
+        self._task_blobs = self._upload_task_chunks(tasks, callback)
         self._run_index += 1
         job_id = (
             f"{self.base_name}-job-{int(time.time() * 1000)}-{self._run_index}"
@@ -634,7 +667,9 @@ class AzureBatchExecutor(CloudExecutor):
         self._study_pool_ready = False
 
     def _upload_task_chunks(
-        self, tasks: list[CloudAcceptanceTask]
+        self,
+        tasks: list[CloudAcceptanceTask],
+        callback: ProgressCallback | None = None,
     ) -> list[str]:
         task_dir = Path(tempfile.mkdtemp(prefix="calibrationtools-azure-"))
         names: list[str] = []
@@ -648,7 +683,16 @@ class AzureBatchExecutor(CloudExecutor):
                 with (task_dir / name).open("wb") as file:
                     pickle.dump(tasks[start : start + self.chunk_size], file)
                 names.append(name)
-            with _rich_upload_progress("Uploading task files"):
+            noun = "file" if len(names) == 1 else "files"
+            self._emit(
+                callback,
+                f"Uploading {len(names)} task {noun}",
+                stage="upload",
+                file_count=len(names),
+            )
+            with _rich_upload_progress(
+                "Uploading task files", enabled=callback is None
+            ):
                 self.cloud_client.upload_files(
                     files=names,
                     container_name=self.blob_name,

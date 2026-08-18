@@ -144,6 +144,7 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
         "Creating Blob container calibrationtools-tasks",
         "Creating pool calibrationtools-pool (STANDARD_D2S_V3)",
         "Pool calibrationtools-pool created",
+        "Uploading 1 task file",
         "Azure pool ready",
         "Azure tasks submitted",
         "Azure task progress 1/1",
