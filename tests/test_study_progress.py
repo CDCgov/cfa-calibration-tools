@@ -1,8 +1,11 @@
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from rich.console import Console
+from rich.live import Live
 
 from calibrationtools.sampler_types import ProgressEvent
 from calibrationtools.study_progress import (
@@ -103,3 +106,67 @@ def test_reporter_records_failure_and_running_elapsed_time(
     console = Console(record=True, width=200)
     console.print(reporter._render())
     assert "worker unavailable" in console.export_text()
+
+
+class _RecordingLive:
+    """Stand-in for rich's ``Live`` that records lock state on every call."""
+
+    def __init__(self, lock_is_held: Callable[[], bool]) -> None:
+        self._lock_is_held = lock_is_held
+        self.violations: list[str] = []
+
+    def _record(self, method: str) -> None:
+        if self._lock_is_held():
+            self.violations.append(method)
+
+    def start(self, refresh: bool = False) -> None:
+        self._record("start")
+
+    def stop(self) -> None:
+        self._record("stop")
+
+    def refresh(self) -> None:
+        self._record("refresh")
+
+    def update(self, renderable: object, refresh: bool = False) -> None:
+        self._record("update")
+
+
+def test_reporter_never_touches_live_display_while_holding_its_lock(
+    tmp_path: Path,
+) -> None:
+    """Guard the lock ordering that keeps concurrent studies from deadlocking.
+
+    ``Live`` calls take rich's internal lock, while rich's refresh thread
+    renders the dashboard and takes the reporter lock. Touching the display
+    while holding the reporter lock inverts that order and wedges every
+    scenario thread, including the one that creates the Azure Batch job.
+    """
+
+    reporter = StudyProgressReporter(
+        study_name="demo",
+        scenario_names=["first", "second", "third"],
+        detail_log_dir=tmp_path,
+        quiet=True,
+    )
+    live = _RecordingLive(getattr(reporter._lock, "_is_owned"))
+    reporter._live = cast(Live, live)
+
+    reporter.mark_shared_pool_preparing()
+    reporter.mark_started("first", parameters={"beta": 0.2})
+    reporter.handle_sampler_event(
+        "first",
+        ProgressEvent(
+            event_type="generation_started",
+            generation=0,
+            payload={"generation_total": 2},
+        ),
+    )
+    reporter.mark_completed("first")
+    reporter.mark_started("second")
+    reporter.mark_failed("second", RuntimeError("boom"))
+    reporter.mark_started("third")
+    reporter.mark_cancelled("third")
+    reporter.finish(success=False)
+
+    assert live.violations == []

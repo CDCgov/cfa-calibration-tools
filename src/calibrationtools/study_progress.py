@@ -110,14 +110,16 @@ class StudyProgressReporter:
         """Start the single live display for this study."""
 
         with self._lock:
-            if not self.quiet and self._live is None:
-                self._live = Live(
-                    _LiveDashboard(self),
-                    console=self.console,
-                    refresh_per_second=4,
-                    transient=False,
-                )
-                self._live.start(refresh=True)
+            if self.quiet or self._live is not None:
+                return
+            live = Live(
+                _LiveDashboard(self),
+                console=self.console,
+                refresh_per_second=4,
+                transient=False,
+            )
+            self._live = live
+        live.start(refresh=True)
 
     def finish(self, *, success: bool) -> None:
         """Stop the live display after all scenario work has settled."""
@@ -126,10 +128,11 @@ class StudyProgressReporter:
         with self._lock:
             self._setup_message = None
             self._setup_started_at = None
-            if self._live is not None:
-                self._live.update(self._render(), refresh=True)
-                self._live.stop()
-                self._live = None
+            live = self._live
+            self._live = None
+        if live is not None:
+            live.update(self._render(), refresh=True)
+            live.stop()
 
     def mark_started(
         self,
@@ -148,7 +151,7 @@ class StudyProgressReporter:
             self._setup_message = None
             self._setup_started_at = None
             self._write_detail(scenario, "scenario_started", {})
-            self._refresh()
+        self._refresh()
 
     def mark_shared_pool_preparing(self) -> None:
         """Show that queued scenarios are waiting for shared Azure capacity."""
@@ -176,7 +179,7 @@ class StudyProgressReporter:
                 self._write_detail(
                     scenario, "shared_pool_preparing", {"message": message}
                 )
-            self._refresh()
+        self._refresh()
 
     def handle_setup_event(self, event: ProgressEvent) -> None:
         """Route one shared-resource setup event to the study status line.
@@ -200,7 +203,7 @@ class StudyProgressReporter:
             scenario.state = ScenarioState.COMPLETED
             scenario.finished_at = time.monotonic()
             self._write_detail(scenario, "scenario_completed", {})
-            self._refresh()
+        self._refresh()
 
     def mark_failed(self, scenario_name: str, error: BaseException) -> None:
         """Record a failed scenario while retaining a concise error summary."""
@@ -215,18 +218,23 @@ class StudyProgressReporter:
                 "scenario_failed",
                 {"error_type": type(error).__name__},
             )
-            self._refresh()
+        self._refresh()
 
     def mark_cancelled(self, scenario_name: str) -> None:
         """Record cancellation of a scenario after another scenario failed."""
 
         with self._lock:
             scenario = self._scenario(scenario_name)
-            if scenario.state in (ScenarioState.QUEUED, ScenarioState.RUNNING):
+            cancelled = scenario.state in (
+                ScenarioState.QUEUED,
+                ScenarioState.RUNNING,
+            )
+            if cancelled:
                 scenario.state = ScenarioState.CANCELLED
                 scenario.finished_at = time.monotonic()
                 self._write_detail(scenario, "scenario_cancelled", {})
-                self._refresh()
+        if cancelled:
+            self._refresh()
 
     def handle_sampler_event(
         self, scenario_name: str, event: ProgressEvent
@@ -255,7 +263,7 @@ class StudyProgressReporter:
                         scenario.status_changed_at = time.monotonic()
                     scenario.status_message = str(message)
             self._write_detail(scenario, event.event_type, payload)
-            self._refresh()
+        self._refresh()
 
     def snapshot(self) -> StudyProgressSnapshot:
         """Return immutable monitor state for tests and external observers."""
@@ -337,8 +345,13 @@ class StudyProgressReporter:
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "scenario"
 
     def _refresh(self) -> None:
-        if self._live is not None:
-            self._live.refresh()
+        # Callers must not hold self._lock: Live.refresh takes rich's internal
+        # lock, while rich's refresh thread renders the dashboard and takes
+        # self._lock. Acquiring the two in opposite orders deadlocks the study.
+        with self._lock:
+            live = self._live
+        if live is not None:
+            live.refresh()
 
     def _render(self) -> RenderableType:
         snapshot = self.snapshot()
