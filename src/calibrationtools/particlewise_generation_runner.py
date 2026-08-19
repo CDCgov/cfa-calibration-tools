@@ -16,6 +16,7 @@ from numpy.random import SeedSequence
 
 from .async_runner import run_coroutine_from_sync
 from .particle import Particle
+from .particle_evaluator import build_evaluation_context_kwargs
 from .particle_population import ParticlePopulation
 from .sampler_reporting import ProgressHandle, SamplerReporter
 from .sampler_run_state import SamplerRunState
@@ -52,6 +53,9 @@ class ParticlewiseGenerationConfig:
             Callback that stores the finalized population on the sampler.
         reporter (SamplerReporter): Reporter used for progress and summary
             output.
+        particle_to_distance_async (Callable[..., Any] | None): Optional async
+            distance evaluator used by runners that prefer native async
+            simulation collection.
     """
 
     generation_particle_count: int
@@ -64,6 +68,7 @@ class ParticlewiseGenerationConfig:
     calculate_weight: Callable[[Particle], float]
     replace_particle_population: Callable[[ParticlePopulation], None]
     reporter: SamplerReporter
+    particle_to_distance_async: Callable[..., Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +187,7 @@ class ParticlewiseGenerationRunner:
         sample_method: Callable[[SeedSequence | None], Particle],
         evaluation_kwargs: dict[str, Any],
         max_attempts: int | None = None,
+        generation: int = 0,
     ) -> AcceptedProposal:
         """Propose particles until one is accepted or attempts are exhausted.
 
@@ -198,6 +204,9 @@ class ParticlewiseGenerationRunner:
                 particle evaluation.
             max_attempts (int | None): Override for the maximum number of
                 proposal attempts allowed for the slot.
+            generation (int): Zero-based generation index used for evaluation
+                context metadata. Defaults to 0 to preserve the previous public
+                call shape for direct callers.
 
         Returns:
             AcceptedProposal: Accepted particle data for the slot, or a record
@@ -210,9 +219,56 @@ class ParticlewiseGenerationRunner:
 
         for attempt in range(max_attempts):
             proposed_particle = sample_method(generator.seed_sequence)
+            particle_kwargs = build_evaluation_context_kwargs(
+                generation=generation,
+                proposal_index=generator.id,
+                attempt_index=attempt,
+                base_kwargs=evaluation_kwargs,
+            )
             err = self.config.particle_to_distance(
                 proposed_particle,
-                **evaluation_kwargs,
+                **particle_kwargs,
+            )
+            if err <= tolerance:
+                return AcceptedProposal(
+                    slot_id=generator.id,
+                    particle=proposed_particle,
+                    distance=err,
+                    attempts=attempt + 1,
+                )
+        return AcceptedProposal(
+            slot_id=generator.id,
+            particle=None,
+            distance=None,
+            attempts=max_attempts,
+        )
+
+    async def sample_particles_until_accepted_async(
+        self,
+        generator: GeneratorSlot,
+        tolerance: float,
+        sample_method: Callable[[SeedSequence | None], Particle],
+        evaluation_kwargs: dict[str, Any],
+        max_attempts: int | None = None,
+        generation: int = 0,
+    ) -> AcceptedProposal:
+        if self.config.particle_to_distance_async is None:
+            raise RuntimeError("Async particle evaluation is not configured.")
+
+        if max_attempts is None:
+            max_attempts = self.config.max_attempts_per_proposal
+
+        for attempt in range(max_attempts):
+            proposed_particle = sample_method(generator.seed_sequence)
+            particle_kwargs = build_evaluation_context_kwargs(
+                generation=generation,
+                proposal_index=generator.id,
+                attempt_index=attempt,
+                base_kwargs=evaluation_kwargs,
+            )
+            err = await self.config.particle_to_distance_async(
+                proposed_particle,
+                **particle_kwargs,
             )
             if err <= tolerance:
                 return AcceptedProposal(
@@ -314,6 +370,7 @@ class ParticlewiseGenerationRunner:
                 tolerance=self.config.tolerance_values[request.generation],
                 sample_method=state.sample_method,
                 evaluation_kwargs=request.particle_kwargs,
+                generation=request.generation,
             )
             accepted_list.append(accepted_proposal)
             total_attempts += accepted_proposal.attempts
@@ -366,9 +423,56 @@ class ParticlewiseGenerationRunner:
             tolerance=self.config.tolerance_values[request.generation],
             sample_method=state.sample_method,
             evaluation_kwargs=request.particle_kwargs,
+            generation=request.generation,
         )
         tasks = [
             loop.run_in_executor(request.parallel_executor, worker, generator)
+            for generator in state.generator_slots
+        ]
+
+        try:
+            for task in asyncio.as_completed(tasks):
+                accepted_proposal = await task
+                accepted_list.append(accepted_proposal)
+                total_attempts += accepted_proposal.attempts
+                completed += 1
+                self._update_progress(
+                    handle=handle,
+                    completed=completed,
+                    total_attempts=total_attempts,
+                    generation_start_time=request.generation_start_time,
+                )
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        return accepted_list, total_attempts
+
+    async def _collect_accepted_particles_native_async(
+        self,
+        request: ParticlewiseGenerationRequest,
+        state: ParticlewiseGenerationState,
+        handle: ProgressHandle,
+    ) -> tuple[list[AcceptedProposal], int]:
+        accepted_list: list[AcceptedProposal] = []
+        total_attempts = 0
+        completed = 0
+        semaphore = asyncio.Semaphore(request.n_workers)
+
+        async def evaluate(generator: GeneratorSlot) -> AcceptedProposal:
+            async with semaphore:
+                return await self.sample_particles_until_accepted_async(
+                    generator=generator,
+                    tolerance=self.config.tolerance_values[request.generation],
+                    sample_method=state.sample_method,
+                    evaluation_kwargs=request.particle_kwargs,
+                    generation=request.generation,
+                )
+
+        tasks = [
+            asyncio.create_task(evaluate(generator))
             for generator in state.generator_slots
         ]
 
@@ -425,7 +529,15 @@ class ParticlewiseGenerationRunner:
                 description=description,
                 total=self.config.generation_particle_count,
             )
-            if request.n_workers == 1:
+            if self.config.particle_to_distance_async is not None:
+                accepted_list, total_attempts = run_coroutine_from_sync(
+                    lambda: self._collect_accepted_particles_native_async(
+                        request=request,
+                        state=state,
+                        handle=handle,
+                    )
+                )
+            elif request.n_workers == 1:
                 accepted_list, total_attempts = (
                     self._collect_accepted_particles_serial(
                         request=request,
