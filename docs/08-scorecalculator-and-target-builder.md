@@ -5,7 +5,7 @@
 ## 8. ScoreCalculator
 
 
-Score calculation requires **at least one generated quantity**. Targets are optional; a scorer that compares to a target simply returns `None` when no targets are provided rather than an error.
+Score calculation requires **at least one generated quantity**. Targets are optional, but scorer connections with target data must be known through the "with data" pathways for registering the calculator.
 
 All `ScoreValueType`s produced by a `ScoreCalculator` are `Serialize + Deserialize`. This is enforced by the `ScoreValue` bound ([§2.2](02-calibrator-construction.md)).
 
