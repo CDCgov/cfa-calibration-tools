@@ -339,7 +339,7 @@ impl ModelRunnerProtocol for CloudRunner {
 }
 ```
 
-The concurrency semaphore in `Context` becomes a cloud-concurrency throttle. Because `output_dir` is `{artifact_root}/{stage_id}/{particle_id}/` ([§12](12-modelrunner.md)), cloud workers write output files to the same content-addressed location that `ArtifactStore::get` reads, so cloud and local runs share the same artifact layout. Seed stability under cloud re-queueing follows the same logic as local task reordering: `particle_idx` is the proposal counter at the point the work item was **created**, not when the remote job completes, so a re-queued job receives the same `derive_seed` result as its first attempt.
+The concurrency semaphore in `Context` becomes a cloud-concurrency throttle. Because `output_dir` is `{artifact_root}/{stage_id}/{particle_id}/` ([§11.2](11-fingerprinting-and-caching-strategy.md)), cloud workers write output files to the same content-addressed location that `ArtifactStore::get` reads, so cloud and local runs share the same artifact layout. Seed stability under cloud re-queueing follows the same logic as local task reordering: `particle_idx` is the proposal counter at the point the work item was **created**, not when the remote job completes, so a re-queued job receives the same `derive_seed` result as its first attempt.
 
 ---
 

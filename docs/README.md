@@ -18,7 +18,7 @@
 9. [ScoreAcceptanceCriterion](09-scoreacceptancecriterion.md)
 10. [Counterfactual Model Construction](10-counterfactual-model-construction.md)
 11. [Fingerprinting and Caching Strategy](11-fingerprinting-and-caching-strategy.md)
-12. [ModelRunner and Python Interop](12-modelrunner-and-python-interop.md)
+12. [ModelRunnerProtocol](12-modelrunner.md)
 13. [Seeds and RNG Discipline](13-seeds-and-rng-discipline.md)
 14. [Error Propagation and Stage Resumability](14-error-propagation-and-stage-resumability.md)
 15. [ABC Rejection Sampling Execution](15-abc-rejection-sampling-execution.md)

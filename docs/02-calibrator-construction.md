@@ -7,7 +7,7 @@
 
 ### 2.1 `ContextCalibrationExt` — calibration declaration
 
-`build_calibration` returns a `CalibrationBuilder` that borrows `Context` mutably for its lifetime. Calling `.build()` on the builder validates all label references, constructs the `CalibrationDag` and `CalibrationManifest`, and writes them back into `Context`. 
+`build_calibration` returns a `CalibrationBuilder` that borrows `Context` mutably for its lifetime. Calling `.build()` on the builder validates all label references, constructs the `CalibrationDag` and `CalibrationManifest`, and writes them back into `Context`.
 
 ```rust
 /// Extension trait for declaring a calibration on a Context.

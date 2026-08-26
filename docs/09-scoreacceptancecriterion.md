@@ -58,7 +58,7 @@ Score calculators that return types other than `Numeric` or `Range` are not supp
 
 By default, `build()` accumulates `(scorer, criterion)` pairs across stages so that every
 subsequent stage must satisfy all criteria from all preceding stages. This guarantees monotone
-posterior tightening for typical worfklows. 
+posterior tightening for typical worfklows.
 
 Particles accepted at a later stage are generally expected to also have been accepted at every earlier stage.
 This is not necessarily the case, and can be overriden if the user choose to skip criterion accumulation during the build. Call `skip_score_criterion_accumulation()` on the builder to store each stage's declared
