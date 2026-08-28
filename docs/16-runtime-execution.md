@@ -25,8 +25,8 @@ impl ContextRunExt for Context { /* ... */ }
 pub struct RunBuilder<'ctx> { /* opaque */ }
 
 impl<'ctx> RunBuilder<'ctx> {
-    /// Set the base RNG seed for the entire run. Required.
-    pub fn seed(self, seed: Seed) -> Self;
+    /// Set the base RNG seed for the entire run. Supplied by Context otherwise.
+    pub fn seed_override(self, seed: u64) -> Self;
     /// Restrict execution to a subset of leaf `StageId`s. Default runs all nodes.
     pub fn stages(self, ids: impl IntoIterator<Item = StageId>) -> Self;
     /// Resume from an existing `ExperimentManifest`, skipping already-completed stages.

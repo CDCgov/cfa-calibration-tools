@@ -256,9 +256,8 @@ async fn main() -> anyhow::Result<()> {
         // every scorer whose StageScorerSpec::target_fingerprint matches.
         .add_target_data(incidence_target_ref.clone())
         .prior_predictive_check(1_000, None)
-        // Seed is the only run-time input; all structural parameters including
-        // counterfactuals are fixed in CalibrationManifest.
-        .build_and_run([1u8; 32])
+        // All structural parameters including counterfactuals are fixed in CalibrationManifest.
+        .build_and_run()
         .await?;
 
     // ---------------------------------------------------------------------------

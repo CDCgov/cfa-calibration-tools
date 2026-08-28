@@ -32,18 +32,13 @@ let kernel: PerturbationType =
 node.realized_kernel = Some(kernel.clone());
 experiment_manifest.realized_kernels.insert(node.id.clone(), kernel.clone());
 
+// Instantiate stage-local RNG streams keyed to this stage's identity.
+// Stored in context.stage_states[node.id].rngs
+context.instantiate_stage_rng(&node.id);
+
 // Fresh StageState (or reload from StageCheckpoint when resuming)
-let mut state = StageState {
-    node_id:               node.id.clone(),
-    scores:                HashMap::new(),
-    score_provenances:     HashMap::new(),
-    accepted:              ParticlePopulation::new(),
-    failures:              HashSet::new(),
-    budget_exhausted:      false,
-    model_state_refs:      HashMap::new(),
-    counterfactual_labels: HashMap::new(),
-};
-let mut population   = ParticlePopulation { entries: HashMap::new() };
+let mut state = StageState::new(); // or StageState::resume_from(stage_ref)
+let mut proposal_population = ParticlePopulation::new();
 let mut n_proposed: usize = 0; // running total across all batches this stage
 
 // Build the variant population once per stage for Iterator-mode counterfactuals.
@@ -107,9 +102,10 @@ let proposed: FlatParticle = prior.sample(&mut rng);
 
 ```rust
 // Non-root stage — resample and perturb
+let rngs = context.get_state_rngs(&node_id)
 let prev = stage_states[&parent_id].accepted.as_slice();
-let sampled: &WeightedParticle   = weighted_sample(&prev, &mut rng);
-let proposed_particle: FlatParticle        = kernel.perturb(&sampled.particle, &mut rng);s
+let sampled: &WeightedParticle   = weighted_sample(&prev, &mut rngs.resample);
+let proposed_particle: FlatParticle        = kernel.perturb(&sampled.particle, &mut rngs.perturb);
 ```
 
 `weighted_sample` draws using the `log_weight` fields — already normalised by `assign_weights` at the end of the parent stage.
@@ -118,30 +114,28 @@ let proposed_particle: FlatParticle        = kernel.perturb(&sampled.particle, &
 
 #### Step 2 — Inject seeds
 
-When a seed parameter has been declared via `Context::seed_param` ([§2](02-calibrator-construction.md)), `SeedKernel::perturb` ([§7](07-nestedsuffixparser-and-particleerror.md)) has already either retained the parent's seed key or removed it from the proposal at a rate of `1.0 - prob_keep`. Proposals from the root stage never carry a seed key (the prior has no seed parameter). Step 2 starts the `SimulationBuilder` for the batch and attaches a seed-injection step via `MergeStrategy::PreferLeft`: proposals that already carry a seed key keep it; proposals where the key is absent receive a value derived from `base_seed`.
+When a seed parameter has been declared via `Context::seed_param` ([§2](02-calibrator-construction.md)), `SeedKernel::perturb` ([§7](07-nestedsuffixparser-and-particleerror.md)) has already either retained the parent's seed key or removed it from the proposal at a rate of `1.0 - prob_keep`. Proposals from the root stage never carry a seed key (the prior has no seed parameter). Step 2 starts the `SimulationBuilder` for the batch and attaches a seed-injection step via `MergeStrategy::PreferLeft`: proposals that already carry a seed key keep it; proposals where the key is absent receive a value drawn from the central stage-level RNG.
 
-Before building the `SimulationBuilder`, `Context` sets its internal proposal offset to `n_proposed` — the running count of proposals already submitted earlier in this stage. This causes `current_proposal_offset()` ([§3](03-simulation-system-and-dag-stages.md)) to return `n_proposed` for the duration of this builder chain. Because particles are sorted lexicographically by `ParticleId` inside the private implementation ([§6](06-perturbationkernel-and-density-convention.md)), the particle at batch position `i` receives global index `n_proposed + i`. This makes every seed within a stage unique regardless of how `Context` divides the loop into batches, and stable under task reordering or retry ([§16.1](16-runtime-execution.md#161-runbuilder)).
+`SimulationBuilder::randomize_seeds` and `replicate_counterfactuals` access `rng_seed` internally via `ctx.stage_states[ctx.active_stage_id].rngs.rng_seed` (§13), calling through to `ParticlePopulation::random_seeds` / `replicate_seeds`. Each absent-seed proposal consumes exactly one draw; the RNG's advancing state guarantees uniqueness across all batches within the stage without any explicit offset.
 
-**Single replicate (default):** Each particle receives one derived seed, `derive_seed(base_seed, n_proposed + i, 0)` ([§14](14-error-propagation-and-stage-resumability.md)). `Context` uses the private `random_particles_with_offset` directly since `n_proposed` is already known at the call site.
+**Single replicate (default):** Each proposal that needs a seed draws one `u64` from the stage's `rngs.seed`.
 
 ```rust
 // Context sets its internal offset before building the SimulationBuilder:
-self.update_proposal_offset(n_proposed as u64);
 let sim = self.simulate()
     .from_population(batch)
-    .random_particles(); // derives offset from ctx.current_proposal_offset()
+    .randomize_seeds();
 ```
 
-**Multi-replicate:** Each particle is expanded into `n_replicates` variants. The particle at batch position `i` receives the same seed for each replicate `r` based on `derive_seed(base_seed, n_proposed, r)` ([§13](13-seeds-and-rng-discipline.md)).
+**Multi-replicate:** `R` seeds are drawn up front to fill out each replicate and then crossed to all particles.
 
 ```rust
-self.update_proposal_offset(n_proposed as u64);
 let sim = self.simulate()
     .from_population(batch)
-    .replicate_counterfactuals(n_replicates); // derives offset from ctx.current_proposal_offset()
+    .replicate_counterfactuals(n_replicates);
 ```
 
-In both modes, seed assignment is an injective function of `(base_seed, n_proposed + batch_pos, replicate_idx)` for proposals that receive a derived seed. The `SeedKernel` culling in Step 1 and the `PreferLeft` merge in Step 2 are the only two sites that determine whether a given proposal keeps or replaces its seed. The `sim` builder is completed in Step 4.
+The `SeedKernel` culling in Step 1 and the `PreferLeft` merge in Step 2 are the only two sites that determine whether a given proposal keeps or replaces its seed. The `sim` builder is completed in Step 4.
 
 ---
 

@@ -102,7 +102,26 @@ pub struct StageState {
     /// Empty for `Selector` mode (variant identity is encoded in the calibrated
     /// `ModelSelector` parameter) and when no counterfactuals are declared.
     pub counterfactual_labels: HashMap<ParticleId, String>,
+    /// Stage-local RNG streams created by `Context::instantiate_stage_rng` at stage start.
+    /// Keyed to this stage's identity (`base_entropy ^ StageId`); advanced throughout
+    /// the rejection-sampling loop.
+    pub rngs:                  RngSnapshot,
 }
+
+impl StageState {
+    pub fn new(id) -> Self {
+        Self {
+            node_id: id,
+            scores: HashMap::new(),
+            score_provenances: HashMap::new(),
+            accepted: ParticlePopulation::new(),
+            failures: HashSet::new(),
+            model_state_refs: HashMap::new(),
+            counterfactual_labels: HashMap::new(),
+        }
+    }
+}
+
 ```
 
 ### CalibrationDag
@@ -209,37 +228,22 @@ impl SimulationBuilder<'_> {
         scorer:     &ScorerRef<GQ, T>,
         target_ref: &TargetRef<T>,
     ) -> Self;
-    /// Assign a distinct derived seed to each particle in the population, using
-    /// the seed parameter name declared via `Context::seed_param` (§2, §14).
-    /// The global offset is derived automatically from `Context::current_proposal_offset`
-    /// (§3); no caller-supplied offset is required.  Internally delegates to
-    /// `random_particles_with_offset`.  Particles that already carry the seed key
-    /// keep their value (PreferLeft).  No-op when no seed parameter has been
-    /// registered on `Context`.
-    pub fn random_particles(self) -> Self;
-    /// Expand every particle in the population into `n_replicates` variants, each
-    /// with a distinct derived seed, using the seed parameter name declared via
-    /// `Context::seed_param` (§2, §14).  The global offset is derived automatically
-    /// from `Context::current_proposal_offset` (§3); no caller-supplied offset is
-    /// required.  Internally delegates to `replicate_counterfactuals_with_offset`.
-    /// Particles that already carry the seed key keep their value (PreferLeft).
+    /// Assign a distinct seed to each particle by drawing from the active stage's `rngs.seed`
+    /// (accessed via `ctx.stage_states[ctx.active_stage_id].rngs.seed`). Particles are
+    /// visited in sorted `ParticleId` order; each draw advances the stream by one step.
+    /// Particles that already carry the seed key keep their value (`PreferLeft`).
+    /// No-op when no seed parameter has been registered on `Context`
+    pub fn randomize_seeds(self) -> Self;
+    /// Expand every particle into `n_replicates` variants. Draws `n_replicates` values from
+    /// the active stage's `rngs.seed` up front
     /// No-op when no seed parameter has been registered on `Context`.
     pub fn replicate_counterfactuals(self, n_replicates: usize) -> Self;
-    /// Private. Assign seeds with an explicit global offset.  Called by the
-    /// calibration loop (§15, Step 2) via `Context`, which passes `n_proposed` for
-    /// stage-global uniqueness.  `random_particles` delegates here after reading
-    /// `ctx.current_proposal_offset()`.
-    fn random_particles_with_offset(self, offset: u64) -> Self;
-    /// Private. Expand into replicates with an explicit global offset.  Called by
-    /// the calibration loop (§15, Step 2) via `Context`.  `replicate_counterfactuals`
-    /// delegates here after reading `ctx.current_proposal_offset()`.
-    fn replicate_counterfactuals_with_offset(self, n_replicates: usize, offset: u64) -> Self;
     /// Execute all particles, collect scores and artifacts, and return the result.
     pub async fn run(self) -> Result<SimulationResult, RunError>;
 }
 ```
 
-`random_particles` and `replicate_counterfactuals` are thin public entry points that derive the
+`randomize_seeds` and `replicate_counterfactuals` are thin public entry points that derive the
 offset from `Context` and delegate to private `_with_offset` implementations.
 `Context` exposes `current_proposal_offset()`, which returns `n_proposed` during a calibration
 stage and `0` for external `SimulationBuilder` calls:
@@ -253,29 +257,18 @@ impl Context {
     fn current_proposal_offset(&self) -> u64;
 }
 
-// SimulationBuilder::random_particles() — public entry point
-pub fn random_particles(self) -> Self {
-    let offset = self.ctx.current_proposal_offset();
-    self.random_particles_with_offset(offset)
-}
-
-// SimulationBuilder::random_particles_with_offset(offset) — private
-fn random_particles_with_offset(self, offset: u64) -> Self {
-    if let Some(param) = self.ctx.seed_param() {
-        self.population = self.population.random_seeds(self.ctx.base_seed(), param, offset);
+// Union of random new seeds for particles without seed values
+pub fn randomize_seeds(self) -> Self {
+    if let Some(param) = (&self.ctx.seed_param) {
+        let rng = &mut self.ctx.stage_states.get_mut(self.stage_id).unwrap().rngs.seed;
+        self.population = self.population.random_seeds(rng, param);
     }
-    self
 }
 
-// SimulationBuilder::replicate_counterfactuals(n_replicates) — public entry point
-pub fn replicate_counterfactuals(self, n_replicates: usize) -> Self {
-    let offset = self.ctx.current_proposal_offset();
-    self.replicate_counterfactuals_with_offset(n_replicates, offset)
-}
-
-// SimulationBuilder::replicate_counterfactuals_with_offset(n_replicates, offset) — private
-fn replicate_counterfactuals_with_offset(self, n_replicates: usize, offset: u64) -> Self {
+// Cartesian product of new seed values to particles without seed values
+fn replicate_counterfactuals(self, n_replicates: usize) -> Self {
     if let Some(param) = self.ctx.seed_param() {
+        let rng = &mut self.ctx.stage_states.get_mut(self.stage_id).unwrap().rngs.seed;
         self.population = self.population.replicate_seeds(
             self.ctx.base_seed(), param, n_replicates, offset,
         );

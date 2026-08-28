@@ -113,11 +113,11 @@ impl<'ctx> CalibrationBuilder<'ctx> {
     pub fn build(self) -> Result<(), CalibrationBuildError>;
 
     /// Build and immediately execute the calibration with the given seed.
-    /// Equivalent to `.build()?` followed by `ctx.run_calibration().seed(seed).run().await?`.
+    /// Equivalent to `.build()?` followed by `ctx.run_calibration().run().await?`.
     /// Returns `Err` on build validation failure or runtime error.
     /// Use `.build()` directly when you need to inspect the manifest or configure
     /// run options (e.g. `resume_from`, `stages`) before executing.
-    pub async fn build_and_run(self, seed: Seed) -> Result<ExperimentManifest, RunError>;
+    pub async fn build_and_run(self) -> Result<ExperimentManifest, RunError>;
 }
 ```
 
@@ -356,7 +356,7 @@ impl<T: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static> T
 
 **Lifecycle:**
 - `CalibrationManifest` is created by `Context::build_calibration().build()` and remains static across all runs of that calibration. It is the authoritative ruleset — priors, stages, perturbation strategy, scorers, targets, and counterfactuals are all fixed here.
-- `ExperimentManifest` is created at the start of each `Context::run_calibration()` call and owns the full runtime record: seed, timing, stage status, checkpoints, artifact refs, realized kernel descriptors, and diagnostics.
+- `ExperimentManifest` is created at the start of each `Context::run_calibration()` call and owns the full runtime record: stage-level seed, timing, stage status, checkpoints, artifact refs, realized kernel descriptors, and diagnostics.
 - `Context` can be queried for either manifest or for individual stage checkpoints without loading the full manifest.
 
 
@@ -392,7 +392,7 @@ pub struct ExperimentManifest {
     pub calibration_fingerprint:  Fingerprint,
     pub context_fingerprint:      Fingerprint,
     pub selected_stages:          Vec<StageId>,
-    pub base_seed:                     Seed,
+    pub base_seed:                u64,
     pub started_at:               chrono::DateTime<chrono::Utc>,
     pub completed_at:             Option<chrono::DateTime<chrono::Utc>>,
     pub stage_status:             HashMap<StageId, StageStatus>,

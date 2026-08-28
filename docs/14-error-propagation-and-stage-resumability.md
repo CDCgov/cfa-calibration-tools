@@ -66,6 +66,8 @@ pub struct StageCheckpoint {
     /// Keyed by particle ID and scorer fingerprint.
     pub scores:                 HashMap<ParticleId, HashMap<Fingerprint, ScoreValueType>>,
     pub failures:               Vec<ParticleFailure>,
+    /// Snapshot of all four `Context` RNG states at the time this checkpoint was written.
+    pub rng_snapshot:           RngSnapshot,
     pub timestamp:              chrono::DateTime<chrono::Utc>,
 }
 
@@ -85,6 +87,18 @@ impl StageCheckpoint {
 pub struct ResumeMismatch {
     pub checkpoint: Fingerprint,
     pub current:    Fingerprint,
+}
+
+impl CheckpointExt for Context {
+    pub fn resume_stage_from_checkpoint(&mut self, stage_id: &StageId, checkpoint: StageCheckpoint) -> Result<(), Error> {
+        checkpoint.validate_resume(&self.manifest.id)?;
+
+        let mut stage = context.stage_states.get_mut(stage_id)?
+        stage_state.rngs = checkpoint.rng_snapshot;
+        stage_state.scores.extend(checkpoint.scores.clone());
+        Ok(())
+        stage_state.accepted.entries.extend(checkpoint.current_population.entries.clone());
+    }
 }
 ```
 
