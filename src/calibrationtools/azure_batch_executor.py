@@ -61,6 +61,34 @@ def _clean_notice(text: str) -> str:
     return " ".join(without_ansi.split("\r")[-1].split())
 
 
+def _silence_cloudops_progress_bar() -> None:
+    """Stop ``cfa-cloudops`` from drawing its upload bar on stderr.
+
+    ``cfa.cloudops.blob`` wraps its upload loop in a hard-coded ``tqdm`` with
+    no way to disable it, and ``TQDM_DISABLE`` is only read when ``tqdm`` is
+    first imported. Redirecting stderr instead would swap a process-global
+    stream while scenarios upload concurrently, swallowing the caller's own
+    live display, so replace the bar with a passthrough at its source.
+
+    Returns:
+        None: This function does not return a value.
+    """
+
+    try:
+        from cfa.cloudops import blob
+    except ImportError:
+        return
+
+    if getattr(blob.tqdm, "_calibrationtools_passthrough", False):
+        return
+
+    def _passthrough(iterable: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return () if iterable is None else iterable
+
+    _passthrough._calibrationtools_passthrough = True  # type: ignore[attr-defined]
+    blob.tqdm = _passthrough
+
+
 @contextmanager
 def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
     """Divert ``cfa-cloudops`` console output into a list for re-reporting.
@@ -259,6 +287,8 @@ class AzureBatchExecutor(CloudExecutor):
         self.wait_for_nodes = wait_for_nodes
         self.max_wait_for_nodes = max_wait_for_nodes
         self.quiet_cloud_output = quiet_cloud_output
+        if quiet_cloud_output:
+            _silence_cloudops_progress_bar()
         self._use_shared_study_pool = _use_shared_study_pool
         self._study_pool_ready = _study_pool_ready
         self._cloud_client = cloud_client
@@ -691,11 +721,8 @@ class AzureBatchExecutor(CloudExecutor):
                 stage="upload",
                 file_count=len(names),
             )
-            with (
-                _rich_upload_progress(
-                    "Uploading task files", enabled=callback is None
-                ),
-                self._quiet(callback),
+            with _rich_upload_progress(
+                "Uploading task files", enabled=callback is None
             ):
                 self.cloud_client.upload_files(
                     files=names,

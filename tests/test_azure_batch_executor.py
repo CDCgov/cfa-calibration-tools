@@ -168,13 +168,23 @@ class NoisyCloudClient(FakeCloudClient):
 
 
 class ProgressBarCloudClient(FakeCloudClient):
-    """Write a tqdm-style upload bar to stderr, as ``cfa-cloudops`` does."""
+    """Render uploads through the same tqdm symbol ``cfa-cloudops`` uses."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.expected_stderr = sys.stderr
+        self.expected_stdout = sys.stdout
+        self.streams_swapped = False
 
     def upload_files(self, *args, **kwargs):
-        for done in (50, 100):
-            sys.stderr.write(
-                f"\rUploading files: {done}%|#####| {done}/100 [00:07<00:00]"
-            )
+        from cfa.cloudops import blob
+
+        self.streams_swapped = (
+            sys.stderr is not self.expected_stderr
+            or sys.stdout is not self.expected_stdout
+        )
+        for _ in blob.tqdm(range(3), desc="Uploading files"):
+            pass
         return super().upload_files(*args, **kwargs)
 
 
@@ -209,12 +219,18 @@ def test_azure_executor_reports_cloud_notices_as_progress_events(
 def test_azure_executor_keeps_upload_progress_bars_off_the_console(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Keep the library's stderr progress bar out of a caller's live display."""
+    """Silence the upload bar without hijacking the caller's streams.
 
+    Redirecting stdout or stderr would hide the bar, but those streams are
+    process-global: with scenarios uploading concurrently it also swallows the
+    caller's own live display, which then appears frozen.
+    """
+
+    client = ProgressBarCloudClient()
     executor = AzureBatchExecutor(
         registry_server="demo.azurecr.io",
         poll_interval=0,
-        cloud_client=ProgressBarCloudClient(),
+        cloud_client=client,
     )
 
     events: list = []
@@ -223,6 +239,7 @@ def test_azure_executor_keeps_upload_progress_bars_off_the_console(
     )
 
     assert "Uploading files" not in capsys.readouterr().err
+    assert not client.streams_swapped
 
 
 def test_azure_executor_reports_each_cloud_notice_once() -> None:
