@@ -781,7 +781,11 @@ class AzureBatchExecutor(CloudExecutor):
         return int(match.group(1)) if match else None
 
     def _harvest_result_blob(
-        self, job_id: str, index: int, required: bool
+        self,
+        job_id: str,
+        index: int,
+        required: bool,
+        callback: ProgressCallback | None = None,
     ) -> list[CloudAcceptanceResult] | None:
         """Download and unpickle one finished task's results.
 
@@ -794,6 +798,8 @@ class AzureBatchExecutor(CloudExecutor):
             job_id (str): Batch job being harvested.
             index (int): Position of the task blob to read.
             required (bool): Whether a missing blob is an error.
+            callback (ProgressCallback | None): Observer that receives the
+                library's download chatter as progress notices.
 
         Returns:
             list[CloudAcceptanceResult] | None: Results, or ``None`` if the
@@ -809,11 +815,12 @@ class AzureBatchExecutor(CloudExecutor):
         ) as file:
             destination = file.name
         try:
-            self.cloud_client.download_file(
-                src_path=f"results-{task_blob}",
-                dest_path=destination,
-                container_name=self.blob_name,
-            )
+            with self._quiet(callback):
+                self.cloud_client.download_file(
+                    src_path=f"results-{task_blob}",
+                    dest_path=destination,
+                    container_name=self.blob_name,
+                )
             with open(destination, "rb") as file:
                 return list(pickle.load(file))
         except Exception as exc:
@@ -894,7 +901,7 @@ class AzureBatchExecutor(CloudExecutor):
                 if index is None or index in harvested or index >= total:
                     continue
                 results = self._harvest_result_blob(
-                    job_id, index, required=False
+                    job_id, index, required=False, callback=callback
                 )
                 if results is None:
                     continue
@@ -917,6 +924,7 @@ class AzureBatchExecutor(CloudExecutor):
                                 job_id,
                                 index,
                                 required=time.monotonic() >= deadline,
+                                callback=callback,
                             )
                             if results is None:
                                 continue

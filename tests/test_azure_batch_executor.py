@@ -326,6 +326,50 @@ def test_azure_executor_waits_for_result_blobs_that_trail_task_exit() -> None:
     assert [result.slot_id for result in results] == [0, 1]
 
 
+class ChattyDownloadCloudClient(FakeCloudClient):
+    """Print per-file download chatter, as ``cfa-cloudops`` does."""
+
+    def download_file(self, *, src_path, dest_path, container_name) -> None:
+        print("Size of file to download:  838 Bytes")
+        super().download_file(
+            src_path=src_path,
+            dest_path=dest_path,
+            container_name=container_name,
+        )
+
+
+def test_azure_executor_keeps_download_chatter_out_of_the_console(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Fold per-blob download prints into notices instead of the console.
+
+    Harvesting runs inside the poll loop, so anything the library prints there
+    lands in the middle of a caller's live display and redraws it.
+    """
+
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        chunk_size=1,
+        poll_interval=0,
+        cloud_client=ChattyDownloadCloudClient(),
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks(
+            [task(0), task(1)], progress_callback=events.append
+        )
+    )
+
+    assert "Size of file to download" not in capsys.readouterr().out
+    notices = [
+        event.payload["message"]
+        for event in events
+        if event.payload.get("stage") == "cloud_notice"
+    ]
+    assert any("Size of file to download" in notice for notice in notices)
+
+
 def test_azure_executor_streams_results_as_each_task_finishes() -> None:
     """Hand back each task's results while the rest of the job is still running.
 
