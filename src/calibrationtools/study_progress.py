@@ -258,8 +258,6 @@ class StudyProgressReporter:
                 scenario.attempts = payload.get("attempts")
                 scenario.acceptance_rate = payload.get("acceptance_rate")
                 scenario.eta_seconds = payload.get("eta_seconds")
-                scenario.status_message = None
-                scenario.status_changed_at = time.monotonic()
             elif event.event_type == "executor_message":
                 message = payload.get("message")
                 if message:

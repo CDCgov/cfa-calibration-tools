@@ -110,6 +110,43 @@ def test_reporter_records_failure_and_running_elapsed_time(
     assert "worker unavailable" in console.export_text()
 
 
+def test_reporter_keeps_backend_status_across_streamed_progress(
+    tmp_path: Path,
+) -> None:
+    """Hold the backend status while work progress streams in.
+
+    Cloud results arrive one at a time, so clearing the status on every
+    progress event blanks the note between polls and it visibly flickers.
+    """
+
+    reporter = StudyProgressReporter(
+        study_name="demo",
+        scenario_names=["first"],
+        detail_log_dir=tmp_path,
+        quiet=True,
+    )
+    reporter.mark_started("first")
+    reporter.handle_sampler_event(
+        "first",
+        ProgressEvent(
+            event_type="executor_message",
+            payload={"message": "Azure task progress 6/100"},
+        ),
+    )
+    reporter.handle_sampler_event(
+        "first",
+        ProgressEvent(
+            event_type="work_progressed",
+            generation=0,
+            payload={"completed": 1, "total": 100, "attempts": 12},
+        ),
+    )
+
+    scenario = reporter.snapshot().scenarios[0]
+    assert scenario.status_message == "Azure task progress 6/100"
+    assert scenario.completed == 1
+
+
 def test_reporter_display_survives_a_library_stdout_redirect(
     tmp_path: Path,
 ) -> None:
