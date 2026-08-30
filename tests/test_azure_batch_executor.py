@@ -66,7 +66,7 @@ class FakeCloudClient:
     def list_tasks(self, job_id: str):
         return [
             SimpleNamespace(
-                id="task-0",
+                id=f"{job_id}-{index}",
                 execution_info=SimpleNamespace(
                     exit_code=self.exit_code,
                     failure_info=SimpleNamespace(message="worker failed"),
@@ -136,7 +136,7 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
         asyncio.run(
             executor.execute_tasks([task(0)], progress_callback=events.append)
         )
-    assert "task-0" in str(error.value)
+    assert "-0 (exit 2)" in str(error.value)
     assert "exit 2" in str(error.value)
     assert "fake worker stderr" in str(error.value)
     assert any(call[0] == "delete_job" for call in client.calls)
@@ -266,10 +266,37 @@ def test_azure_executor_reports_each_cloud_notice_once() -> None:
     assert len(notices) == len(set(notices))
 
 
-def test_azure_executor_reports_result_download_progress() -> None:
-    """Replace per-file download prints with counted progress events."""
+class StagedCompletionCloudClient(FakeCloudClient):
+    """Finish one more task on each poll, as a real job would."""
 
-    client = FakeCloudClient()
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.polls = 0
+
+    def list_tasks(self, job_id: str):
+        submitted = sum(call[0] == "task" for call in self.calls)
+        self.polls += 1
+        return [
+            SimpleNamespace(
+                id=f"{job_id}-{index}",
+                execution_info=SimpleNamespace(
+                    exit_code=0 if index < self.polls else None,
+                    failure_info=SimpleNamespace(message="worker failed"),
+                ),
+            )
+            for index in range(submitted)
+        ]
+
+
+def test_azure_executor_streams_results_as_each_task_finishes() -> None:
+    """Hand back each task's results while the rest of the job is still running.
+
+    Waiting for the last task before downloading anything hides acceptance
+    rates for the whole generation and delays failure reports, so results must
+    surface as they land while staying in submission order.
+    """
+
+    client = StagedCompletionCloudClient()
     executor = AzureBatchExecutor(
         registry_server="demo.azurecr.io",
         chunk_size=1,
@@ -277,22 +304,27 @@ def test_azure_executor_reports_result_download_progress() -> None:
         cloud_client=client,
     )
 
+    streamed: list = []
     events: list = []
-    asyncio.run(
+    results = asyncio.run(
         executor.execute_tasks(
-            [task(0), task(1)], progress_callback=events.append
+            [task(0), task(1), task(2)],
+            progress_callback=events.append,
+            on_result=streamed.append,
         )
     )
 
-    downloads = [
-        event.payload["message"]
+    harvested = [
+        event.payload["harvested"]
         for event in events
-        if event.payload.get("stage") == "download"
+        if "harvested" in event.payload
     ]
-    assert downloads == [
-        "Downloading Azure results 1/2",
-        "Downloading Azure results 2/2",
+    assert harvested == sorted(harvested)
+    assert harvested[0] < harvested[-1], "results were not streamed"
+    assert [result.slot_id for result in streamed] == [
+        result.slot_id for result in results
     ]
+    assert [result.slot_id for result in results] == [0, 1, 2]
 
 
 class StalledPoolClient(FakeCloudClient):

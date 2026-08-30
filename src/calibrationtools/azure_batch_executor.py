@@ -457,6 +457,7 @@ class AzureBatchExecutor(CloudExecutor):
         tasks: list[CloudAcceptanceTask],
         *,
         progress_callback: ProgressCallback | None = None,
+        on_result: Callable[[CloudAcceptanceResult], None] | None = None,
     ) -> list[CloudAcceptanceResult]:
         if not tasks:
             return []
@@ -468,11 +469,8 @@ class AzureBatchExecutor(CloudExecutor):
             await asyncio.to_thread(
                 self._submit_job, job_id, progress_callback
             )
-            await asyncio.to_thread(
-                self._wait_for_completion, job_id, progress_callback
-            )
             results = await asyncio.to_thread(
-                self._download_results, job_id, progress_callback
+                self._stream_results, job_id, progress_callback, on_result
             )
         except BaseException:
             if job_id is not None:
@@ -761,26 +759,97 @@ class AzureBatchExecutor(CloudExecutor):
             task_count=len(self._task_blobs),
         )
 
-    def _wait_for_completion(
-        self, job_id: str, callback: ProgressCallback | None
-    ) -> None:
+    @staticmethod
+    def _completed_blob_index(task: Any) -> int | None:
+        """Recover the result-blob index a finished task wrote.
+
+        Tasks are submitted with a zero-padded positional suffix, so the digits
+        at the end of the id identify the blob. Ids that do not carry one leave
+        the caller to fall back on a whole-job download.
+
+        Args:
+            task (Any): Batch task record.
+
+        Returns:
+            int | None: Blob index, or ``None`` if the id has no suffix.
+        """
+
+        match = re.search(r"(\d+)$", str(getattr(task, "id", "")))
+        return int(match.group(1)) if match else None
+
+    def _harvest_result_blob(
+        self, job_id: str, index: int
+    ) -> list[CloudAcceptanceResult]:
+        """Download and unpickle one finished task's results."""
+
+        task_blob = self._task_blobs[index]
+        with tempfile.NamedTemporaryFile(
+            "wb", suffix=".pkl", delete=False
+        ) as file:
+            destination = file.name
+        try:
+            self.cloud_client.download_file(
+                src_path=f"results-{task_blob}",
+                dest_path=destination,
+                container_name=self.blob_name,
+            )
+            with open(destination, "rb") as file:
+                return list(pickle.load(file))
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to download Azure result blob results-{task_blob} "
+                f"for job {job_id}: {exc}"
+            ) from exc
+        finally:
+            Path(destination).unlink(missing_ok=True)
+
+    def _stream_results(
+        self,
+        job_id: str,
+        callback: ProgressCallback | None,
+        on_result: Callable[[CloudAcceptanceResult], None] | None = None,
+    ) -> list[CloudAcceptanceResult]:
+        """Collect results as tasks finish rather than after the last one.
+
+        Each task writes its own result blob, so waiting for the whole job
+        before downloading anything hides acceptance rates until the generation
+        is over and delays failure reports until the slowest task lands.
+
+        Args:
+            job_id (str): Batch job being harvested.
+            callback (ProgressCallback | None): Observer for progress events.
+            on_result (Callable[[CloudAcceptanceResult], None] | None): Invoked
+                per result as it arrives.
+
+        Returns:
+            list[CloudAcceptanceResult]: Results ordered by submission index,
+                so callers never see completion order.
+
+        Raises:
+            TimeoutError: If no task starts, or the job overruns ``max_wait``.
+        """
+
         started = time.monotonic()
         total = len(self._task_blobs)
         running_seen = False
+        harvested: dict[int, list[CloudAcceptanceResult]] = {}
         while True:
             task_records = self._list_batch_tasks(job_id)
-            completed = sum(
-                getattr(
+            finished = [
+                task
+                for task in task_records
+                if getattr(
                     getattr(task, "execution_info", None), "exit_code", None
                 )
                 is not None
-                for task in task_records
-            )
+            ]
+            completed = len(finished)
             running = sum(
                 str(getattr(task, "state", "")).lower().endswith("running")
                 for task in task_records
             )
             running_seen = running_seen or running > 0 or completed > 0
+
             health = self._pool_health()
             self._emit(
                 callback,
@@ -789,12 +858,39 @@ class AzureBatchExecutor(CloudExecutor):
                 completed=completed,
                 running=running,
                 total=total,
+                harvested=len(harvested),
                 elapsed_seconds=time.monotonic() - started,
                 **health,
             )
+
+            # Surface a failing worker now instead of after the whole job.
+            self._raise_for_failed_tasks(job_id, task_records)
+
+            for task in finished:
+                index = self._completed_blob_index(task)
+                if index is None or index in harvested or index >= total:
+                    continue
+                results = self._harvest_result_blob(job_id, index)
+                harvested[index] = results
+                if on_result is not None:
+                    for result in results:
+                        on_result(result)
+
             if len(task_records) >= total and completed >= total:
-                self._raise_for_failed_tasks(job_id, task_records)
-                return
+                missing = [
+                    index for index in range(total) if index not in harvested
+                ]
+                for index in missing:
+                    results = self._harvest_result_blob(job_id, index)
+                    harvested[index] = results
+                    if on_result is not None:
+                        for result in results:
+                            on_result(result)
+                return [
+                    result
+                    for index in range(total)
+                    for result in harvested[index]
+                ]
             self._raise_for_unhealthy_pool(f"job {job_id}", health)
             elapsed = time.monotonic() - started
             if (
@@ -991,41 +1087,6 @@ class AzureBatchExecutor(CloudExecutor):
         if stderr:
             message += f"\n\nRepresentative task stderr:\n{stderr[-4000:]}"
         raise RuntimeError(message)
-
-    def _download_results(
-        self, job_id: str, callback: ProgressCallback | None = None
-    ) -> list[CloudAcceptanceResult]:
-        results: list[CloudAcceptanceResult] = []
-        total = len(self._task_blobs)
-        for index, task_blob in enumerate(self._task_blobs, start=1):
-            with tempfile.NamedTemporaryFile(
-                "wb", suffix=".pkl", delete=False
-            ) as file:
-                destination = file.name
-            try:
-                with self._quiet(callback):
-                    self.cloud_client.download_file(
-                        src_path=f"results-{task_blob}",
-                        dest_path=destination,
-                        container_name=self.blob_name,
-                    )
-                with open(destination, "rb") as file:
-                    results.extend(pickle.load(file))
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to download Azure result blob results-{task_blob} for job {job_id}: {exc}"
-                ) from exc
-            finally:
-                Path(destination).unlink(missing_ok=True)
-            self._emit(
-                callback,
-                f"Downloading Azure results {index}/{total}",
-                stage="download",
-                job_id=job_id,
-                completed=index,
-                total=total,
-            )
-        return results
 
     def _cleanup(self, job_id: str, callback: ProgressCallback | None) -> None:
         cleaned: list[str] = []

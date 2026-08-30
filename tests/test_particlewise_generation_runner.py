@@ -36,8 +36,12 @@ class ReverseCloudExecutor(CloudExecutor):
         tasks: list[CloudAcceptanceTask],
         *,
         progress_callback=None,
+        on_result=None,
     ) -> list[CloudAcceptanceResult]:
         results = [run_cloud_acceptance_task(task) for task in reversed(tasks)]
+        if on_result is not None:
+            for result in results:
+                on_result(result)
         if progress_callback is not None:
             progress_callback(
                 ProgressEvent(
@@ -171,12 +175,18 @@ def test_particlewise_generation_runner_uses_cloud_results_in_slot_order():
         0,
         1,
     ]
-    assert [event.event_type for event in events] == [
-        "generation_started",
-        "executor_message",
-        "work_progressed",
-        "work_progressed",
+    event_types = [event.event_type for event in events]
+    assert event_types[0] == "generation_started"
+    assert event_types.count("work_progressed") == 2
+    assert "executor_message" in event_types
+
+    # Progress must accumulate as results stream in, not restart per result.
+    completed = [
+        event.payload["completed"]
+        for event in events
+        if event.event_type == "work_progressed"
     ]
+    assert completed == [1, 2]
 
 
 def test_particlewise_generation_runner_shows_executor_status_on_progress_bar():

@@ -130,8 +130,23 @@ class CloudExecutor(ABC):
         tasks: list[CloudAcceptanceTask],
         *,
         progress_callback: ProgressCallback | None = None,
+        on_result: Callable[[CloudAcceptanceResult], None] | None = None,
     ) -> list[CloudAcceptanceResult]:
-        """Return one result for every submitted task."""
+        """Return one result for every submitted task.
+
+        Args:
+            tasks (list[CloudAcceptanceTask]): Work to run remotely.
+            progress_callback (ProgressCallback | None): Observer for backend
+                progress events.
+            on_result (Callable[[CloudAcceptanceResult], None] | None): Invoked
+                as each result becomes available, so callers can report
+                acceptance while the rest of the batch is still running.
+                Backends that cannot stream may invoke it once per result
+                before returning.
+
+        Returns:
+            list[CloudAcceptanceResult]: Results in submission order.
+        """
 
     def clone_for_scenario(self, scenario_name: str) -> "CloudExecutor":
         """Create an isolated backend for a concurrent study scenario."""

@@ -5,7 +5,9 @@ from calibrationtools.cloud_executor import CloudExecutor
 
 
 class CloneableExecutor(CloudExecutor):
-    async def execute_tasks(self, tasks, *, progress_callback=None):
+    async def execute_tasks(
+        self, tasks, *, progress_callback=None, on_result=None
+    ):
         raise AssertionError("study validation must not execute cloud work")
 
     def clone_for_scenario(self, scenario_name: str):

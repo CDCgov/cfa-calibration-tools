@@ -27,7 +27,9 @@ class CloneTrackingExecutor(CloudExecutor):
         self.cloned_for.append(scenario_name)
         return ScenarioExecutor(scenario_name)
 
-    async def execute_tasks(self, tasks, *, progress_callback=None):
+    async def execute_tasks(
+        self, tasks, *, progress_callback=None, on_result=None
+    ):
         raise AssertionError("study runner only clones the base executor")
 
 
@@ -35,7 +37,9 @@ class ScenarioExecutor(CloudExecutor):
     def __init__(self, scenario_name: str) -> None:
         self.scenario_name = scenario_name
 
-    async def execute_tasks(self, tasks, *, progress_callback=None):
+    async def execute_tasks(
+        self, tasks, *, progress_callback=None, on_result=None
+    ):
         raise AssertionError("fake sampler does not submit cloud tasks")
 
 
