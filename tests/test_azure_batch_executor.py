@@ -288,6 +288,44 @@ class StagedCompletionCloudClient(FakeCloudClient):
         ]
 
 
+class LaggingBlobCloudClient(FakeCloudClient):
+    """Report a task complete before its result blob is readable."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.misses = 2
+
+    def download_file(self, *, src_path, dest_path, container_name) -> None:
+        if self.misses > 0:
+            self.misses -= 1
+            raise RuntimeError(f"Source blob: {src_path} does not exist.")
+        super().download_file(
+            src_path=src_path,
+            dest_path=dest_path,
+            container_name=container_name,
+        )
+
+
+def test_azure_executor_waits_for_result_blobs_that_trail_task_exit() -> None:
+    """Retry result blobs that are not readable the moment a task exits.
+
+    Workers write through a blob mount that flushes independently of process
+    exit, so a completed task can briefly have no readable result. Treating
+    that as a hard failure aborts a healthy run.
+    """
+
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        chunk_size=1,
+        poll_interval=0,
+        cloud_client=LaggingBlobCloudClient(),
+    )
+
+    results = asyncio.run(executor.execute_tasks([task(0), task(1)]))
+
+    assert [result.slot_id for result in results] == [0, 1]
+
+
 def test_azure_executor_streams_results_as_each_task_finishes() -> None:
     """Hand back each task's results while the rest of the job is still running.
 

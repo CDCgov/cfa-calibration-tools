@@ -241,6 +241,7 @@ class AzureBatchExecutor(CloudExecutor):
         poll_interval: float = 5.0,
         max_wait: float = 3600.0,
         max_wait_for_first_task_start: float = 900.0,
+        max_wait_for_blob_flush: float = 120.0,
         wait_for_nodes: bool = True,
         max_wait_for_nodes: float = 1800.0,
         quiet_cloud_output: bool = True,
@@ -284,6 +285,7 @@ class AzureBatchExecutor(CloudExecutor):
         self.poll_interval = poll_interval
         self.max_wait = max_wait
         self.max_wait_for_first_task_start = max_wait_for_first_task_start
+        self.max_wait_for_blob_flush = max_wait_for_blob_flush
         self.wait_for_nodes = wait_for_nodes
         self.max_wait_for_nodes = max_wait_for_nodes
         self.quiet_cloud_output = quiet_cloud_output
@@ -423,6 +425,7 @@ class AzureBatchExecutor(CloudExecutor):
             poll_interval=self.poll_interval,
             max_wait=self.max_wait,
             max_wait_for_first_task_start=self.max_wait_for_first_task_start,
+            max_wait_for_blob_flush=self.max_wait_for_blob_flush,
             wait_for_nodes=self.wait_for_nodes,
             max_wait_for_nodes=self.max_wait_for_nodes,
             quiet_cloud_output=self.quiet_cloud_output,
@@ -778,9 +781,27 @@ class AzureBatchExecutor(CloudExecutor):
         return int(match.group(1)) if match else None
 
     def _harvest_result_blob(
-        self, job_id: str, index: int
-    ) -> list[CloudAcceptanceResult]:
-        """Download and unpickle one finished task's results."""
+        self, job_id: str, index: int, required: bool
+    ) -> list[CloudAcceptanceResult] | None:
+        """Download and unpickle one finished task's results.
+
+        A task can report an exit code before its result blob is readable,
+        because workers write through a blob mount that flushes independently
+        of process exit. While the job is still running a miss therefore means
+        "not yet", and the blob is retried on a later poll.
+
+        Args:
+            job_id (str): Batch job being harvested.
+            index (int): Position of the task blob to read.
+            required (bool): Whether a missing blob is an error.
+
+        Returns:
+            list[CloudAcceptanceResult] | None: Results, or ``None`` if the
+                blob is not readable yet and may still appear.
+
+        Raises:
+            RuntimeError: If ``required`` and the blob cannot be read.
+        """
 
         task_blob = self._task_blobs[index]
         with tempfile.NamedTemporaryFile(
@@ -796,6 +817,8 @@ class AzureBatchExecutor(CloudExecutor):
             with open(destination, "rb") as file:
                 return list(pickle.load(file))
         except Exception as exc:
+            if not required:
+                return None
             raise RuntimeError(
                 f"Failed to download Azure result blob results-{task_blob} "
                 f"for job {job_id}: {exc}"
@@ -870,7 +893,11 @@ class AzureBatchExecutor(CloudExecutor):
                 index = self._completed_blob_index(task)
                 if index is None or index in harvested or index >= total:
                     continue
-                results = self._harvest_result_blob(job_id, index)
+                results = self._harvest_result_blob(
+                    job_id, index, required=False
+                )
+                if results is None:
+                    continue
                 harvested[index] = results
                 if on_result is not None:
                     for result in results:
@@ -880,12 +907,26 @@ class AzureBatchExecutor(CloudExecutor):
                 missing = [
                     index for index in range(total) if index not in harvested
                 ]
-                for index in missing:
-                    results = self._harvest_result_blob(job_id, index)
-                    harvested[index] = results
-                    if on_result is not None:
-                        for result in results:
-                            on_result(result)
+                if missing:
+                    # Blob writes can trail task exit, so give them the same
+                    # grace one more poll would have allowed before failing.
+                    deadline = time.monotonic() + self.max_wait_for_blob_flush
+                    while missing:
+                        for index in list(missing):
+                            results = self._harvest_result_blob(
+                                job_id,
+                                index,
+                                required=time.monotonic() >= deadline,
+                            )
+                            if results is None:
+                                continue
+                            harvested[index] = results
+                            missing.remove(index)
+                            if on_result is not None:
+                                for result in results:
+                                    on_result(result)
+                        if missing:
+                            time.sleep(self.poll_interval)
                 return [
                     result
                     for index in range(total)
