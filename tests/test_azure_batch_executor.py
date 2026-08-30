@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pickle
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -166,6 +167,17 @@ class NoisyCloudClient(FakeCloudClient):
         super().create_pool(*args, **kwargs)
 
 
+class ProgressBarCloudClient(FakeCloudClient):
+    """Write a tqdm-style upload bar to stderr, as ``cfa-cloudops`` does."""
+
+    def upload_files(self, *args, **kwargs):
+        for done in (50, 100):
+            sys.stderr.write(
+                f"\rUploading files: {done}%|#####| {done}/100 [00:07<00:00]"
+            )
+        return super().upload_files(*args, **kwargs)
+
+
 def test_azure_executor_reports_cloud_notices_as_progress_events(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -192,6 +204,25 @@ def test_azure_executor_reports_cloud_notices_as_progress_events(
     assert any("current VM is too old" in notice for notice in notices)
     assert all(notice.startswith("cfa-cloudops: ") for notice in notices)
     assert "deprecated VM series" not in capsys.readouterr().out
+
+
+def test_azure_executor_keeps_upload_progress_bars_off_the_console(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Keep the library's stderr progress bar out of a caller's live display."""
+
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=ProgressBarCloudClient(),
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks([task(0)], progress_callback=events.append)
+    )
+
+    assert "Uploading files" not in capsys.readouterr().err
 
 
 def test_azure_executor_reports_each_cloud_notice_once() -> None:

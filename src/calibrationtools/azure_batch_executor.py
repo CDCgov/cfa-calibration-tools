@@ -10,7 +10,7 @@ import re
 import shutil
 import tempfile
 import time
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -66,11 +66,12 @@ def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
     """Divert ``cfa-cloudops`` console output into a list for re-reporting.
 
     ``cfa-cloudops`` writes advisories and per-file progress with bare
-    ``print`` calls and its own log handlers. Those writes land mid-frame in
-    the sampler's live display and force partial redraws, which is why a
-    running calibration appears to emit duplicated, truncated progress bars.
-    Capturing them keeps the display coherent while preserving the content so
-    the caller can surface it as a normal progress notice.
+    ``print`` calls, its own log handlers, and a ``tqdm`` bar on stderr. Those
+    writes land mid-frame in the sampler's live display and force partial
+    redraws, which is why a running calibration appears to emit duplicated,
+    truncated progress bars. Capturing them keeps the display coherent while
+    preserving the content so the caller can surface it as a normal progress
+    notice.
 
     Args:
         enabled (bool): Whether to capture output. Disabling restores the
@@ -98,7 +99,7 @@ def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
     logger.addHandler(handler)
     logger.propagate = False
     try:
-        with redirect_stdout(buffer):
+        with redirect_stdout(buffer), redirect_stderr(buffer):
             yield lines
     finally:
         logger.removeHandler(handler)
@@ -690,8 +691,11 @@ class AzureBatchExecutor(CloudExecutor):
                 stage="upload",
                 file_count=len(names),
             )
-            with _rich_upload_progress(
-                "Uploading task files", enabled=callback is None
+            with (
+                _rich_upload_progress(
+                    "Uploading task files", enabled=callback is None
+                ),
+                self._quiet(callback),
             ):
                 self.cloud_client.upload_files(
                     files=names,
