@@ -1,6 +1,8 @@
+import io
 import json
 import time
 from collections.abc import Callable
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import cast
 
@@ -106,6 +108,31 @@ def test_reporter_records_failure_and_running_elapsed_time(
     console = Console(record=True, width=200)
     console.print(reporter._render())
     assert "worker unavailable" in console.export_text()
+
+
+def test_reporter_display_survives_a_library_stdout_redirect(
+    tmp_path: Path,
+) -> None:
+    """Keep rendering while an executor captures the process-global stdout.
+
+    Executors wrap cloud calls in ``redirect_stdout`` to keep library chatter
+    out of the display. Those windows span whole task-submission loops, so a
+    console that resolved ``sys.stdout`` lazily would render entire frames into
+    the capture buffer and the dashboard would appear frozen.
+    """
+
+    reporter = StudyProgressReporter(
+        study_name="demo",
+        scenario_names=["first"],
+        detail_log_dir=tmp_path,
+    )
+    reporter.mark_started("first")
+
+    captured = io.StringIO()
+    with redirect_stdout(captured):
+        reporter.console.print("dashboard frame")
+
+    assert "dashboard frame" not in captured.getvalue()
 
 
 class _RecordingLive:
