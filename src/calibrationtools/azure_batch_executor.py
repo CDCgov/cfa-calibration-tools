@@ -10,7 +10,7 @@ import re
 import shutil
 import tempfile
 import time
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -38,17 +38,68 @@ _UNUSABLE_NODE_STATES = frozenset(
 #: Node states in which a node can accept or is already running task work.
 _USABLE_NODE_STATES = frozenset({"idle", "running", "leavingpool"})
 
+#: Terminal control sequences emitted by the progress bars in cfa-cloudops.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _clean_notice(text: str) -> str:
+    """Reduce a captured ``cfa-cloudops`` line to plain single-line text.
+
+    Captured output still carries the styling and carriage returns of the
+    progress bars it came from. Re-emitting that verbatim pushes escape
+    sequences into whatever renders the notice, where they show up as stray
+    digits and colour codes rather than as styling.
+
+    Args:
+        text (str): Raw captured line.
+
+    Returns:
+        str: The final frame of the line, without escapes or padding.
+    """
+
+    without_ansi = _ANSI_ESCAPE.sub("", text)
+    return " ".join(without_ansi.split("\r")[-1].split())
+
+
+def _silence_cloudops_progress_bar() -> None:
+    """Stop ``cfa-cloudops`` from drawing its upload bar on stderr.
+
+    ``cfa.cloudops.blob`` wraps its upload loop in a hard-coded ``tqdm`` with
+    no way to disable it, and ``TQDM_DISABLE`` is only read when ``tqdm`` is
+    first imported. Redirecting stderr instead would swap a process-global
+    stream while scenarios upload concurrently, swallowing the caller's own
+    live display, so replace the bar with a passthrough at its source.
+
+    Returns:
+        None: This function does not return a value.
+    """
+
+    try:
+        from cfa.cloudops import blob
+    except ImportError:
+        return
+
+    if getattr(blob.tqdm, "_calibrationtools_passthrough", False):
+        return
+
+    def _passthrough(iterable: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return () if iterable is None else iterable
+
+    _passthrough._calibrationtools_passthrough = True  # type: ignore[attr-defined]
+    blob.tqdm = _passthrough
+
 
 @contextmanager
 def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
     """Divert ``cfa-cloudops`` console output into a list for re-reporting.
 
     ``cfa-cloudops`` writes advisories and per-file progress with bare
-    ``print`` calls and its own log handlers. Those writes land mid-frame in
-    the sampler's live display and force partial redraws, which is why a
-    running calibration appears to emit duplicated, truncated progress bars.
-    Capturing them keeps the display coherent while preserving the content so
-    the caller can surface it as a normal progress notice.
+    ``print`` calls, its own log handlers, and a ``tqdm`` bar on stderr. Those
+    writes land mid-frame in the sampler's live display and force partial
+    redraws, which is why a running calibration appears to emit duplicated,
+    truncated progress bars. Capturing them keeps the display coherent while
+    preserving the content so the caller can surface it as a normal progress
+    notice.
 
     Args:
         enabled (bool): Whether to capture output. Disabling restores the
@@ -67,7 +118,7 @@ def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
 
     class _Collector(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
-            lines.append(record.getMessage().strip())
+            lines.append(_clean_notice(record.getMessage()))
 
     buffer = StringIO()
     logger = logging.getLogger("cfa")
@@ -76,20 +127,24 @@ def _capture_cloudops_output(enabled: bool = True) -> Iterator[list[str]]:
     logger.addHandler(handler)
     logger.propagate = False
     try:
-        with redirect_stdout(buffer):
+        with redirect_stdout(buffer), redirect_stderr(buffer):
             yield lines
     finally:
         logger.removeHandler(handler)
         logger.propagate = previous_propagate
         lines.extend(
-            line.strip()
-            for line in buffer.getvalue().splitlines()
-            if line.strip()
+            cleaned
+            for cleaned in (
+                _clean_notice(line) for line in buffer.getvalue().splitlines()
+            )
+            if cleaned
         )
 
 
 @contextmanager
-def _rich_upload_progress(description: str) -> Iterator[None]:
+def _rich_upload_progress(
+    description: str, enabled: bool = True
+) -> Iterator[None]:
     """Render blob uploads with a single-line Rich progress bar.
 
     ``cfa-cloudops`` drives its upload loop with ``tqdm``, which emits a new
@@ -99,10 +154,17 @@ def _rich_upload_progress(description: str) -> Iterator[None]:
 
     Args:
         description (str): Label shown beside the progress bar.
+        enabled (bool): Whether to install the bar. Studies own a live display
+            of their own, and Rich supports only one at a time, so they pass
+            ``False`` to avoid two displays fighting over the console.
 
     Yields:
         None: Control returns to the caller while the bar is installed.
     """
+
+    if not enabled:
+        yield
+        return
 
     try:
         from cfa.cloudops import blob as cloudops_blob
@@ -225,6 +287,8 @@ class AzureBatchExecutor(CloudExecutor):
         self.wait_for_nodes = wait_for_nodes
         self.max_wait_for_nodes = max_wait_for_nodes
         self.quiet_cloud_output = quiet_cloud_output
+        if quiet_cloud_output:
+            _silence_cloudops_progress_bar()
         self._use_shared_study_pool = _use_shared_study_pool
         self._study_pool_ready = _study_pool_ready
         self._cloud_client = cloud_client
@@ -449,7 +513,7 @@ class AzureBatchExecutor(CloudExecutor):
                 )
         else:
             self._prepare_pool(callback)
-        self._task_blobs = self._upload_task_chunks(tasks)
+        self._task_blobs = self._upload_task_chunks(tasks, callback)
         self._run_index += 1
         job_id = (
             f"{self.base_name}-job-{int(time.time() * 1000)}-{self._run_index}"
@@ -634,7 +698,9 @@ class AzureBatchExecutor(CloudExecutor):
         self._study_pool_ready = False
 
     def _upload_task_chunks(
-        self, tasks: list[CloudAcceptanceTask]
+        self,
+        tasks: list[CloudAcceptanceTask],
+        callback: ProgressCallback | None = None,
     ) -> list[str]:
         task_dir = Path(tempfile.mkdtemp(prefix="calibrationtools-azure-"))
         names: list[str] = []
@@ -648,7 +714,16 @@ class AzureBatchExecutor(CloudExecutor):
                 with (task_dir / name).open("wb") as file:
                     pickle.dump(tasks[start : start + self.chunk_size], file)
                 names.append(name)
-            with _rich_upload_progress("Uploading task files"):
+            noun = "file" if len(names) == 1 else "files"
+            self._emit(
+                callback,
+                f"Uploading {len(names)} task {noun}",
+                stage="upload",
+                file_count=len(names),
+            )
+            with _rich_upload_progress(
+                "Uploading task files", enabled=callback is None
+            ):
                 self.cloud_client.upload_files(
                     files=names,
                     container_name=self.blob_name,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -96,7 +97,10 @@ class StudyProgressReporter:
         self.detail_log_dir = Path(detail_log_dir)
         self.quiet = quiet
         self.stall_warning_seconds = stall_warning_seconds
-        self.console = console or Console()
+        # Pin the stream now: executors redirect the process-global sys.stdout
+        # while capturing library chatter, and a console that resolves it lazily
+        # would render whole frames into that capture buffer instead.
+        self.console = console or Console(file=sys.stdout)
         self._scenarios = {
             name: _ScenarioProgress(name=name) for name in scenario_names
         }

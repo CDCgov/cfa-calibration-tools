@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pickle
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -144,6 +145,7 @@ def test_azure_executor_surfaces_task_failure_before_download() -> None:
         "Creating Blob container calibrationtools-tasks",
         "Creating pool calibrationtools-pool (STANDARD_D2S_V3)",
         "Pool calibrationtools-pool created",
+        "Uploading 1 task file",
         "Azure pool ready",
         "Azure tasks submitted",
         "Azure task progress 1/1",
@@ -163,6 +165,27 @@ class NoisyCloudClient(FakeCloudClient):
             "The current VM is too old. Please upgrade to a newer version."
         )
         super().create_pool(*args, **kwargs)
+
+
+class ProgressBarCloudClient(FakeCloudClient):
+    """Render uploads through the same tqdm symbol ``cfa-cloudops`` uses."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.expected_stderr = sys.stderr
+        self.expected_stdout = sys.stdout
+        self.streams_swapped = False
+
+    def upload_files(self, *args, **kwargs):
+        from cfa.cloudops import blob
+
+        self.streams_swapped = (
+            sys.stderr is not self.expected_stderr
+            or sys.stdout is not self.expected_stdout
+        )
+        for _ in blob.tqdm(range(3), desc="Uploading files"):
+            pass
+        return super().upload_files(*args, **kwargs)
 
 
 def test_azure_executor_reports_cloud_notices_as_progress_events(
@@ -191,6 +214,32 @@ def test_azure_executor_reports_cloud_notices_as_progress_events(
     assert any("current VM is too old" in notice for notice in notices)
     assert all(notice.startswith("cfa-cloudops: ") for notice in notices)
     assert "deprecated VM series" not in capsys.readouterr().out
+
+
+def test_azure_executor_keeps_upload_progress_bars_off_the_console(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Silence the upload bar without hijacking the caller's streams.
+
+    Redirecting stdout or stderr would hide the bar, but those streams are
+    process-global: with scenarios uploading concurrently it also swallows the
+    caller's own live display, which then appears frozen.
+    """
+
+    client = ProgressBarCloudClient()
+    executor = AzureBatchExecutor(
+        registry_server="demo.azurecr.io",
+        poll_interval=0,
+        cloud_client=client,
+    )
+
+    events: list = []
+    asyncio.run(
+        executor.execute_tasks([task(0)], progress_callback=events.append)
+    )
+
+    assert "Uploading files" not in capsys.readouterr().err
+    assert not client.streams_swapped
 
 
 def test_azure_executor_reports_each_cloud_notice_once() -> None:
