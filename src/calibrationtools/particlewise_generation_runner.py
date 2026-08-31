@@ -442,28 +442,38 @@ class ParticlewiseGenerationRunner:
                 "Ensure the sampler collaborators are importable in that image."
             ) from exc
 
+        streamed_attempts = 0
+        streamed_accepted = 0
+
+        def on_result(result: CloudAcceptanceResult) -> None:
+            nonlocal streamed_attempts, streamed_accepted
+            streamed_attempts += result.attempts
+            if result.status == "accepted":
+                streamed_accepted += 1
+            self._update_progress(
+                handle=handle,
+                completed=streamed_accepted,
+                total_attempts=streamed_attempts,
+                generation_start_time=request.generation_start_time,
+                request=request,
+            )
+
         results = run_coroutine_from_sync(
             lambda: executor.execute_tasks(
                 tasks,
                 progress_callback=self._cloud_progress_callback(
                     request, handle
                 ),
+                on_result=on_result,
             )
         )
         accepted_list = self._validate_cloud_results(
             tasks=tasks,
             results=results,
         )
-        total_attempts = 0
-        for completed, accepted_proposal in enumerate(accepted_list, start=1):
-            total_attempts += accepted_proposal.attempts
-            self._update_progress(
-                handle=handle,
-                completed=completed,
-                total_attempts=total_attempts,
-                generation_start_time=request.generation_start_time,
-                request=request,
-            )
+        total_attempts = sum(
+            accepted_proposal.attempts for accepted_proposal in accepted_list
+        )
         return accepted_list, total_attempts
 
     def _cloud_progress_callback(

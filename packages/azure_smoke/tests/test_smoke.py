@@ -17,8 +17,13 @@ class InlineCloudExecutor(CloudExecutor):
         tasks: list[CloudAcceptanceTask],
         *,
         progress_callback=None,
+        on_result=None,
     ):
-        return [run_cloud_acceptance_task(task) for task in tasks]
+        results = [run_cloud_acceptance_task(task) for task in tasks]
+        if on_result is not None:
+            for result in results:
+                on_result(result)
+        return results
 
 
 def test_smoke_sampler_runs_through_cloud_task_serialization():
