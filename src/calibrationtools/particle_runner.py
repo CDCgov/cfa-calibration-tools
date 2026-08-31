@@ -70,6 +70,10 @@ class ParticleRunner:
         particles_to_params (Callable[Concatenate[Particle, ...], dict]): Function that converts a Particle instance into a parameter dictionary for the model. It should accept the particle as its first argument and return a dict of parameters to be passed to the model's simulate method.
         execution (Literal["parallel", "serial"], optional): Whether to run particles in parallel using threads or serially. Defaults to "parallel".
         max_workers (int | None, optional): Maximum number of worker threads to use for parallel execution. If None or 0, it will be set to the number of CPU cores available. Defaults to None.
+        verbose (bool, optional): Whether the runner may draw its own progress
+            display. Callers that own the terminal, such as a concurrent study
+            dashboard, pass False so this bar does not overdraw theirs.
+            Defaults to True.
     """
 
     def __init__(
@@ -78,11 +82,13 @@ class ParticleRunner:
         particles_to_params: Callable[Concatenate[Particle, ...], dict],
         execution: Literal["parallel", "serial"] = "parallel",
         max_workers: int | None = None,
+        verbose: bool = True,
     ):
         self.model = model
         self.parallel = execution == "parallel"
         self._set_worker_count(max_workers)
         self.particles_to_params = particles_to_params
+        self.verbose = verbose
 
     def _set_worker_count(self, max_workers: int | None = None):
         """
@@ -137,12 +143,12 @@ class ParticleRunner:
                     executor=ThreadPoolExecutor(max_workers=self.max_workers),
                     worker=self._evaluate_particle_chunk,
                     chunksize=1,
-                    reporter=SamplerReporter(verbose=True),
+                    reporter=SamplerReporter(verbose=self.verbose),
                     particles=particles,
                 )
             )
         else:
-            reporter = SamplerReporter(verbose=True)
+            reporter = SamplerReporter(verbose=self.verbose)
             with reporter.create_task_progress() as progress:
                 start = time.time()
                 handle = reporter.start_task(
