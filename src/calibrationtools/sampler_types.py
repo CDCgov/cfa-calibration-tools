@@ -4,11 +4,24 @@ This module replaces positional tuples and ad hoc dictionaries with small data
 objects so sampler control flow reads in terms of named responsibilities.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, Callable, Mapping
 
 from numpy.random import SeedSequence
 
 from .particle import Particle
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressEvent:
+    """Describe an observation-only update emitted during sampler execution."""
+
+    event_type: str
+    generation: int | None = None
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+
+ProgressCallback = Callable[[ProgressEvent], None]
 
 
 @dataclass(frozen=True, slots=True)
