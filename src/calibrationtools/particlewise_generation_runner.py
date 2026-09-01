@@ -6,6 +6,7 @@ reporting, and population finalization out of `ABCSampler`.
 """
 
 import asyncio
+import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -15,11 +16,22 @@ from typing import Any, Callable
 from numpy.random import SeedSequence
 
 from .async_runner import run_coroutine_from_sync
+from .cloud_executor import (
+    CloudAcceptanceResult,
+    CloudAcceptanceTask,
+    CloudExecutor,
+)
 from .particle import Particle
 from .particle_population import ParticlePopulation
 from .sampler_reporting import ProgressHandle, SamplerReporter
 from .sampler_run_state import SamplerRunState
-from .sampler_types import AcceptedProposal, GenerationStats, GeneratorSlot
+from .sampler_types import (
+    AcceptedProposal,
+    GenerationStats,
+    GeneratorSlot,
+    ProgressCallback,
+    ProgressEvent,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +97,10 @@ class ParticlewiseGenerationRequest:
             generation.
         particle_kwargs (dict[str, Any]): Keyword arguments forwarded into
             particle evaluation.
+        cloud_executor (CloudExecutor | None): Optional remote executor used
+            for generator-slot acceptance tasks.
+        progress_callback (ProgressCallback | None): Optional observer for
+            structured generation and work-progress events.
     """
 
     generation: int
@@ -93,6 +109,8 @@ class ParticlewiseGenerationRequest:
     overall_start_time: float
     generation_start_time: float
     particle_kwargs: dict[str, Any]
+    cloud_executor: CloudExecutor | None = None
+    progress_callback: ProgressCallback | None = None
 
 
 @dataclass(slots=True)
@@ -322,6 +340,7 @@ class ParticlewiseGenerationRunner:
                 completed=completed,
                 total_attempts=total_attempts,
                 generation_start_time=request.generation_start_time,
+                request=request,
             )
 
         return accepted_list, total_attempts
@@ -383,6 +402,7 @@ class ParticlewiseGenerationRunner:
                     completed=completed,
                     total_attempts=total_attempts,
                     generation_start_time=request.generation_start_time,
+                    request=request,
                 )
         except BaseException:
             for task in tasks:
@@ -391,6 +411,137 @@ class ParticlewiseGenerationRunner:
             raise
 
         return accepted_list, total_attempts
+
+    def _collect_accepted_particles_cloud(
+        self,
+        request: ParticlewiseGenerationRequest,
+        state: ParticlewiseGenerationState,
+        handle: ProgressHandle,
+    ) -> tuple[list[AcceptedProposal], int]:
+        """Collect generator-slot acceptance results from a cloud executor."""
+
+        executor = request.cloud_executor
+        assert executor is not None
+        tasks = [
+            CloudAcceptanceTask(
+                slot_id=generator.id,
+                seed_sequence=generator.seed_sequence,
+                tolerance=self.config.tolerance_values[request.generation],
+                max_attempts=self.config.max_attempts_per_proposal,
+                sample_method=state.sample_method,
+                particle_to_distance=self.config.particle_to_distance,
+                evaluation_kwargs=request.particle_kwargs,
+            )
+            for generator in state.generator_slots
+        ]
+        try:
+            pickle.dumps(tasks)
+        except Exception as exc:
+            raise TypeError(
+                "Cloud acceptance tasks must be pickleable by the worker image. "
+                "Ensure the sampler collaborators are importable in that image."
+            ) from exc
+
+        streamed_attempts = 0
+        streamed_accepted = 0
+
+        def on_result(result: CloudAcceptanceResult) -> None:
+            nonlocal streamed_attempts, streamed_accepted
+            streamed_attempts += result.attempts
+            if result.status == "accepted":
+                streamed_accepted += 1
+            self._update_progress(
+                handle=handle,
+                completed=streamed_accepted,
+                total_attempts=streamed_attempts,
+                generation_start_time=request.generation_start_time,
+                request=request,
+            )
+
+        results = run_coroutine_from_sync(
+            lambda: executor.execute_tasks(
+                tasks,
+                progress_callback=self._cloud_progress_callback(
+                    request, handle
+                ),
+                on_result=on_result,
+            )
+        )
+        accepted_list = self._validate_cloud_results(
+            tasks=tasks,
+            results=results,
+        )
+        total_attempts = sum(
+            accepted_proposal.attempts for accepted_proposal in accepted_list
+        )
+        return accepted_list, total_attempts
+
+    def _cloud_progress_callback(
+        self,
+        request: ParticlewiseGenerationRequest,
+        handle: ProgressHandle,
+    ) -> ProgressCallback:
+        """Route executor events to the progress bar and the caller.
+
+        Cloud backends emit setup and queue events during the long stretch
+        before any particle is accepted. Without this bridge the bar sits at
+        zero percent with no explanation until the whole generation finishes.
+
+        Args:
+            request (ParticlewiseGenerationRequest): Active generation request.
+            handle (ProgressHandle): Handle referencing the collection task.
+
+        Returns:
+            ProgressCallback: Callback that updates the bar and forwards the
+                event to any caller-supplied observer.
+        """
+
+        def callback(event: ProgressEvent) -> None:
+            if event.event_type == "executor_message":
+                message = event.payload.get("message")
+                if message:
+                    self.config.reporter.set_collection_status(
+                        handle, str(message)
+                    )
+            if request.progress_callback is not None:
+                request.progress_callback(event)
+
+        return callback
+
+    @staticmethod
+    def _validate_cloud_results(
+        tasks: list[CloudAcceptanceTask],
+        results: list[CloudAcceptanceResult],
+    ) -> list[AcceptedProposal]:
+        """Validate complete result identity before sampler state changes."""
+
+        expected_ids = {task.slot_id for task in tasks}
+        result_ids = [result.slot_id for result in results]
+        duplicate_ids = {
+            slot_id for slot_id in result_ids if result_ids.count(slot_id) > 1
+        }
+        unknown_ids = set(result_ids) - expected_ids
+        missing_ids = expected_ids - set(result_ids)
+        if duplicate_ids or unknown_ids or missing_ids:
+            problems: list[str] = []
+            if duplicate_ids:
+                problems.append(f"duplicate slots {sorted(duplicate_ids)}")
+            if unknown_ids:
+                problems.append(f"unknown slots {sorted(unknown_ids)}")
+            if missing_ids:
+                problems.append(f"missing slots {sorted(missing_ids)}")
+            raise RuntimeError(
+                "Invalid cloud acceptance results: " + "; ".join(problems)
+            )
+        return [
+            AcceptedProposal(
+                slot_id=result.slot_id,
+                particle=result.particle,
+                distance=result.distance,
+                attempts=result.attempts,
+            )
+            for result in sorted(results, key=lambda result: result.slot_id)
+        ]
 
     def _collect_accepted_particles(
         self,
@@ -425,7 +576,22 @@ class ParticlewiseGenerationRunner:
                 description=description,
                 total=self.config.generation_particle_count,
             )
-            if request.n_workers == 1:
+            self._emit_progress(
+                request,
+                "generation_started",
+                generation=request.generation,
+                tolerance=self.config.tolerance_values[request.generation],
+                generation_total=len(self.config.tolerance_values),
+            )
+            if request.cloud_executor is not None:
+                accepted_list, total_attempts = (
+                    self._collect_accepted_particles_cloud(
+                        request=request,
+                        state=state,
+                        handle=handle,
+                    )
+                )
+            elif request.n_workers == 1:
                 accepted_list, total_attempts = (
                     self._collect_accepted_particles_serial(
                         request=request,
@@ -461,6 +627,7 @@ class ParticlewiseGenerationRunner:
         completed: int,
         total_attempts: int,
         generation_start_time: float,
+        request: ParticlewiseGenerationRequest,
     ) -> None:
         """Update generation progress using completed slots and total attempts.
 
@@ -475,6 +642,8 @@ class ParticlewiseGenerationRunner:
             total_attempts (int): Total proposal attempts consumed so far.
             generation_start_time (float): Timestamp recorded at the start of
                 the generation.
+            request (ParticlewiseGenerationRequest): Request containing the
+                optional structured progress observer.
 
         Returns:
             None: This helper does not return a value.
@@ -497,6 +666,30 @@ class ParticlewiseGenerationRunner:
             acceptance_rate=acceptance_rate,
             eta_seconds=eta,
         )
+        self._emit_progress(
+            request,
+            "work_progressed",
+            completed=completed,
+            total=self.config.generation_particle_count,
+            attempts=total_attempts,
+            acceptance_rate=acceptance_rate,
+            eta_seconds=eta,
+        )
+
+    @staticmethod
+    def _emit_progress(
+        request: ParticlewiseGenerationRequest,
+        event_type: str,
+        **payload: Any,
+    ) -> None:
+        if request.progress_callback is not None:
+            request.progress_callback(
+                ProgressEvent(
+                    event_type=event_type,
+                    generation=request.generation,
+                    payload=payload,
+                )
+            )
 
     def _build_generation_stats(
         self,

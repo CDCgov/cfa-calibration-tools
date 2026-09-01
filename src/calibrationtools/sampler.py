@@ -14,6 +14,7 @@ from .batch_generation_runner import (
     BatchGenerationRunner,
 )
 from .calibration_results import CalibrationResults
+from .cloud_executor import CloudExecutor
 from .particle import Particle
 from .particle_evaluator import ParticleEvaluator
 from .particle_population import ParticlePopulation
@@ -28,7 +29,7 @@ from .perturbation_kernel import PerturbationKernel
 from .prior_distribution import PriorDistribution
 from .sampler_reporting import SamplerReporter
 from .sampler_run_state import SamplerRunState
-from .sampler_types import GeneratorSlot
+from .sampler_types import GeneratorSlot, ProgressCallback
 from .variance_adapter import VarianceAdapter
 
 
@@ -658,8 +659,10 @@ class ABCSampler:
 
     def run(
         self,
-        execution: Literal["serial", "parallel"] = "parallel",
+        execution: Literal["serial", "parallel", "azure_batch"] = "parallel",
         max_workers: int | None = None,
+        cloud_executor: CloudExecutor | None = None,
+        progress_callback: ProgressCallback | None = None,
         **kwargs: Any,
     ) -> CalibrationResults:
         """
@@ -671,14 +674,24 @@ class ABCSampler:
         using a distance metric, and accepting or rejecting them based on a tolerance value.
 
         Args:
-            execution (Literal['serial', 'parallel']): Determines whether to run the SMC sampling process in serial or parallel. Defaults to 'serial'.
-            max_workers (int | None): The maximum number of worker threads to use when running in parallel. If None, it defaults to the sampler's configured `parallel_worker_count`. This argument is ignored when execution is set to 'serial'.
+            execution (Literal['serial', 'parallel', 'azure_batch']): Determines
+                the sampler execution mode. Azure mode requires ``cloud_executor``.
+            max_workers (int | None): The maximum number of worker threads to
+                use when running in parallel. Ignored outside parallel mode.
+            cloud_executor (CloudExecutor | None): Cloud executor used only
+                when ``execution`` is ``'azure_batch'``.
+            progress_callback (ProgressCallback | None): Observer for structured
+                generation and particle-work progress events.
             **kwargs (Any): Additional keyword arguments that can be passed to the method.
                       These arguments are supplied to the particles_to_params function.
                       Note that the keyword arguments must not conflict with existing
                       attributes of the class.
         Returns:
             CalibrationResults: An object containing the results of the calibration process.
+
+        Raises:
+            ValueError: If cloud executor arguments do not match the selected
+                execution mode.
         """
         self._validate_run_kwargs(kwargs)
         originator_perturbation_kernel = copy.deepcopy(
@@ -686,6 +699,12 @@ class ABCSampler:
         )
         reporter = self._build_reporter()
         overall_start_time = time.time()
+        if execution == "azure_batch" and cloud_executor is None:
+            raise ValueError(
+                "cloud_executor is required for execution='azure_batch'"
+            )
+        if execution != "azure_batch" and cloud_executor is not None:
+            raise ValueError("cloud_executor requires execution='azure_batch'")
         n_workers = (
             self._resolve_worker_count(max_workers)
             if execution == "parallel"
@@ -706,6 +725,8 @@ class ABCSampler:
                         overall_start_time=overall_start_time,
                         generation_start_time=time.time(),
                         particle_kwargs=dict(kwargs),
+                        cloud_executor=cloud_executor,
+                        progress_callback=progress_callback,
                     )
                 )
         finally:
