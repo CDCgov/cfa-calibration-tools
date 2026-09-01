@@ -1,0 +1,14 @@
+.git/
+.venv/
+.agents/
+.specify/
+specs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+htmlcov/
+benchmarks/
+output/
+*.pkl
+*.log
+.env
