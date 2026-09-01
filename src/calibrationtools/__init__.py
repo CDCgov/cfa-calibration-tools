@@ -1,5 +1,6 @@
 from .async_runner import run_coroutine_from_sync
 from .calibration_results import CalibrationResults
+from .calibration_study import CalibrationScenario, CalibrationStudy
 from .cloud_executor import (
     CloudAcceptanceResult,
     CloudAcceptanceTask,
@@ -52,6 +53,8 @@ from .variance_adapter import (
 __all__ = [
     "ABCSampler",
     "CalibrationResults",
+    "CalibrationScenario",
+    "CalibrationStudy",
     "CloudAcceptanceResult",
     "CloudAcceptanceTask",
     "CloudExecutor",
