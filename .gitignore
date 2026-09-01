@@ -9,6 +9,10 @@ benchmarks/
 *.xlsx
 *.pkl
 
+# Calibration/study run output
+calibration-study-logs/
+*.jsonl
+
 # Documents
 *.doc
 *.docx
@@ -36,6 +40,12 @@ benchmarks/
 # Allowlist
 # !your_data_file.csv
 # !your_data_directory/
+
+# Local Spec Kit / agent scaffolding
+.agents/
+.specify/
+AGENTS.md
+specs/
 
 #####
 # Python
