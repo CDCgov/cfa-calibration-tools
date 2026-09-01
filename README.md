@@ -43,6 +43,15 @@ To compare serial and parallel execution for the same example, run:
 uv run python -m example_model.benchmark
 ```
 
+## Azure Batch and concurrent studies
+
+Azure Batch support is optional. Existing `serial`, `parallel`, and batched execution do
+not load Azure credentials or the Azure dependency. Install the optional extra only when
+constructing an `AzureBatchExecutor` or running a `CalibrationStudy`; the latter runs
+fresh, factory-created samplers concurrently while Azure remains the sole distributed
+particle backend. See [Azure Batch operations](docs/azure-batch.md) for the worker-image
+requirements, live study dashboard, cleanup behavior, and external validation commands.
+
 ## General Disclaimer
 
 This repository was created for use by CDC programs to collaborate on public health related projects in support of the [CDC mission](https://www.cdc.gov/about/organization/mission.htm). GitHub is not hosted by the CDC, but is a third party website used by CDC and its partners to share information and collaborate on software. CDC use of GitHub does not imply an endorsement of any one particular service, product, or enterprise.
