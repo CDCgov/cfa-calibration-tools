@@ -1,5 +1,11 @@
 from .async_runner import run_coroutine_from_sync
 from .calibration_results import CalibrationResults
+from .calibration_study import CalibrationScenario, CalibrationStudy
+from .cloud_executor import (
+    CloudAcceptanceResult,
+    CloudAcceptanceTask,
+    CloudExecutor,
+)
 from .load_priors import (
     independent_priors_from_dict,
     load_priors_from_json,
@@ -47,6 +53,11 @@ from .variance_adapter import (
 __all__ = [
     "ABCSampler",
     "CalibrationResults",
+    "CalibrationScenario",
+    "CalibrationStudy",
+    "CloudAcceptanceResult",
+    "CloudAcceptanceTask",
+    "CloudExecutor",
     "Particle",
     "ParticlePopulation",
     "ParticlePopulationMetrics",

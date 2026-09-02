@@ -43,6 +43,32 @@ class TestParticleRunnerInit:
         )
         assert runner.parallel is True
 
+    def test_visible_progress_is_default(self):
+        model = MagicMock()
+        runner = ParticleRunner(
+            model=model, particles_to_params=identity_params
+        )
+        assert runner.verbose is True
+
+    def test_quiet_runner_draws_no_progress(self, capsys):
+        """Let a caller that owns the terminal silence this runner's bar.
+
+        A concurrent study renders one dashboard for every scenario, so a
+        per-scenario bar drawn here overwrites it mid-frame.
+        """
+
+        model = MagicMock()
+        runner = ParticleRunner(
+            model=model,
+            particles_to_params=identity_params,
+            execution="serial",
+            verbose=False,
+        )
+
+        runner.run([Particle({"p": 0.1})])
+
+        assert capsys.readouterr().out == ""
+
     def test_serial_execution(self):
         model = MagicMock()
         runner = ParticleRunner(
